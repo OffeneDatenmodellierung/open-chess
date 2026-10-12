@@ -4,7 +4,7 @@
 //! open-chess-device --board /dev/ttyACM0                 # open-chess's engine, level 4
 //! open-chess-device --board /dev/ttyACM0 --level 7 --book gm2001.bin
 //! open-chess-device --board /dev/rfcomm0 --uci /usr/games/stockfish --move-time 2 \
-//!     --uci-option "Skill Level=5" --play black
+//!     --uci-option "Skill Level=5" --play black --time 5+3
 //! ```
 //!
 //! Set up the starting position (either way round) to begin; set it up
@@ -32,7 +32,7 @@ mod unix {
     use chess_dgt::serial::Port;
     use chess_dgt::{Event, Follower, Observation, Session};
     use clap::Parser;
-    use open_chess_device::controller::{Controller, Setup, describe};
+    use open_chess_device::controller::{Controller, Setup, TimeControl, describe};
     use open_chess_device::opponent::{EngineSpec, Opponent};
 
     #[derive(Debug, Parser)]
@@ -43,7 +43,8 @@ mod unix {
         #[arg(long)]
         board: String,
 
-        /// open-chess's engine at this level, 1 (beginner) to 8.
+        /// open-chess's engine at this level, 1 (beginner) to 8 (the clock's
+        /// buttons change it during play).
         #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=8))]
         level: u8,
 
@@ -51,7 +52,7 @@ mod unix {
         #[arg(long)]
         uci: Option<String>,
 
-        /// Seconds per move for the UCI engine.
+        /// Seconds per move for the UCI engine (without --time).
         #[arg(long, default_value_t = 2.0)]
         move_time: f64,
 
@@ -66,6 +67,15 @@ mod unix {
         /// The side you play.
         #[arg(long, default_value = "white", value_parser = ["white", "black"])]
         play: String,
+
+        /// Play to a time control, minutes+increment (e.g. 5+3), shown on the
+        /// DGT3000. The engine then plays to the clock too.
+        #[arg(long)]
+        time: Option<TimeControl>,
+
+        /// Which side of the clock is White's.
+        #[arg(long, default_value = "left", value_parser = ["left", "right"])]
+        white_clock: String,
     }
 
     pub fn main() -> ExitCode {
@@ -97,7 +107,7 @@ mod unix {
                     options,
                 }
             }
-            None => EngineSpec::Builtin { level: args.level },
+            None => EngineSpec::Builtin,
         };
         let book = match &args.book {
             Some(p) => {
@@ -115,7 +125,14 @@ mod unix {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(1, |d| d.as_nanos() as u64);
-        let mut controller = Controller::new(Setup { player: Some(player), book, seed });
+        let mut controller = Controller::new(Setup {
+            player,
+            level: args.level,
+            book,
+            time: args.time,
+            white_on_left: args.white_clock == "left",
+            seed,
+        });
         let mut session = Session::new(Follower::new());
         session.start(Instant::now());
         eprintln!("waiting for the board on {} (you play {})", args.board, args.play);
@@ -130,7 +147,7 @@ mod unix {
             if n > 0 {
                 for e in session.receive(&buf[..n], now) {
                     log(&e, &session);
-                    if let Some(t) = controller.on_event(&e, &mut session) {
+                    if let Some(t) = controller.on_event(&e, &mut session, now) {
                         opponent.ask(t);
                     }
                 }
@@ -139,7 +156,7 @@ mod unix {
                 if let Some(e) = &r.error {
                     eprintln!("engine: {e}");
                 }
-                if let Some(t) = controller.on_reply(r.ply, r.uci.as_deref(), &mut session) {
+                if let Some(t) = controller.on_reply(r.ply, r.uci.as_deref(), &mut session, Instant::now()) {
                     opponent.ask(t);
                 }
                 if session.follower().awaiting_board() {
@@ -150,6 +167,7 @@ mod unix {
                     );
                 }
             }
+            controller.tick(&mut session, Instant::now());
             session.poll(now);
         }
     }

@@ -16,9 +16,10 @@ use crate::controller::Think;
 /// Which engine plays.
 #[derive(Debug, Clone)]
 pub enum EngineSpec {
-    /// open-chess's engine, level 1 (beginner) to 8.
-    Builtin { level: u8 },
-    /// A UCI engine: its path, the time per move, and options to set
+    /// open-chess's engine, at the level each request carries (1–8).
+    Builtin,
+    /// A UCI engine: its path, the time per move (when the game has no
+    /// clock; with one it plays to the clock), and options to set
     /// (`("Skill Level", "5")`, `("Threads", "2")` …).
     Uci { path: String, move_time: Duration, options: Vec<(String, String)> },
 }
@@ -45,7 +46,7 @@ impl Opponent {
         let (reply_tx, rx) = mpsc::channel::<Reply>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
         thread::Builder::new().name("engine".into()).spawn(move || match spec {
-            EngineSpec::Builtin { level } => {
+            EngineSpec::Builtin => {
                 let _ = ready_tx.send(Ok(()));
                 let mut searcher = Searcher::new(1 << 20);
                 let mut seed = 0x5eed_u64;
@@ -54,7 +55,7 @@ impl Opponent {
                     let reply = match game_of(&t) {
                         Ok(game) => Reply {
                             ply: t.ply,
-                            uci: bot_move(&mut searcher, &game, Level::new(level), seed).map(|m| m.uci),
+                            uci: bot_move(&mut searcher, &game, Level::new(t.level), seed).map(|m| m.uci),
                             error: None,
                         },
                         Err(e) => Reply { ply: t.ply, uci: None, error: Some(e) },
@@ -83,11 +84,19 @@ impl Opponent {
                 let _ = ready_tx.send(Ok(()));
                 for t in think_rx {
                     let fen = t.initial_fen.clone().unwrap_or_else(|| chess_core::STARTPOS_FEN.to_owned());
-                    let reply =
-                        match rt.block_on(engine.analyse(&fen, &t.moves, Limit::MoveTime(move_time), 1)) {
-                            Ok(a) => Reply { ply: t.ply, uci: a.best_move, error: None },
-                            Err(e) => Reply { ply: t.ply, uci: None, error: Some(e.to_string()) },
-                        };
+                    let limit = match t.clock {
+                        Some(c) => Limit::Clock {
+                            wtime: c.white_ms,
+                            btime: c.black_ms,
+                            winc: c.increment_ms,
+                            binc: c.increment_ms,
+                        },
+                        None => Limit::MoveTime(move_time),
+                    };
+                    let reply = match rt.block_on(engine.analyse(&fen, &t.moves, limit, 1)) {
+                        Ok(a) => Reply { ply: t.ply, uci: a.best_move, error: None },
+                        Err(e) => Reply { ply: t.ply, uci: None, error: Some(e.to_string()) },
+                    };
                     if reply_tx.send(reply).is_err() {
                         break;
                     }
@@ -123,8 +132,8 @@ mod tests {
 
     #[test]
     fn the_builtin_engine_answers() {
-        let o = Opponent::start(EngineSpec::Builtin { level: 1 }).unwrap();
-        o.ask(Think { ply: 1, initial_fen: None, moves: vec!["e2e4".into()] });
+        let o = Opponent::start(EngineSpec::Builtin).unwrap();
+        o.ask(Think { ply: 1, initial_fen: None, moves: vec!["e2e4".into()], level: 1, clock: None });
         let started = Instant::now();
         let reply = loop {
             if let Some(r) = o.poll() {
@@ -149,7 +158,17 @@ mod tests {
             options: vec![("Threads".into(), "1".into())],
         })
         .unwrap();
-        o.ask(Think { ply: 2, initial_fen: None, moves: vec!["e2e4".into(), "e7e5".into()] });
+        o.ask(Think {
+            ply: 2,
+            initial_fen: None,
+            moves: vec!["e2e4".into(), "e7e5".into()],
+            level: 4,
+            clock: Some(crate::controller::ClockState {
+                white_ms: 60_000,
+                black_ms: 60_000,
+                increment_ms: 0,
+            }),
+        });
         let started = Instant::now();
         let reply = loop {
             if let Some(r) = o.poll() {
