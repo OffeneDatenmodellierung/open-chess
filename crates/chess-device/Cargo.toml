@@ -1,0 +1,38 @@
+[package]
+name = "open-chess-device"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "Play chess on an electronic board: a DGT board against open-chess's engine or any UCI engine, with opening books and the clock"
+license = "MIT OR Apache-2.0"
+authors = ["Mark Olliver"]
+publish = false
+
+[[bin]]
+name = "open-chess-device"
+path = "src/main.rs"
+
+[dependencies]
+chess-core = { package = "open-chess-core", path = "../chess-core" }
+chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
+chess-engine = { package = "open-chess-engine", path = "../chess-engine" }
+chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt" }
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+tokio = { version = "1.53.2", features = ["rt", "process", "io-util", "time", "sync"] }
+
+[target.'cfg(unix)'.dependencies]
+chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt", features = ["serial"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+missing_panics_doc = "allow"
+cast_possible_truncation = "allow"

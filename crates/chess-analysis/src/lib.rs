@@ -31,6 +31,7 @@
 //! they can be fitted to real game outcomes later.
 
 pub mod analysis;
+pub mod book;
 pub mod bot;
 pub mod dictionary;
 pub mod eval;

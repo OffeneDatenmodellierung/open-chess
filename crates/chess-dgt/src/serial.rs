@@ -40,13 +40,19 @@ impl Port {
         Ok(Port { file: File::from(fd) })
     }
 
+    /// Send a command.
+    pub fn send(&mut self, c: &crate::Command) -> io::Result<()> {
+        self.write_all(&c.encode())
+    }
+
     fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
         self.file.write_all(bytes)?;
         self.file.flush()
     }
 
-    /// Bytes waiting, or none after the read timeout.
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    /// Bytes waiting, or none after the read timeout (a tenth of a second),
+    /// for applications running their own loop instead of [`run`].
+    pub fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self.file.read(buf) {
             Err(e) if e.kind() == io::ErrorKind::Interrupted => Ok(0),
             r => r,
@@ -74,7 +80,7 @@ where
     let mut buf = [0u8; 512];
     loop {
         for c in session.take_commands() {
-            port.write_all(&c.encode())?;
+            port.send(&c)?;
         }
         let n = port.read(&mut buf)?;
         let now = Instant::now();

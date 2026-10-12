@@ -31,13 +31,14 @@ A chess server, engine and training app in Rust.
 | `chess-proto` | Lichess API wire types |
 | `chess-client` | Async client for the Lichess Board, Bot and Challenge APIs |
 | `chess-engine` | Async UCI engine driver (Stockfish) |
-| `chess-analysis` | The engine and training analysis (see [docs/engine.md](docs/engine.md)) |
+| `chess-analysis` | The engine and training analysis, and Polyglot opening books (see [docs/engine.md](docs/engine.md)) |
 | `chess-wasm` | `chess-analysis` for the browser |
 | `chess-fairplay` | Post-game fair-play screening |
 | `chess-server` | The server ([README](crates/chess-server/README.md)) |
 | `chess-train` | Distributed engine training |
 | `chess-vision`, `chess-vision-train` | The board reader and its trainer |
 | `chess-dgt` | The DGT e-board protocol (USB, serial and Bluetooth boards, the Smart Board, the Revelation II, a DGT3000 on the board's cable) without I/O, and turning board readings into moves |
+| `chess-device` | `open-chess-device`: play open-chess's engine or any UCI engine on a DGT board, with Polyglot opening books |
 
 Packages are named `open-chess-*` (`cargo test -p open-chess-core`).
 

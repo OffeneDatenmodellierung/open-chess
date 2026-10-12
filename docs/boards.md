@@ -26,13 +26,30 @@ cargo run -p open-chess-dgt --features serial --example watch -- /dev/ttyACM0
 Set up the starting position and play: each move prints as it's made, and
 shows on a DGT3000 if one is connected.
 
+**Playing the engine on the board.** `open-chess-device` plays a game on the
+board against open-chess's engine (levels 1–8) or any UCI engine
+(Stockfish, Leela …), with a Polyglot opening book if you give it one:
+
+```sh
+cargo run --release -p open-chess-device -- --board /dev/ttyACM0 --level 5
+cargo run --release -p open-chess-device -- --board /dev/ttyACM0 \
+    --uci /usr/games/stockfish --move-time 2 --uci-option "Skill Level=5" \
+    --book gm2001.bin --play black
+```
+
+The engine's move shows on the DGT3000 (and its squares light on a Revelation
+II); make it on the board and play on. Set up the starting position again
+for a new game; put pieces back to take moves back. The result shows when the
+game ends. Not there yet: playing to a time control on the clock, and the
+clock's buttons.
+
 ## Coming next
 
 In order; each lands in open-chess as it's ready.
 
-1. **Play the engine on the board.** A board runtime (`open-chess` device
-   mode) that runs a game on the board against open-chess's engine or any UCI
-   engine, with the clock, opening books (Polyglot `.bin`) and levels.
+1. **Play the engine on the board.** Done for the game, levels, UCI engines
+   and Polyglot books (above); still to come: time controls on the clock and
+   its buttons (level, new game, side) as PicoChess uses them.
 2. **The Chess lab app as the board's screen.** The device serves the app;
    a phone on the same Wi-Fi shows the game, the engine's lines and the
    clock, and drives the device's settings. It speaks the same Lichess-style

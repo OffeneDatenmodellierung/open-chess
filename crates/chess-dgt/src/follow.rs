@@ -87,10 +87,10 @@ impl Follower {
     /// Play a move that didn't come from the board (the engine's, an online
     /// opponent's). Until the board shows it, readings are only checked
     /// against the new position.
-    pub fn play(&mut self, uci: &str) -> Result<(), chess_core::GameError> {
-        self.game.play_uci(uci)?;
+    pub fn play(&mut self, uci: &str) -> Result<chess_core::Played, chess_core::GameError> {
+        let played = self.game.play_uci(uci)?;
         self.awaiting_board = true;
-        Ok(())
+        Ok(played)
     }
 
     /// Start again from a set-up position.
