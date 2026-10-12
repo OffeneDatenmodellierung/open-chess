@@ -61,6 +61,10 @@ pub struct Session {
     changed_at: Option<Instant>,
     heard_at: Option<Instant>,
     pinged_at: Option<Instant>,
+    /// Sent first when starting (a Pegasus's unlocking).
+    preamble: Vec<Command>,
+    /// How the board is asked to report changes.
+    updates: Command,
 }
 
 impl Session {
@@ -79,7 +83,19 @@ impl Session {
             changed_at: None,
             heard_at: None,
             pinged_at: None,
+            preamble: Vec::new(),
+            updates: Command::SendUpdateNice,
         }
+    }
+
+    /// A different opening: commands sent first, and how the board is
+    /// asked for updates (the Pegasus wants unlocking and
+    /// [`Command::SendUpdateBoard`]).
+    #[must_use]
+    pub fn with_handshake(mut self, preamble: Vec<Command>, updates: Command) -> Session {
+        self.preamble = preamble;
+        self.updates = updates;
+        self
     }
 
     pub fn follower(&self) -> &Follower {
@@ -98,7 +114,8 @@ impl Session {
     /// Open the conversation: square changes from now on (clock times only
     /// when they change), then the version, whose answer starts things.
     pub fn start(&mut self, now: Instant) {
-        self.outbox.push(Command::SendUpdateNice);
+        self.outbox.extend(self.preamble.iter().cloned());
+        self.outbox.push(self.updates.clone());
         self.outbox.push(Command::Version);
         self.asked_version_at = Some(now);
     }
@@ -158,7 +175,8 @@ impl Session {
         }
         if !self.connected {
             if self.asked_version_at.is_some_and(|t| now.duration_since(t) >= self.timing.handshake_retry) {
-                self.outbox.push(Command::SendUpdateNice);
+                self.outbox.extend(self.preamble.iter().cloned());
+                self.outbox.push(self.updates.clone());
                 self.outbox.push(Command::Version);
                 self.asked_version_at = Some(now);
             }

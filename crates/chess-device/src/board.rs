@@ -4,7 +4,7 @@
 //! terms (`chess_dgt::Command`: clock texts, the clock's times, lights).
 //! A DGT board's session takes those as they are; a Centaur turns them into
 //! its own lights and sounds (it has no clock, and its screen is the app's
-//! for now).
+//! for now); a Chessnut board into its lights.
 
 use chess_core::{Game, GameError, Played};
 use chess_dgt::{ClockButton, Command, Session};
@@ -57,6 +57,28 @@ impl Board for chess_centaur::Session {
             // A move or result to see: a sound to look up.
             Command::ClockText { beep, .. } if beep > 0 => self.beep(chess_centaur::Sound::General),
             Command::ClockBeep { .. } => self.beep(chess_centaur::Sound::General),
+            _ => {}
+        }
+    }
+}
+
+impl Board for chess_chessnut::Session {
+    fn game(&self) -> &Game {
+        self.follower().game()
+    }
+
+    fn awaiting_board(&self) -> bool {
+        self.follower().awaiting_board()
+    }
+
+    fn play(&mut self, uci: &str) -> Result<Played, GameError> {
+        chess_chessnut::Session::play(self, uci)
+    }
+
+    fn send(&mut self, c: Command) {
+        match c {
+            Command::Lights { from, to } => self.lights(&[from.0, to.0]),
+            Command::LightsOff => self.lights_off(),
             _ => {}
         }
     }

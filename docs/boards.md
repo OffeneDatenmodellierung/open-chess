@@ -131,6 +131,32 @@ screen (`--listen`). The original Centaur has a Raspberry Pi Zero W, a
 and use the 64-bit build. [`deploy/centaur`](../deploy/centaur) has a
 systemd unit.
 
+**Bluetooth LE boards: Chessnut and the DGT Pegasus.** `--ble` connects
+to a board by its Bluetooth address, on Linux (a Raspberry Pi or any Linux
+computer), through the kernel's own Bluetooth sockets: nothing to install
+beyond BlueZ, which Raspberry Pi OS has.
+
+```sh
+bluetoothctl            # then: scan on   (note the board's address)   quit
+open-chess-device --ble AA:BB:CC:DD:EE:FF --ble-board chessnut   # Chessnut Air (and Go)
+open-chess-device --ble AA:BB:CC:DD:EE:FF --ble-board pegasus    # DGT Pegasus
+```
+
+Don't pair the board, or disconnect it in `bluetoothctl` first: it takes
+one connection at a time. If `bluetoothctl info` shows a random address,
+add `--random-address`.
+
+* **Chessnut Air, Air+, Pro** (`chess-chessnut`): the board reports every
+  piece, so moves, takebacks and new games read as on a DGT board, and the
+  engine's move lights its two squares. The protocol is PicoChess's.
+* **Chessnut Go**: expected to speak the same protocol (Chessnut's own
+  drivers treat the Air, Air+, Go and Pro together); to be confirmed on a
+  board.
+* **DGT Pegasus**: the DGT protocol over the Nordic UART service, unlocked
+  with the developer key community drivers publish, with its own lights.
+
+None of these has been tried on a real board yet.
+
 ## Coming next
 
 In order; each lands in open-chess as it's ready.
@@ -159,8 +185,9 @@ In order; each lands in open-chess as it's ready.
 | DGT USB / Bluetooth e-Board, Smart Board, Revelation II | — (a computer drives it) | Works: `open-chess-device` (above) |
 | DGT Pi | Raspberry Pi 3 in a DGT3000 clock; the board on USB or Bluetooth | Works: the board via `chess-dgt`, the built-in clock via `chess-dgtpi` (`--clock dgtpi`). Install: a 64-bit Raspberry Pi OS card with the runtime, like PicoChess v4 |
 | DGT Centaur | Raspberry Pi Zero W (or a Zero 2 W swapped in), board controller on serial, e-paper | Works: board, lights, buttons, sounds (`--centaur`, `chess-centaur`); the e-paper screen next |
-| DGT Pegasus, Chessnut Air | Bluetooth LE; the Air recognises pieces | Next: a shared Bluetooth LE layer |
-| Chessnut Go | Bluetooth; recognises pieces | After the Air, if it shares its protocol (unconfirmed) |
+| DGT Pegasus | Bluetooth LE | `--ble … --ble-board pegasus` (`chess-ble`, `chess-dgt`) |
+| Chessnut Air, Air+, Pro | Bluetooth LE; recognises pieces | `--ble … --ble-board chessnut` (`chess-chessnut`) |
+| Chessnut Go | Bluetooth LE (and USB); recognises pieces | Expected to work as the Air; to be confirmed. USB later |
 | Raspberry Pi 4 / 5 with any USB or Bluetooth board | — | With the runtime; a DGT3000 on a Pi 5 needs a different clock backend |
 
 Nothing here touches a device's own firmware: a DGT Pi or Centaur boots from
@@ -176,9 +203,11 @@ runtime (`chess-device`) uses it and will port parts of PicoChess (GPL-3.0),
 so both are GPL-3.0-or-later. Nothing MIT/Apache depends on them, and
 `deny.toml` allows GPL for those crates only. The Centaur's controller
 (`chess-centaur`) follows the protocol as the GPL DGTCentaurMods project
-worked it out, so it's GPL-3.0-or-later too.
+worked it out, and the Chessnut driver (`chess-chessnut`) PicoChess's, so
+both are GPL-3.0-or-later too. The Bluetooth layer (`chess-ble`) is ours,
+MIT or Apache-2.0.
 
 Not yet tried on real hardware: the DGT Pi driver follows `dgtpicom`
 message for message (its tests check the bytes against DGT's), the Centaur
-driver follows DGTCentaurMods' packets, and both are tested against
-simulated hardware.
+driver follows DGTCentaurMods' packets, the Chessnut driver PicoChess's,
+and all are tested against simulated hardware.
