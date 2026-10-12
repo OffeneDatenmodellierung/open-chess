@@ -34,22 +34,28 @@ board against open-chess's engine (levels 1–8) or any UCI engine
 cargo run --release -p open-chess-device -- --board /dev/ttyACM0 --level 5
 cargo run --release -p open-chess-device -- --board /dev/ttyACM0 \
     --uci /usr/games/stockfish --move-time 2 --uci-option "Skill Level=5" \
-    --book gm2001.bin --play black
+    --book gm2001.bin --play black --time 5+3
 ```
 
 The engine's move shows on the DGT3000 (and its squares light on a Revelation
 II); make it on the board and play on. Set up the starting position again
 for a new game; put pieces back to take moves back. The result shows when the
-game ends. Not there yet: playing to a time control on the clock, and the
-clock's buttons.
+game ends.
+
+With `--time 5+3` (minutes + increment) the game is played to a clock: the
+DGT3000 shows both sides' time (`--white-clock right` if White sits on the
+right), clocks start with the first move, the engine plays to the clock, and
+a flag ends the game. The DGT3000's buttons, left to right: show the
+engine's last move again, level down, switch sides (the engine takes over
+the side to move), level up, pause or resume the clock.
 
 ## Coming next
 
 In order; each lands in open-chess as it's ready.
 
-1. **Play the engine on the board.** Done for the game, levels, UCI engines
-   and Polyglot books (above); still to come: time controls on the clock and
-   its buttons (level, new game, side) as PicoChess uses them.
+1. **Play the engine on the board.** Done (above): levels, UCI engines,
+   Polyglot books, time controls on the clock and its buttons. PicoChess's
+   full clock menu comes with PicoChess compatibility (4).
 2. **The Chess lab app as the board's screen.** The device serves the app;
    a phone on the same Wi-Fi shows the game, the engine's lines and the
    clock, and drives the device's settings. It speaks the same Lichess-style
