@@ -5,7 +5,11 @@
 //! open-chess-device --board /dev/ttyACM0 --level 7 --book gm2001.bin
 //! open-chess-device --board /dev/rfcomm0 --uci /usr/games/stockfish --move-time 2 \
 //!     --uci-option "Skill Level=5" --play black --time 5+3
+//! open-chess-device --board /dev/ttyACM0 --listen 0.0.0.0:8080 --app dist/chess
 //! ```
+//!
+//! With `--listen`, a phone on the same network opens the device's address
+//! and gets the Chess lab app showing the game, with the device's settings.
 //!
 //! Set up the starting position (either way round) to begin; set it up
 //! again for a new game. Take moves back by putting the pieces back.
@@ -24,7 +28,8 @@ fn main() -> std::process::ExitCode {
 #[cfg(unix)]
 mod unix {
     use std::process::ExitCode;
-    use std::time::{Duration, Instant};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use anyhow::{Context, Result, bail};
     use chess_analysis::book::Book;
@@ -34,6 +39,9 @@ mod unix {
     use clap::Parser;
     use open_chess_device::controller::{Controller, Setup, TimeControl, describe};
     use open_chess_device::opponent::{EngineSpec, Opponent};
+    use open_chess_device::view::{EngineInfo, View, game_id};
+    use open_chess_device::web::{self, Change, Request, Web};
+    use tokio::sync::watch;
 
     #[derive(Debug, Parser)]
     #[command(name = "open-chess-device", version, about = "Play the engine on an electronic chess board")]
@@ -76,6 +84,19 @@ mod unix {
         /// Which side of the clock is White's.
         #[arg(long, default_value = "left", value_parser = ["left", "right"])]
         white_clock: String,
+
+        /// Serve the app and the device's API here, e.g. 0.0.0.0:8080 (every
+        /// network the device is on: a home network, not the internet).
+        #[arg(long)]
+        listen: Option<String>,
+
+        /// The Chess lab app's files (a build of web/chess), served at /app/.
+        #[arg(long)]
+        app: Option<std::path::PathBuf>,
+
+        /// The device's name, shown in the app.
+        #[arg(long, default_value = "open-chess board")]
+        name: String,
     }
 
     pub fn main() -> ExitCode {
@@ -88,7 +109,7 @@ mod unix {
         }
     }
 
-    fn run(args: &Args) -> Result<()> {
+    fn engine_spec(args: &Args) -> Result<EngineSpec> {
         let spec = match &args.uci {
             Some(path) => {
                 let mut options = Vec::new();
@@ -109,6 +130,10 @@ mod unix {
             }
             None => EngineSpec::Builtin,
         };
+        Ok(spec)
+    }
+
+    fn load_book(args: &Args) -> Result<Option<Book>> {
         let book = match &args.book {
             Some(p) => {
                 let bytes = std::fs::read(p).with_context(|| format!("reading the book {p}"))?;
@@ -118,13 +143,24 @@ mod unix {
             }
             None => None,
         };
+        Ok(book)
+    }
+
+    fn run(args: &Args) -> Result<()> {
+        let spec = engine_spec(args)?;
+        let book = load_book(args)?;
         let player = if args.play == "black" { Side::Black } else { Side::White };
+        let engine = EngineInfo {
+            name: args.uci.as_ref().map(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned())
+            }),
+        };
         let opponent = Opponent::start(spec)?;
         let mut port =
             Port::open(&args.board).with_context(|| format!("opening the board on {}", args.board))?;
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(1, |d| d.as_nanos() as u64);
+        let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
         let mut controller = Controller::new(Setup {
             player,
             level: args.level,
@@ -135,6 +171,23 @@ mod unix {
         });
         let mut session = Session::new(Follower::new());
         session.start(Instant::now());
+
+        // What the app sees, and the settings it changes.
+        let mut game = (controller.games(), game_id(seed, 0), now_ms());
+        let (view_tx, view_rx) = watch::channel(View::new(
+            &controller,
+            session.follower(),
+            &engine,
+            game.1.clone(),
+            game.2,
+            Instant::now(),
+        ));
+        let (request_tx, requests) = mpsc::channel::<Request>();
+        if let Some(addr) = &args.listen {
+            let at = web::spawn(addr, Web::new(view_rx, request_tx, args.app.clone(), &args.name))
+                .with_context(|| format!("listening on {addr}"))?;
+            eprintln!("the app: http://{at}/");
+        }
         eprintln!("waiting for the board on {} (you play {})", args.board, args.play);
 
         let mut buf = [0u8; 512];
@@ -167,9 +220,66 @@ mod unix {
                     );
                 }
             }
+            let mut replies = Vec::new();
+            while let Ok(r) = requests.try_recv() {
+                let result = apply(r.change, &mut controller, &mut session, &opponent);
+                replies.push((r.reply, result));
+            }
             controller.tick(&mut session, Instant::now());
+
+            if controller.games() != game.0 {
+                game = (controller.games(), game_id(seed, controller.games()), now_ms());
+            }
+            let v =
+                View::new(&controller, session.follower(), &engine, game.1.clone(), game.2, Instant::now());
+            view_tx.send_if_modified(|old| {
+                if old.same(&v) {
+                    false
+                } else {
+                    *old = v;
+                    true
+                }
+            });
+            // Answered once the change is in what the app reads.
+            for (tx, result) in replies {
+                let _ = tx.send(result);
+            }
             session.poll(now);
         }
+    }
+
+    /// A settings change from the app.
+    fn apply(
+        change: Change,
+        controller: &mut Controller,
+        session: &mut Session,
+        opponent: &Opponent,
+    ) -> Result<String, String> {
+        let now = Instant::now();
+        match change {
+            Change::Level(level) => {
+                controller.set_level(level, session);
+                Ok(format!("The engine plays at level {}.", controller.level()))
+            }
+            Change::Player(side) => {
+                if let Some(t) = controller.set_player(side, session, now)? {
+                    opponent.ask(t);
+                }
+                Ok(format!("You play {}.", side.name()))
+            }
+            Change::Time(time) => {
+                let label = time.map_or_else(|| "untimed".to_owned(), |t| t.to_string());
+                Ok(if controller.set_time(time, session, now) {
+                    format!("This game is {label}.")
+                } else {
+                    format!("The next game is {label}.")
+                })
+            }
+        }
+    }
+
+    fn now_ms() -> i64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(0))
     }
 
     fn log(e: &Event, s: &Session) {

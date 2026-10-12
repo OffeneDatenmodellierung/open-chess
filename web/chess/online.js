@@ -22,18 +22,24 @@ function defaultSiteBase() {
   return meta || location.origin;
 }
 
-/// Ask a server what its site is called, for the app's labels. Quietly
-/// keeps the default when it can't say (offline, or not an open-chess server).
+/// Ask a server what its site is called, for the app's labels, and
+/// whether it's an open-chess board device (`"device": true`), which needs
+/// no sign-in and plays on the board. Quietly keeps the defaults when it
+/// can't say (offline, or not an open-chess server).
 export async function loadSiteName(base) {
   try {
     const r = await fetch(base.replace(/\/+$/, "") + "/", { headers: { Accept: "application/json" } });
     if (!r.ok) return;
     const j = await r.json();
     if (typeof j.site === "string" && j.site.trim()) SERVERS.site.name = j.site.trim();
+    SERVERS.site.device = j.device === true;
   } catch {
     // keep the default
   }
 }
+
+/// The token a board device is sent: it has no accounts.
+export const DEVICE_TOKEN = "device";
 
 function b64url(bytes) {
   return btoa(String.fromCharCode(...new Uint8Array(bytes)))
@@ -243,5 +249,14 @@ export class Api {
   }
   decline(id) {
     return this.post(`/api/challenge/${id}/decline`);
+  }
+  // open-chess board devices only:
+  /// The device's settings and what it's doing.
+  device() {
+    return this.json("/api/device");
+  }
+  /// Change the device's settings: any of {level, play, time} ("5+3", "none").
+  setDevice(form) {
+    return this.post("/api/device", form);
   }
 }

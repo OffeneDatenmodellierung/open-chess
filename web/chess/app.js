@@ -4,7 +4,7 @@
 
 import init, { Session, checkFen, completeFen, glossary, motifs, openingBook } from "./pkg/open_chess_wasm.js";
 import { Board, GLYPH } from "./board.js";
-import { Api, SERVERS, beginSignIn, finishSignIn, lichessTablebase, loadSiteName } from "./online.js";
+import { Api, DEVICE_TOKEN, SERVERS, beginSignIn, finishSignIn, lichessTablebase, loadSiteName } from "./online.js";
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -106,7 +106,7 @@ const settings = {
   train: store.get("train", true),
   siteBase: store.get("siteBase", SERVERS.site.base),
 };
-loadSiteName(settings.siteBase);
+const siteLoaded = loadSiteName(settings.siteBase);
 
 const app = {
   mode: store.get("mode", "bot"),
@@ -135,6 +135,7 @@ const app = {
     gameAbort: null,
     error: "",
     assistSent: null,
+    device: null, // a board device's settings (GET /api/device)
   },
 };
 
@@ -185,10 +186,16 @@ function helpOn() {
   return settings.train && helpAllowed();
 }
 
+/// Playing on a board device: moves are made on the board, the app shows them.
+function onDevice() {
+  return app.mode === "online" && !!SERVERS[app.online.serverKey].device;
+}
+
 function canMove() {
   if (app.editing || !app.vst || app.vst.status !== "started") return false;
   if (app.mode === "local" || app.mode === "analyse") return true;
   if (!atLatest()) return false;
+  if (onDevice()) return false;
   if (app.mode === "bot") return !app.thinking && (app.st.turn === "white") === app.userWhite;
   const g = app.online.game;
   return !!g && g.status === "started" && (app.st.turn === "white") === g.myWhite;
@@ -428,6 +435,11 @@ function renderStatus() {
   let msg = `${side} to move${st.check ? ", in check" : ""}.`;
   if (app.mode === "bot" && (st.turn === "white") !== app.userWhite) msg = settings.level >= 9 ? `The bot is thinking (up to ${settings.thinkSecs} seconds)…` : "The bot is thinking…";
   if (app.mode === "online" && app.online.game && !canMove() && onlineLive()) msg = "Waiting for your opponent…";
+  if (onDevice() && onlineLive()) {
+    const d = app.online.device;
+    const mine = (st.turn === "white") === app.online.game.myWhite;
+    msg = d?.awaitingBoard ? "Make the engine's move on the board." : mine ? "Your move: make it on the board." : "The engine is thinking…";
+  }
   if (app.mode === "online" && !app.online.game) msg = "Start or accept a game in Play online.";
   showStatus(msg);
 }
@@ -1025,14 +1037,16 @@ function serverBase(key) {
 
 async function connectOnline() {
   const o = app.online;
-  const token = store.get(`token:${o.serverKey}`, null);
+  const token = SERVERS[o.serverKey].device ? DEVICE_TOKEN : store.get(`token:${o.serverKey}`, null);
   o.api = token ? new Api(serverBase(o.serverKey), token) : null;
   o.me = null;
+  o.device = null;
   o.error = "";
   o.eventsAbort?.abort();
   if (!o.api) return renderOnline();
   try {
     o.me = await o.api.account();
+    if (SERVERS[o.serverKey].device) o.device = await o.api.device();
   } catch (e) {
     o.error = `Couldn't reach ${SERVERS[o.serverKey].name}: ${e.message}. Check you're online, or sign in again.`;
     return renderOnline();
@@ -1065,7 +1079,9 @@ function onEvent(ev) {
   } else if (ev.type === "gameStart") {
     const id = ev.game.gameId || ev.game.id;
     o.challenges.clear();
-    if (!o.game || o.game.status !== "started") openOnlineGame(id);
+    // A board device starts a new game whenever the pieces are set up again.
+    const replaced = SERVERS[o.serverKey].device && o.game && o.game.id !== id;
+    if (!o.game || o.game.status !== "started" || replaced) openOnlineGame(id);
   }
   renderOnline();
 }
@@ -1111,8 +1127,11 @@ function onGameState(s) {
   const g = app.online.game;
   g.status = s.status;
   g.winner = s.winner;
-  g.wtime = s.wtime;
-  g.btime = s.btime;
+  // Untimed games (correspondence, a board device without a clock) send
+  // the largest 32-bit number of milliseconds: show no clock.
+  const untimed = s.wtime >= 2147483647;
+  g.wtime = untimed ? null : s.wtime;
+  g.btime = untimed ? null : s.btime;
   g.at = Date.now();
   g.drawOffer = (g.myWhite ? s.bdraw : s.wdraw) || false;
   const moves = s.moves ? s.moves.split(" ") : [];
@@ -1120,6 +1139,7 @@ function onGameState(s) {
   if (moves.join(" ") !== app.st.uci.join(" ")) loadGame(g.fen, moves);
   else refresh();
   declareAssist();
+  refreshDevice();
   if (g.status !== "started") {
     app.online.gameAbort?.abort();
     showStatus(`Game over: ${g.winner ? `${g.winner === "white" ? "White" : "Black"} wins` : "draw"} (${g.status}). Training is available again for review.`);
@@ -1137,6 +1157,39 @@ function declareAssist() {
   o.api.assist(o.game.id, on).catch(() => {
     o.assistSent = null;
   });
+}
+
+/// A board device's settings can change on the device too (the clock's
+/// buttons): read them again as the game goes on.
+async function refreshDevice() {
+  const o = app.online;
+  if (!onDevice() || !o.api) return;
+  try {
+    o.device = await o.api.device();
+    renderOnline();
+    renderStatus();
+  } catch {
+    // keep what we have
+  }
+}
+
+function deviceCard() {
+  const o = app.online;
+  const d = o.device || {};
+  const times = ["none", "3+2", "5+0", "5+3", "10+0", "10+5", "15+10", "30+0"];
+  const time = d.time || "none";
+  if (!times.includes(time)) times.push(time);
+  return `<section class="card"><h3>${esc(SERVERS[o.serverKey].name)}</h3>
+    <p>Play on the board: this app shows the game, the engine's moves and the clock. Set up the starting position on the board for a new game; put pieces back to take moves back.</p>
+    <p class="hint">Opponent: ${esc(d.engine || "the engine")}${d.paused ? " · clock paused" : ""}</p>
+    ${d.builtin ? `<label class="field"><span>Engine level</span><select id="devLevel">${[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `<option ${n === d.level ? "selected" : ""}>${n}</option>`).join("")}</select></label>` : ""}
+    <div class="row">
+      <label class="field"><span>You play</span><select id="devPlay"><option value="white" ${d.play === "white" ? "selected" : ""}>White</option><option value="black" ${d.play === "black" ? "selected" : ""}>Black</option></select></label>
+      <label class="field"><span>Time control</span><select id="devTime">${times.map((t) => `<option value="${t}" ${t === time ? "selected" : ""}>${t === "none" ? "Untimed" : t}</option>`).join("")}</select></label>
+    </div>
+    <div class="row"><button type="button" class="primary" id="saveDevice">Apply</button></div>
+    <p class="hint">A new time control starts with the next game once this one has begun. The clock's buttons change the level and sides too.</p>
+  </section>`;
 }
 
 async function playOnline(uci) {
@@ -1178,6 +1231,10 @@ function renderOnline() {
   }
   if (!o.me) {
     box.innerHTML = `${serverPick}<p>${o.error ? `<span class="error">${esc(o.error)}</span>` : "Connecting…"}</p><button type="button" id="signOut">Sign out</button>`;
+    return;
+  }
+  if (SERVERS[o.serverKey].device) {
+    box.innerHTML = `${serverPick}${o.error ? `<p class="error">${esc(o.error)}</p>` : ""}${deviceCard()}`;
     return;
   }
   const g = o.game;
@@ -1256,6 +1313,15 @@ function wireOnline() {
       return onlineAction(() => api().challenge(who, tc()), `Challenge sent to ${who}.`);
     }
     if (t.id === "playAi") return onlineAction(() => api().challengeAi(Number($("aiLevel").value), tc()));
+    if (t.id === "saveDevice") {
+      const form = { play: $("devPlay").value, time: $("devTime").value };
+      if ($("devLevel")) form.level = $("devLevel").value;
+      return onlineAction(async () => {
+        const d = await api().setDevice(form);
+        o.device = d;
+        if (d?.said?.length) showStatus(d.said.join(" "));
+      });
+    }
     const g = o.game;
     if (t.id === "acceptDraw") return onlineAction(() => api().draw(g.id, true));
     if (t.id === "declineDraw") return onlineAction(() => api().draw(g.id, false));
@@ -1480,6 +1546,12 @@ async function main() {
     store.set(`token:${signedIn.serverKey}`, signedIn.token);
     store.set("server", signedIn.serverKey);
     app.online.serverKey = signedIn.serverKey;
+    app.mode = "online";
+  }
+  // Opened from a board device: show the board's game.
+  await siteLoaded;
+  if (!signedIn && SERVERS.site.device && settings.siteBase === SERVERS.site.base) {
+    app.online.serverKey = "site";
     app.mode = "online";
   }
   setMode(["bot", "local", "analyse", "online"].includes(app.mode) ? app.mode : "bot");

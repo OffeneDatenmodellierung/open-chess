@@ -50,6 +50,12 @@ pub struct TimeControl {
     pub increment_secs: u32,
 }
 
+impl std::fmt::Display for TimeControl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}+{}", self.minutes, self.increment_secs)
+    }
+}
+
 impl std::str::FromStr for TimeControl {
     type Err = String;
 
@@ -106,6 +112,8 @@ pub struct Controller {
     running: Option<Running>,
     paused: bool,
     last_engine_san: Option<String>,
+    flagged: Option<Side>,
+    games: u32,
 }
 
 impl Controller {
@@ -121,6 +129,8 @@ impl Controller {
             running: None,
             paused: false,
             last_engine_san: None,
+            flagged: None,
+            games: 0,
             setup,
         }
     }
@@ -136,6 +146,75 @@ impl Controller {
     /// Whether a move has been asked for and not answered yet.
     pub fn thinking(&self) -> bool {
         self.thinking.is_some()
+    }
+
+    /// How many games have started (a new one each time the starting
+    /// position is set up).
+    pub fn games(&self) -> u32 {
+        self.games
+    }
+
+    /// The side whose flag fell, ending the game.
+    pub fn flagged(&self) -> Option<Side> {
+        self.flagged
+    }
+
+    /// The side whose clock is running (not while paused).
+    pub fn running(&self) -> Option<Side> {
+        self.running.filter(|_| !self.paused).map(|r| r.side)
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// The time control new games are played to.
+    pub fn time_control(&self) -> Option<TimeControl> {
+        self.setup.time
+    }
+
+    /// Set the engine's level (1–8), from the next move it's asked for.
+    pub fn set_level(&mut self, level: u8, s: &mut Session) {
+        self.level = level.clamp(1, 8);
+        say(s, &format!("level {}", self.level));
+    }
+
+    /// Play the other side: the engine takes over the side to move when
+    /// it's the person's turn. Not while the engine thinks or its move is
+    /// waiting to be made on the board, or once the game is over.
+    pub fn set_player(
+        &mut self,
+        side: Side,
+        s: &mut Session,
+        now: Instant,
+    ) -> Result<Option<Think>, &'static str> {
+        if side == self.player {
+            return Ok(None);
+        }
+        if self.ended {
+            return Err("the game is over: set up the pieces for a new one");
+        }
+        if self.thinking.is_some() || s.follower().awaiting_board() {
+            return Err("wait for the engine's move to be made on the board");
+        }
+        self.player = side;
+        say(s, if self.player == Side::White { "you: wht" } else { "you: blk" });
+        Ok(self.engine_turn(s, now))
+    }
+
+    /// Change the time control (`None`: untimed). It applies now if the
+    /// game hasn't started, otherwise from the next game. Whether it
+    /// applied now.
+    pub fn set_time(&mut self, time: Option<TimeControl>, s: &mut Session, now: Instant) -> bool {
+        self.setup.time = time;
+        if s.follower().game().ply() == 0 && !self.ended {
+            self.reset_clock(s, now);
+            if time.is_none() {
+                s.send(Command::ClockEndText);
+            }
+            return true;
+        }
+        false
     }
 
     /// Milliseconds left for a side, as of `now`, when there's a clock.
@@ -155,8 +234,10 @@ impl Controller {
                 self.engine_turn(s, now)
             }
             Event::Game(Observation::NewGame) => {
+                self.games += 1;
                 self.thinking = None;
                 self.ended = false;
+                self.flagged = None;
                 self.last_engine_san = None;
                 self.reset_clock(s, now);
                 s.send(Command::LightsOff);
@@ -175,6 +256,7 @@ impl Controller {
             Event::Game(Observation::Takeback { .. }) => {
                 self.thinking = None;
                 self.ended = false;
+                self.flagged = None;
                 self.stop(now);
                 s.send(Command::LightsOff);
                 say(s, "takeback");
@@ -240,24 +322,15 @@ impl Controller {
                 None
             }
             ClockButton::Button(1) => {
-                self.level = (self.level - 1).max(1);
-                say(s, &format!("level {}", self.level));
+                self.set_level(self.level.saturating_sub(1), s);
                 None
             }
             ClockButton::Button(3) => {
-                self.level = (self.level + 1).min(8);
-                say(s, &format!("level {}", self.level));
+                self.set_level(self.level + 1, s);
                 None
             }
-            ClockButton::Button(2) => {
-                // Switch sides: the engine takes over the side to move.
-                if self.ended || self.thinking.is_some() || s.follower().awaiting_board() {
-                    return None;
-                }
-                self.player = self.player.opposite();
-                say(s, if self.player == Side::White { "you: wht" } else { "you: blk" });
-                self.engine_turn(s, now)
-            }
+            // Switch sides: the engine takes over the side to move.
+            ClockButton::Button(2) => self.set_player(self.player.opposite(), s, now).ok().flatten(),
             ClockButton::Button(4) => {
                 if self.clock.is_some() && !self.ended {
                     self.toggle_pause(s, now);
@@ -395,6 +468,7 @@ impl Controller {
         self.running = None;
         self.ended = true;
         self.thinking = None;
+        self.flagged = Some(side);
         let text = if side == Side::White { "flag 0-1" } else { "flag 1-0" };
         s.send(Command::ClockText { text: text.into(), beep: 4 });
     }
