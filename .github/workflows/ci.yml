@@ -37,6 +37,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked
+      # Feature-gated code the workspace build leaves out.
+      - run: cargo clippy -p open-chess-dgt --all-targets --features serial --locked
 
   # Everything, the server's end-to-end tests included (two replicas on a
   # real Postgres, fair play with Stockfish).
@@ -74,6 +76,8 @@ jobs:
           CHESS_TEST_DATABASE_URL: postgres://chess:chess@127.0.0.1:5432/chess?sslmode=disable
           STOCKFISH: /usr/games/stockfish
         run: cargo test --workspace --locked --no-fail-fast
+      # The board transport, on a pseudo-terminal.
+      - run: cargo test -p open-chess-dgt --features serial --locked
 
   # The Chess lab app: the engine and board reader built for wasm and bound
   # with wasm-bindgen, plus the static files, ready to serve.

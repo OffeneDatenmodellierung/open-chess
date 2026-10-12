@@ -51,84 +51,9 @@ written here.
 
 ## API
 
-Everything below behaves as Lichess documents it; tokens are the site's.
-
-| Area | Endpoints |
-|---|---|
-| OAuth | `GET/POST /oauth` (consent page), `POST /api/token`, `DELETE /api/token`, `POST /api/token/test` |
-| Account | `GET /api/account`, `/api/account/email`, `/api/account/playing`, `/api/user/{username}` |
-| Bots | `POST /api/bot/account/upgrade`, `GET /api/bot/online` |
-| Streams | `GET /api/stream/event`, `/api/board/game/stream/{id}`, `/api/bot/game/stream/{id}`, `/api/stream/game/{id}` |
-| Challenges | `POST /api/challenge/{username}` (with `keepAliveStream`, `rules`, and `acceptByToken`), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline`, `…/cancel` |
-| Playing | `/api/board/game/{id}/…` and `/api/bot/game/{id}/…`: `move/{uci}` (`offeringDraw`), `resign`, `abort`, `draw/{yes\|no}`, `takeback/{yes\|no}`, `claim-victory`, `claim-draw`, `chat` (GET and POST) |
-| Games | `GET /game/export/{id}` (PGN, or JSON with `Accept: application/json`; `pgnInJson`, `clocks`, `moves`) |
-| Fair play (ours) | `GET /api/fairplay/queue`, `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` |
-
-`crates/chess-conformance` drives a running server through a full game,
-challenges and streams, and validates every response against the schemas in
-Lichess's OpenAPI spec (24 checks, all passing):
-
-```sh
-git clone --depth 1 https://github.com/lichess-org/api /tmp/lichess-api
-cargo run -p esports-lab-chess-conformance -- --base http://127.0.0.1:8090 \
-    --spec /tmp/lichess-api/doc/specs --db "$DATABASE_URL" --site-schema esports
-```
- An unmodified lichess-bot
-connects, accepts challenges, chats and plays Stockfish moves.
-
-**Not implemented** (and answered with Lichess's errors): variants other
-than standard and from-position, correspondence games, seeks and the lobby,
-tournaments, `POST /api/challenge/ai`, studies, puzzles. Rated games from a
-position, and rated unlimited games, are refused as on Lichess.
-
-**Differences worth knowing**
-* `acceptByToken`, which the site's backend uses to start a match
-  without either player clicking, isn't in Lichess's current spec. Here it
-  needs the opponent's token with a playing scope.
-* Clocks start after both sides' first move. A side that doesn't make its
-  first move within `CHESS_FIRST_MOVE_SECS` gets the game aborted.
-  Threefold repetition and the fifty-move rule draw automatically, as on
-  Lichess.
-* The public move stream runs `CHESS_PUBLIC_DELAY_PLIES` plies behind a
-  live game, as Lichess's does, so it can't feed an engine helping a player.
-
-## Accounts, tokens and OAuth
-
-A chess account is a site player. It's created on first use, with a
-Lichess-style username made from the player's name. Bearer tokens are rows
-in the site's `api_tokens`, hashed the same way, with Lichess's scope names.
-The site's Account page offers these scopes:
-
-| Scope | For |
-|---|---|
-| `board:play` | playing through the Board API (people) |
-| `challenge:read`, `challenge:write` | seeing and sending challenges (as on Lichess, `board:play` and `bot:play` may also send and answer challenges, and see the event stream) |
-| `email:read` | apps reading the player's email |
-| `bot:play` | bot accounts (managers and admins only) |
-| `chess:fairplay` | the fair-play review API (managers and admins only) |
-
-None of them opens anything on the site itself. A revoked token stops
-working here within 15 seconds (tokens are cached that long).
-
-OAuth works as on Lichess: no client registration, PKCE S256, one-year
-tokens. The consent page recognises whoever is signed in to the site
-through its session cookie: on a host of its own
-(`https://chess.example.com`), set the site's session cookie domain
-to the shared parent (`example.com`) so the cookie reaches it; under
-the site's origin (`CHESS_PUBLIC_URL=https://<site>/chess`) nothing extra
-is needed. Tokens it issues are ordinary site tokens named
-`OAuth: <client_id>`, listed and revocable on the Account page.
-
-**Bots.** `open-chess bot create --name esl-stockfish-1800` makes a bot:
-a site player, a bot account here and a token (printed once). Bot accounts
-play only through the Bot API, and people only through the Board API, as on
-Lichess. To run one, point lichess-bot (or a bot built on `chess-client`
-and `chess-engine`) at the server with that token:
-
-```yaml
-token: "esl_…"
-url: "https://chess.example.com/"
-```
+The endpoints (the Lichess API, live game streams, OAuth and scopes, and
+open-chess's own additions) are in [docs/api.md](../../docs/api.md); using the
+server with Lichess tools and bots is in [docs/lichess.md](../../docs/lichess.md).
 
 ## Anti-cheat
 
@@ -175,19 +100,6 @@ it does, it says so: `POST /api/board/game/{id}/assist` with `on=true` or
 `declaredAssist`. This is ground truth for training the screening model
 on known assisted and unassisted games; screening itself never relies on
 it, because a cheating client wouldn't send it.
-
-## Training-app additions
-
-open-chess's own endpoints, alongside the Lichess API:
-
-| Endpoint | |
-|---|---|
-| `POST /api/board/game/{id}/assist` | The app's engine help went on (`on=true`) or off during your game |
-| `GET /api/esl/position?fen=` | The position dictionary: the deepest stored evaluation of a position (best move, score, depth, how many screened games and confirmed photos reached it, win/draw/loss odds), `queued` when a confirmed photo's position is waiting for the worker, and `hint`: the deepest analysis a training app sent in (not checked). Refused while you have a game in progress here. |
-| `POST /api/esl/position` `{fen, best?, scoreCp, depth, engine?, moves?: [{uci, scoreCp}]}` | Send in the app's own analysis (scores from the side to move's view). Kept per player and position, the deepest wins; shown as a hint, never mixed with the worker's evaluations. Refused while you're playing here. |
-| `GET /api/esl/position/moves?fen=` | Every legal move with the best value known for it (`scoreCp` from the mover's view, `depth`, White's `wdl` after it, `source`): the worker's scoring of this position's moves (`engine`), else the stored evaluation of the position it leads to (`after`), else an app's hint (`hint`); `null` when unknown. |
-| `POST /api/esl/recognise` | `{"image": "data:image/jpeg;base64,…"}` → the board read from a photo: `placement` (FEN piece placement, White's side), `unsureSquares`, `confidence`, and from our board reader (`source: "model"`) each square's class probabilities in `squares`, which the app weighs every legal move against. A photo the reader isn't sure of is also shown to the vision model (`CHESS_VISION_ENDPOINT`), whose reading comes back in `llm` (or as the answer, `source: "llm"`, when there's no reader or the reader's board can't be a game position), and is kept for the site's Review page (`photoId`). Off unless `CHESS_VISION_LOCAL_MODEL` or `CHESS_VISION_ENDPOINT` is set. |
-| `POST /api/esl/photos/{id}/confirm` | `{"placement": "…"}` from the player who sent photo `id`: the position it showed (they played the move it matched, or set the position up in the editor). Kept as a player-confirmed label; a reviewer's label always wins. |
 
 ## Scaling
 
@@ -245,7 +157,7 @@ Everything is environment.
 open-chess serve             # the API (runs migrations first)
 open-chess analyse           # the fair-play worker (and, when idle, the dictionary's photo positions)
 open-chess migrate           # schema only
-open-chess bot create --name esl-stockfish-1800
+open-chess bot create --name stockfish-1800
 open-chess bot list
 ```
 

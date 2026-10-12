@@ -41,6 +41,14 @@ A chess server, engine and training app in Rust.
 
 Packages are named `open-chess-*` (`cargo test -p open-chess-core`).
 
+## Docs
+
+* [docs/api.md](docs/api.md): the server's API, live game streams, OAuth and scopes
+* [docs/lichess.md](docs/lichess.md): using it with Lichess clients, bots and the Lichess DGT connector
+* [docs/boards.md](docs/boards.md): electronic boards, PicoChess and DGT devices: what works and what's next
+* [docs/engine.md](docs/engine.md): the engine and its training
+* [The server README](crates/chess-server/README.md): running and configuring it, fair play, scaling
+
 ## Build and test
 
 Rust 1.97 or newer.
