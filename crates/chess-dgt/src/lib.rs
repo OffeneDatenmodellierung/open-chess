@@ -14,9 +14,14 @@
 //! * [`Follower`] turns a sequence of settled readings into what happened
 //!   in the game: a legal move, a takeback, a new game, a position set up.
 //!
-//! The transport (a serial port, a Bluetooth RFCOMM channel) and the timing
-//! (when a reading has settled) belong to the caller, so everything here is
-//! tested with bytes alone.
+//! * [`Session`] runs a conversation with one board: the handshake, reading
+//!   the board once it has settled after a move, keeping the link alive.
+//!
+//! None of that does I/O: the caller feeds bytes and the time, so it is all
+//! tested with bytes alone. The `serial` feature adds the transport for
+//! USB, serial and Bluetooth (RFCOMM) boards on Linux and macOS
+//! ([`serial::run`]); `cargo run -p open-chess-dgt --features serial
+//! --example watch -- /dev/ttyACM0` prints a game as it is played.
 //!
 //! The DGT Pi's built-in clock is not on this protocol: it hangs off the
 //! Pi's I²C bus (a separate crate).
@@ -29,8 +34,12 @@ mod board;
 mod clock;
 mod follow;
 mod protocol;
+#[cfg(all(feature = "serial", unix))]
+pub mod serial;
+mod session;
 
 pub use board::{Orientation, Piece, PieceKind, Placement, STARTING_PLACEMENT};
 pub use clock::{ClockAck, ClockButton, ClockReport, ClockSide, ClockStatus, ClockTimes, SideTime};
 pub use follow::{Follower, Observation};
 pub use protocol::{Command, Decoder, Message, RunMode, Square};
+pub use session::{Event, Session, Timing};

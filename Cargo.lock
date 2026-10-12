@@ -2569,6 +2569,7 @@ name = "open-chess-dgt"
 version = "0.1.0"
 dependencies = [
  "open-chess-core",
+ "rustix",
 ]
 
 [[package]]

@@ -8,8 +8,26 @@ license = "MIT OR Apache-2.0"
 authors = ["Mark Olliver"]
 publish = false
 
+[features]
+# Serial, USB and Bluetooth (RFCOMM) boards on Unix (Linux, macOS).
+serial = ["dep:rustix"]
+
 [dependencies]
 chess-core = { package = "open-chess-core", path = "../chess-core" }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.5", features = ["fs", "termios"], optional = true }
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { version = "1.1.5", features = ["fs", "termios", "pty"] }
+
+[[example]]
+name = "watch"
+required-features = ["serial"]
+
+[[test]]
+name = "serial_pty"
+required-features = ["serial"]
 
 [lints.rust]
 unsafe_code = "forbid"
