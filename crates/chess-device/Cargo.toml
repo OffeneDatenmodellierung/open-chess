@@ -17,6 +17,7 @@ chess-core = { package = "open-chess-core", path = "../chess-core" }
 chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
 chess-engine = { package = "open-chess-engine", path = "../chess-engine" }
 chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt" }
+chess-centaur = { package = "open-chess-centaur", path = "../chess-centaur" }
 chess-dgtpi = { package = "open-chess-dgtpi", path = "../chess-dgtpi" }
 chess-proto = { package = "open-chess-proto", path = "../chess-proto" }
 anyhow = "1.0.104"

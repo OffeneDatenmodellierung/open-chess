@@ -107,6 +107,30 @@ time, and the five buttons work as on a DGT3000 on the cable.
 `--clock sim` runs the same code against a simulated DGT3000, to try
 everything else without one.
 
+**The DGT Centaur.** On a Centaur, `open-chess-device --centaur` runs on
+its own Raspberry Pi and talks to the board's controller (`/dev/serial0`,
+1,000,000 baud; `chess-centaur`):
+
+```sh
+open-chess-device --centaur --level 3 --listen 0.0.0.0:8080 --app /opt/open-chess/app
+```
+
+The Centaur senses only whether a square has a piece, not which, so moves
+are read from pieces lifted and put down: a move counts when its piece is
+put down on its square (for a capture, lift the captured piece and put
+yours in its place, in either order), castling when the second of king and
+rook is put down, en passant when the captured pawn is lifted, if that's
+last. Lifting a piece and putting it back does nothing; setting an earlier
+position back takes moves back; the starting position starts a new game.
+Promotions are to a queen. The engine's move lights its two squares and
+beeps. The buttons: back shows the engine's move again (on the clock, so
+for now only in the app), down and up change the level, tick switches sides,
+play pauses the clock. The e-paper screen isn't driven yet: the app is the
+screen (`--listen`). The original Centaur has a Raspberry Pi Zero W, a
+32-bit ARMv6: build for `arm-unknown-linux-gnueabihf`, or swap in a Zero 2 W
+and use the 64-bit build. [`deploy/centaur`](../deploy/centaur) has a
+systemd unit.
+
 ## Coming next
 
 In order; each lands in open-chess as it's ready.
@@ -134,8 +158,9 @@ In order; each lands in open-chess as it's ready.
 |---|---|---|
 | DGT USB / Bluetooth e-Board, Smart Board, Revelation II | — (a computer drives it) | Works: `open-chess-device` (above) |
 | DGT Pi | Raspberry Pi 3 in a DGT3000 clock; the board on USB or Bluetooth | Works: the board via `chess-dgt`, the built-in clock via `chess-dgtpi` (`--clock dgtpi`). Install: a 64-bit Raspberry Pi OS card with the runtime, like PicoChess v4 |
-| DGT Centaur | Raspberry Pi Zero (swap for a Zero 2 W), board controller on serial, e-paper | Planned, after the DGT Pi; occupancy-only sensing needs lift-and-place move reading |
-| DGT Pegasus | Bluetooth LE | Later |
+| DGT Centaur | Raspberry Pi Zero W (or a Zero 2 W swapped in), board controller on serial, e-paper | Works: board, lights, buttons, sounds (`--centaur`, `chess-centaur`); the e-paper screen next |
+| DGT Pegasus, Chessnut Air | Bluetooth LE; the Air recognises pieces | Next: a shared Bluetooth LE layer |
+| Chessnut Go | Bluetooth; recognises pieces | After the Air, if it shares its protocol (unconfirmed) |
 | Raspberry Pi 4 / 5 with any USB or Bluetooth board | — | With the runtime; a DGT3000 on a Pi 5 needs a different clock backend |
 
 Nothing here touches a device's own firmware: a DGT Pi or Centaur boots from
@@ -149,8 +174,11 @@ Apache-2.0, like the rest of open-chess. The DGT Pi clock driver
 (`chess-dgtpi`) is a port of DGT's `dgtpicom` (GPL-3.0), and the device
 runtime (`chess-device`) uses it and will port parts of PicoChess (GPL-3.0),
 so both are GPL-3.0-or-later. Nothing MIT/Apache depends on them, and
-`deny.toml` allows GPL for those two crates only.
+`deny.toml` allows GPL for those crates only. The Centaur's controller
+(`chess-centaur`) follows the protocol as the GPL DGTCentaurMods project
+worked it out, so it's GPL-3.0-or-later too.
 
 Not yet tried on real hardware: the DGT Pi driver follows `dgtpicom`
-message for message (its tests check the bytes against DGT's), and is
-tested against a simulated clock.
+message for message (its tests check the bytes against DGT's), the Centaur
+driver follows DGTCentaurMods' packets, and both are tested against
+simulated hardware.

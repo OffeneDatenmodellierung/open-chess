@@ -1,0 +1,27 @@
+# open-chess on a DGT Centaur: its board controller on the Pi's serial
+# port, and the Chess lab app for phones on the same network (the e-paper
+# screen isn't driven yet).
+#
+#   sudo cp open-chess-device.service /etc/systemd/system/
+#   sudo systemctl edit open-chess-device   # change OPTIONS if you like
+#   sudo systemctl enable --now open-chess-device
+#
+# The serial port needs the console off it (raspi-config: serial login
+# shell no, serial hardware yes), as for DGTCentaurMods.
+
+[Unit]
+Description=open-chess on a DGT Centaur
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+SupplementaryGroups=dialout
+Environment=OPTIONS=--level 3
+ExecStart=/usr/local/bin/open-chess-device --centaur --board /dev/serial0 \
+    --listen 0.0.0.0:8080 --app /opt/open-chess/app --name "Centaur" $OPTIONS
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

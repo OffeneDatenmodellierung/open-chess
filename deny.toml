@@ -28,11 +28,15 @@ allow = [
 ]
 confidence-threshold = 0.9
 
-# The device runtime and the DGT Pi's clock driver, a port of DGT's GPL
-# dgtpicom (and later parts of PicoChess). Only these two of our own crates;
-# nothing else may depend on them.
+# The device runtime, the DGT Pi's clock driver (a port of DGT's GPL
+# dgtpicom) and the Centaur's controller (from GPL DGTCentaurMods). Only
+# these of our own crates; nothing else may depend on them.
 [[licenses.exceptions]]
 crate = "open-chess-dgtpi"
+allow = ["GPL-3.0-or-later"]
+
+[[licenses.exceptions]]
+crate = "open-chess-centaur"
 allow = ["GPL-3.0-or-later"]
 
 [[licenses.exceptions]]

@@ -20,7 +20,9 @@ use std::time::Instant;
 
 use chess_analysis::book::Book;
 use chess_core::{Clock, Game, Side, Status};
-use chess_dgt::{ClockButton, ClockReport, Command, Event, Observation, RunMode, Session, Square};
+use chess_dgt::{ClockButton, ClockReport, Command, Event, Observation, RunMode, Square};
+
+use crate::board::Board;
 
 /// A request for the engine's move in a position.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,7 +176,7 @@ impl Controller {
     }
 
     /// Set the engine's level (1–8), from the next move it's asked for.
-    pub fn set_level(&mut self, level: u8, s: &mut Session) {
+    pub fn set_level(&mut self, level: u8, s: &mut impl Board) {
         self.level = level.clamp(1, 8);
         say(s, &format!("level {}", self.level));
     }
@@ -185,7 +187,7 @@ impl Controller {
     pub fn set_player(
         &mut self,
         side: Side,
-        s: &mut Session,
+        s: &mut impl Board,
         now: Instant,
     ) -> Result<Option<Think>, &'static str> {
         if side == self.player {
@@ -194,7 +196,7 @@ impl Controller {
         if self.ended {
             return Err("the game is over: set up the pieces for a new one");
         }
-        if self.thinking.is_some() || s.follower().awaiting_board() {
+        if self.thinking.is_some() || s.awaiting_board() {
             return Err("wait for the engine's move to be made on the board");
         }
         self.player = side;
@@ -205,9 +207,9 @@ impl Controller {
     /// Change the time control (`None`: untimed). It applies now if the
     /// game hasn't started, otherwise from the next game. Whether it
     /// applied now.
-    pub fn set_time(&mut self, time: Option<TimeControl>, s: &mut Session, now: Instant) -> bool {
+    pub fn set_time(&mut self, time: Option<TimeControl>, s: &mut impl Board, now: Instant) -> bool {
         self.setup.time = time;
-        if s.follower().game().ply() == 0 && !self.ended {
+        if s.game().ply() == 0 && !self.ended {
             self.reset_clock(s, now);
             if time.is_none() {
                 s.send(Command::ClockEndText);
@@ -226,7 +228,7 @@ impl Controller {
     }
 
     /// React to the board. May ask for the engine's move.
-    pub fn on_event(&mut self, event: &Event, s: &mut Session, now: Instant) -> Option<Think> {
+    pub fn on_event(&mut self, event: &Event, s: &mut impl Board, now: Instant) -> Option<Think> {
         match event {
             Event::Connected { .. } => {
                 say(s, "ready");
@@ -250,7 +252,7 @@ impl Controller {
                     return None;
                 }
                 say(s, san);
-                self.start(s.follower().game().turn(), s, now);
+                self.start(s.game().turn(), s, now);
                 self.engine_turn(s, now)
             }
             Event::Game(Observation::Takeback { .. }) => {
@@ -283,10 +285,10 @@ impl Controller {
         &mut self,
         ply: usize,
         uci: Option<&str>,
-        s: &mut Session,
+        s: &mut impl Board,
         now: Instant,
     ) -> Option<Think> {
-        if self.thinking != Some(ply) || s.follower().game().ply() != ply || self.ended {
+        if self.thinking != Some(ply) || s.game().ply() != ply || self.ended {
             return None;
         }
         self.thinking = None;
@@ -296,7 +298,7 @@ impl Controller {
                     return None;
                 }
                 self.play_engine_move(uci, s);
-                self.start(s.follower().game().turn(), s, now);
+                self.start(s.game().turn(), s, now);
             }
             None => say(s, "no move"),
         }
@@ -304,7 +306,7 @@ impl Controller {
     }
 
     /// Let time pass: a flag may fall.
-    pub fn tick(&mut self, s: &mut Session, now: Instant) {
+    pub fn tick(&mut self, s: &mut impl Board, now: Instant) {
         let Some(r) = self.running else { return };
         if self.ended || self.paused {
             return;
@@ -315,7 +317,7 @@ impl Controller {
     }
 
     /// A DGT3000 button, from the board's cable or a DGT Pi's own clock.
-    pub fn on_button(&mut self, b: ClockButton, s: &mut Session, now: Instant) -> Option<Think> {
+    pub fn on_button(&mut self, b: ClockButton, s: &mut impl Board, now: Instant) -> Option<Think> {
         match b {
             ClockButton::Button(0) => {
                 let text = self.last_engine_san.clone().unwrap_or_else(|| "no move".into());
@@ -342,11 +344,11 @@ impl Controller {
         }
     }
 
-    fn engine_turn(&mut self, s: &mut Session, now: Instant) -> Option<Think> {
-        if self.check_end(s) || self.thinking.is_some() || s.follower().awaiting_board() {
+    fn engine_turn(&mut self, s: &mut impl Board, now: Instant) -> Option<Think> {
+        if self.check_end(s) || self.thinking.is_some() || s.awaiting_board() {
             return None;
         }
-        let game = s.follower().game();
+        let game = s.game();
         if game.turn() == self.player {
             return None;
         }
@@ -354,7 +356,7 @@ impl Controller {
             self.rng = splitmix(self.rng);
             if let Some(uci) = book.pick(game.board(), (self.rng >> 32) as u32) {
                 self.play_engine_move(&uci, s);
-                self.start(s.follower().game().turn(), s, now);
+                self.start(s.game().turn(), s, now);
                 return None;
             }
         }
@@ -376,8 +378,8 @@ impl Controller {
         Some(think)
     }
 
-    fn play_engine_move(&mut self, uci: &str, s: &mut Session) {
-        match s.follower_mut().play(uci) {
+    fn play_engine_move(&mut self, uci: &str, s: &mut impl Board) {
+        match s.play(uci) {
             Ok(played) => {
                 s.send(Command::ClockText { text: played.san.clone(), beep: 2 });
                 if let (Some(from), Some(to)) = (Square::from_name(&uci[0..2]), Square::from_name(&uci[2..4]))
@@ -391,12 +393,12 @@ impl Controller {
     }
 
     /// Show the result once, when the game is over. Whether it is.
-    fn check_end(&mut self, s: &mut Session) -> bool {
+    fn check_end(&mut self, s: &mut impl Board) -> bool {
         if self.ended {
             return true;
         }
-        let Some(outcome) = s.follower().game().outcome() else { return false };
-        if !s.follower().awaiting_board() {
+        let Some(outcome) = s.game().outcome() else { return false };
+        if !s.awaiting_board() {
             self.ended = true;
             self.running = None;
             s.send(Command::ClockText { text: result_text(outcome.status, outcome.winner), beep: 4 });
@@ -408,7 +410,7 @@ impl Controller {
 
     /// A move has been made: charge the side that was running, add the
     /// increment. True when its flag had already fallen (the game is over).
-    fn charge(&mut self, s: &mut Session, now: Instant) -> bool {
+    fn charge(&mut self, s: &mut impl Board, now: Instant) -> bool {
         let (Some(c), Some(r)) = (self.clock.as_mut(), self.running.take()) else { return false };
         if !self.paused {
             c.remaining_ms[r.side.index()] -= elapsed(r.since, now);
@@ -422,8 +424,8 @@ impl Controller {
     }
 
     /// Start a side's clock (clocks only run once the game has a move).
-    fn start(&mut self, side: Side, s: &mut Session, now: Instant) {
-        if self.clock.is_none() || self.ended || s.follower().game().ply() == 0 {
+    fn start(&mut self, side: Side, s: &mut impl Board, now: Instant) {
+        if self.clock.is_none() || self.ended || s.game().ply() == 0 {
             return;
         }
         self.running = Some(Running { side, since: now });
@@ -440,7 +442,7 @@ impl Controller {
         self.paused = false;
     }
 
-    fn toggle_pause(&mut self, s: &mut Session, now: Instant) {
+    fn toggle_pause(&mut self, s: &mut impl Board, now: Instant) {
         let Some(r) = self.running else { return };
         if self.paused {
             self.paused = false;
@@ -455,14 +457,14 @@ impl Controller {
         self.show_clock(s, now);
     }
 
-    fn reset_clock(&mut self, s: &mut Session, now: Instant) {
+    fn reset_clock(&mut self, s: &mut impl Board, now: Instant) {
         self.clock = self.setup.time.map(|t| Clock::new(t.minutes * 60, t.increment_secs));
         self.running = None;
         self.paused = false;
         self.show_clock(s, now);
     }
 
-    fn flag(&mut self, side: Side, s: &mut Session) {
+    fn flag(&mut self, side: Side, s: &mut impl Board) {
         if let Some(c) = self.clock.as_mut() {
             c.remaining_ms[side.index()] = 0;
         }
@@ -475,7 +477,7 @@ impl Controller {
     }
 
     /// Set the DGT3000 to the clock's times, running the side whose turn it is.
-    fn show_clock(&self, s: &mut Session, now: Instant) {
+    fn show_clock(&self, s: &mut impl Board, now: Instant) {
         let (Some(w), Some(b)) = (self.remaining(Side::White, now), self.remaining(Side::Black, now)) else {
             return;
         };
@@ -522,7 +524,7 @@ fn result_text(status: Status, winner: Option<Side>) -> String {
 }
 
 /// Up to eight characters on a DGT3000.
-fn say(s: &mut Session, text: &str) {
+fn say(s: &mut impl Board, text: &str) {
     s.send(Command::ClockText { text: text.chars().take(8).collect(), beep: 0 });
 }
 
@@ -541,7 +543,7 @@ pub fn describe(game: &Game) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chess_dgt::{Follower, Placement};
+    use chess_dgt::{Follower, Placement, Session};
     use std::time::Instant;
 
     fn frame(id: u8, data: &[u8]) -> Vec<u8> {

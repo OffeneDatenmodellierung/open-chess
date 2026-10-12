@@ -11,10 +11,10 @@
 use std::time::Instant;
 
 use chess_core::{Side, Speed, Status};
-use chess_dgt::Follower;
 use chess_proto as p;
 use serde_json::{Value, json};
 
+use crate::board::Board;
 use crate::controller::{Controller, TimeControl};
 
 /// The account the person at the board is.
@@ -59,14 +59,14 @@ pub struct View {
 impl View {
     pub fn new(
         controller: &Controller,
-        follower: &Follower,
+        board: &impl Board,
         engine: &EngineInfo,
         game_id: String,
         created_ms: i64,
         now: Instant,
     ) -> View {
-        let (c, f) = (controller, follower);
-        let g = f.game();
+        let c = controller;
+        let g = board.game();
         let (status, winner) = match (c.flagged(), g.outcome()) {
             (Some(side), _) => (Status::Outoftime, Some(side.opposite())),
             (None, Some(o)) => (o.status, o.winner),
@@ -89,7 +89,7 @@ impl View {
             level: c.level(),
             engine: engine.clone(),
             thinking: c.thinking(),
-            awaiting_board: f.awaiting_board(),
+            awaiting_board: board.awaiting_board(),
             time: c.time_control(),
             clocks,
             running: c.running(),
@@ -327,12 +327,13 @@ pub fn game_id(seed: u64, game: u32) -> String {
 mod tests {
     use super::*;
     use crate::controller::Setup;
+    use chess_dgt::{Follower, Session};
     use std::time::Duration;
 
     fn view(setup: Setup) -> View {
         let c = Controller::new(setup);
-        let f = Follower::new();
-        View::new(&c, &f, &EngineInfo { name: None }, game_id(7, 1), 1_700_000_000_000, Instant::now())
+        let s = Session::new(Follower::new());
+        View::new(&c, &s, &EngineInfo { name: None }, game_id(7, 1), 1_700_000_000_000, Instant::now())
     }
 
     #[test]

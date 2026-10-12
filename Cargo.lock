@@ -2524,6 +2524,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-chess-centaur"
+version = "0.1.0"
+dependencies = [
+ "open-chess-core",
+ "open-chess-dgt",
+]
+
+[[package]]
 name = "open-chess-client"
 version = "0.1.0"
 dependencies = [
@@ -2574,6 +2582,7 @@ dependencies = [
  "clap",
  "futures-util",
  "open-chess-analysis",
+ "open-chess-centaur",
  "open-chess-core",
  "open-chess-dgt",
  "open-chess-dgtpi",
