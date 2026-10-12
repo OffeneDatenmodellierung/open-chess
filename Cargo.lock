@@ -2565,6 +2565,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-chess-dgt"
+version = "0.1.0"
+dependencies = [
+ "open-chess-core",
+]
+
+[[package]]
 name = "open-chess-engine"
 version = "0.1.0"
 dependencies = [
