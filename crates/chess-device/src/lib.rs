@@ -5,6 +5,12 @@
 //! opening book, the moves on a DGT3000 clock and the squares lit on a
 //! Revelation II. The `open-chess-device` binary runs it; the
 //! [`controller`] is the game logic without I/O, tested on its own.
+//!
+//! The device can also serve the Chess lab app and a Lichess-style API
+//! ([`web`]), so a phone on the same network shows the game ([`view`]) and
+//! changes the device's settings.
 
 pub mod controller;
 pub mod opponent;
+pub mod view;
+pub mod web;

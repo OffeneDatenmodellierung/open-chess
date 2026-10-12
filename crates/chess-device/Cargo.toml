@@ -17,9 +17,18 @@ chess-core = { package = "open-chess-core", path = "../chess-core" }
 chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
 chess-engine = { package = "open-chess-engine", path = "../chess-engine" }
 chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt" }
+chess-proto = { package = "open-chess-proto", path = "../chess-proto" }
 anyhow = "1.0.104"
+axum = "0.8.9"
+bytes = "1"
 clap = { version = "4.6.7", features = ["derive"] }
-tokio = { version = "1.53.2", features = ["rt", "process", "io-util", "time", "sync"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+serde = "1.0.229"
+serde_json = "1.0.151"
+tokio = { version = "1.53.2", features = ["rt", "process", "io-util", "time", "sync", "net", "fs"] }
+
+[dev-dependencies]
+tokio = { version = "1.53.2", features = ["macros", "rt", "net", "io-util", "time"] }
 
 [target.'cfg(unix)'.dependencies]
 chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt", features = ["serial"] }

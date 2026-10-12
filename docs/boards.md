@@ -49,6 +49,45 @@ a flag ends the game. The DGT3000's buttons, left to right: show the
 engine's last move again, level down, switch sides (the engine takes over
 the side to move), level up, pause or resume the clock.
 
+**The Chess lab app as the board's screen.** With `--listen`, the device
+serves the app and a Lichess-style API; open its address on a phone or
+tablet on the same network:
+
+```sh
+scripts/build-chess-app.sh dist/chess
+cargo run --release -p open-chess-device -- --board /dev/ttyACM0 \
+    --listen 0.0.0.0:8080 --app dist/chess --name "Living room board"
+# then open http://<the device's address>:8080/ on the phone
+```
+
+The app opens on the board's game: the moves as they're made, the engine's
+move waiting to be made on the board, both clocks, and the app's own help
+(win odds, lines, move explanations) if you want it. Its Play online tab
+becomes the device's panel: the engine's level, which side you play, and
+the time control. Moves are still made on the board. It's the same app as
+on an open-chess server or lichess.org, reading the same streams; the
+device says it's a device (`GET /` → `"device": true`), so the app skips
+signing in.
+
+The device's API, for other clients:
+
+| Endpoint | What |
+|---|---|
+| `GET /` | `{"site": …, "device": true}` (browsers go to the app) |
+| `GET /api/account`, `/api/account/playing` | The person at the board (`board`) and their game |
+| `GET /api/stream/event` | `gameStart` when a game starts on the board, `gameFinish` when it ends (or a new one is set up) |
+| `GET /api/board/game/stream/{id}` | `gameFull`, then `gameState` as moves are made |
+| `GET /api/stream/game/{id}` | The live feed: the game, then the position and clocks after each move |
+| `GET /api/device` | Level, side, time control, the engine, whether it's thinking or its move is waiting |
+| `POST /api/device` | Change them: `level=1…8`, `play=white\|black`, `time=5+3\|none` |
+| `GET /app/…` | The app (from `--app`) |
+
+Board API moves, resignations and draw offers answer `400` with a message:
+on a board they're made with the pieces. There is no sign-in: anyone who can
+reach the address can watch and change the settings, so listen on a home
+network (`--listen 0.0.0.0:8080` is every network the device is on; give
+one address to narrow it), never the internet.
+
 ## Coming next
 
 In order; each lands in open-chess as it's ready.
@@ -56,10 +95,7 @@ In order; each lands in open-chess as it's ready.
 1. **Play the engine on the board.** Done (above): levels, UCI engines,
    Polyglot books, time controls on the clock and its buttons. PicoChess's
    full clock menu comes with PicoChess compatibility (4).
-2. **The Chess lab app as the board's screen.** The device serves the app;
-   a phone on the same Wi-Fi shows the game, the engine's lines and the
-   clock, and drives the device's settings. It speaks the same Lichess-style
-   API as the server, so the app needs only a "device" entry.
+2. **The Chess lab app as the board's screen.** Done (above).
 3. **Online play from the board** on lichess.org or an open-chess server,
    through the Board API, no browser needed.
 4. **PicoChess compatibility.** The device answers PicoChess's web API (the

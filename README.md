@@ -38,7 +38,7 @@ A chess server, engine and training app in Rust.
 | `chess-train` | Distributed engine training |
 | `chess-vision`, `chess-vision-train` | The board reader and its trainer |
 | `chess-dgt` | The DGT e-board protocol (USB, serial and Bluetooth boards, the Smart Board, the Revelation II, a DGT3000 on the board's cable) without I/O, and turning board readings into moves |
-| `chess-device` | `open-chess-device`: play open-chess's engine or any UCI engine on a DGT board, with Polyglot opening books |
+| `chess-device` | `open-chess-device`: play open-chess's engine or any UCI engine on a DGT board, with Polyglot opening books and the clock, and serve the app as the board's screen |
 
 Packages are named `open-chess-*` (`cargo test -p open-chess-core`).
 
