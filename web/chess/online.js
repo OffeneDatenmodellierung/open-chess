@@ -207,6 +207,19 @@ export class Api {
   position(fen) {
     return this.json(`/api/esl/position?fen=${encodeURIComponent(fen)}`);
   }
+  /// Every legal move with the dictionary's value for it, where known.
+  positionMoves(fen) {
+    return this.json(`/api/esl/position/moves?fen=${encodeURIComponent(fen)}`);
+  }
+  /// Send in this app's analysis of a position (a hint for others).
+  async positionHint(hint) {
+    const r = await fetch(this.base + "/api/esl/position", {
+      method: "POST",
+      headers: this.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify(hint),
+    });
+    if (!r.ok) throw new Error(`sending the analysis failed (${r.status})`);
+  }
   /// Read a board from a photo (a data: URL).
   async recognise(image) {
     const r = await fetch(this.base + "/api/esl/recognise", {
@@ -219,11 +232,12 @@ export class Api {
     return body;
   }
   /// Say what a photo the server kept for review showed (FEN placement).
-  async confirmPhoto(id, placement) {
+  async confirmPhoto(id, fen) {
+    const placement = String(fen).split(" ")[0];
     const r = await fetch(this.base + `/api/esl/photos/${id}/confirm`, {
       method: "POST",
       headers: this.headers({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ placement }),
+      body: JSON.stringify({ placement, fen: String(fen).includes(" ") ? fen : undefined }),
     });
     if (!r.ok) throw new Error(`confirming the photo failed (${r.status})`);
   }

@@ -64,9 +64,16 @@ Everything below behaves as Lichess documents it; tokens are the site's.
 | Games | `GET /game/export/{id}` (PGN, or JSON with `Accept: application/json`; `pgnInJson`, `clocks`, `moves`) |
 | Fair play (ours) | `GET /api/fairplay/queue`, `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` |
 
-`scripts/chess-conformance.py` drives a running server through a full game,
+`crates/chess-conformance` drives a running server through a full game,
 challenges and streams, and validates every response against the schemas in
-Lichess's OpenAPI spec (24 checks, all passing). An unmodified lichess-bot
+Lichess's OpenAPI spec (24 checks, all passing):
+
+```sh
+git clone --depth 1 https://github.com/lichess-org/api /tmp/lichess-api
+cargo run -p esports-lab-chess-conformance -- --base http://127.0.0.1:8090 \
+    --spec /tmp/lichess-api/doc/specs --db "$DATABASE_URL" --site-schema esports
+```
+ An unmodified lichess-bot
 connects, accepts challenges, chats and plays Stockfish moves.
 
 **Not implemented** (and answered with Lichess's errors): variants other
@@ -176,7 +183,9 @@ open-chess's own endpoints, alongside the Lichess API:
 | Endpoint | |
 |---|---|
 | `POST /api/board/game/{id}/assist` | The app's engine help went on (`on=true`) or off during your game |
-| `GET /api/esl/position?fen=` | The position dictionary: the deepest stored evaluation of a position (best move, score, depth, how many screened games reached it, win/draw/loss odds). Every position the fair-play worker screens is added. Refused while you have a game in progress here. |
+| `GET /api/esl/position?fen=` | The position dictionary: the deepest stored evaluation of a position (best move, score, depth, how many screened games and confirmed photos reached it, win/draw/loss odds), `queued` when a confirmed photo's position is waiting for the worker, and `hint`: the deepest analysis a training app sent in (not checked). Refused while you have a game in progress here. |
+| `POST /api/esl/position` `{fen, best?, scoreCp, depth, engine?, moves?: [{uci, scoreCp}]}` | Send in the app's own analysis (scores from the side to move's view). Kept per player and position, the deepest wins; shown as a hint, never mixed with the worker's evaluations. Refused while you're playing here. |
+| `GET /api/esl/position/moves?fen=` | Every legal move with the best value known for it (`scoreCp` from the mover's view, `depth`, White's `wdl` after it, `source`): the worker's scoring of this position's moves (`engine`), else the stored evaluation of the position it leads to (`after`), else an app's hint (`hint`); `null` when unknown. |
 | `POST /api/esl/recognise` | `{"image": "data:image/jpeg;base64,…"}` → the board read from a photo: `placement` (FEN piece placement, White's side), `unsureSquares`, `confidence`, and from our board reader (`source: "model"`) each square's class probabilities in `squares`, which the app weighs every legal move against. A photo the reader isn't sure of is also shown to the vision model (`CHESS_VISION_ENDPOINT`), whose reading comes back in `llm` (or as the answer, `source: "llm"`, when there's no reader or the reader's board can't be a game position), and is kept for the site's Review page (`photoId`). Off unless `CHESS_VISION_LOCAL_MODEL` or `CHESS_VISION_ENDPOINT` is set. |
 | `POST /api/esl/photos/{id}/confirm` | `{"placement": "…"}` from the player who sent photo `id`: the position it showed (they played the move it matched, or set the position up in the editor). Kept as a player-confirmed label; a reviewer's label always wins. |
 
@@ -234,7 +243,7 @@ Everything is environment.
 
 ```sh
 open-chess serve             # the API (runs migrations first)
-open-chess analyse           # the fair-play worker
+open-chess analyse           # the fair-play worker (and, when idle, the dictionary's photo positions)
 open-chess migrate           # schema only
 open-chess bot create --name esl-stockfish-1800
 open-chess bot list

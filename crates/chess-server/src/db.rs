@@ -562,6 +562,34 @@ CREATE TABLE chess.tablebase (
     answer jsonb NOT NULL,
     fetched_at timestamptz NOT NULL DEFAULT now());
 ",
+    r"
+-- 5. The position dictionary grows.
+--
+-- positions: positions people confirmed from board photos join it before
+-- anyone has evaluated them (score_cp NULL, photos counting them); the
+-- fair-play worker evaluates those when it has no game to screen, scoring
+-- every legal move (moves: [{uci, cp, depth}], from the side to move's
+-- view). eval_lease_until: a worker is on it.
+-- position_hints: analyses the training app sends in, one per position and
+-- player (the deepest kept). Hints, not trusted like the worker's.
+ALTER TABLE chess.positions ALTER COLUMN score_cp DROP NOT NULL;
+ALTER TABLE chess.positions ALTER COLUMN depth SET DEFAULT 0;
+ALTER TABLE chess.positions ALTER COLUMN engine DROP NOT NULL;
+ALTER TABLE chess.positions ADD COLUMN photos integer NOT NULL DEFAULT 0;
+ALTER TABLE chess.positions ADD COLUMN moves jsonb;
+ALTER TABLE chess.positions ADD COLUMN eval_lease_until timestamptz;
+CREATE INDEX positions_unscored_idx ON chess.positions (updated_at) WHERE score_cp IS NULL;
+CREATE TABLE chess.position_hints (
+    key text NOT NULL,
+    player_id bigint NOT NULL,
+    best text,
+    score_cp integer NOT NULL,
+    depth integer NOT NULL,
+    engine text NOT NULL,
+    moves jsonb,
+    at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (key, player_id));
+",
 ];
 
 #[cfg(test)]

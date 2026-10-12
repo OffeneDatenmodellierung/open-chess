@@ -149,6 +149,19 @@ impl Session {
         json(&analyse_with(&mut self.analysis, &self.game, opts))
     }
 
+    /// Every legal move's value (JSON array, best first): one search with
+    /// a line per move, shallower than `analyse`'s top lines.
+    #[wasm_bindgen(js_name = scoreMoves)]
+    pub fn score_moves(&mut self, depth: u8, nodes: u32, time_ms: u32) -> String {
+        json(&chess_analysis::score_moves(
+            &mut self.analysis,
+            &self.game,
+            depth,
+            u64::from(nodes),
+            (time_ms > 0).then_some(u64::from(time_ms)),
+        ))
+    }
+
     /// Full-strength move found in `time_ms` (JSON `{uci, san}` or `null`).
     #[wasm_bindgen(js_name = bestMove)]
     pub fn best_move(&mut self, time_ms: u32) -> String {

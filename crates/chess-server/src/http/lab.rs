@@ -5,7 +5,11 @@
 //!   help was switched on or off during one of our games (ground truth for
 //!   the fair-play model);
 //! - `GET /api/esl/position?fen=`: the position dictionary — the deepest
-//!   stored evaluation of a position, with win/draw/loss odds;
+//!   stored evaluation of a position, with win/draw/loss odds, and the
+//!   deepest analysis a training app sent in (a hint);
+//! - `POST /api/esl/position`: send in the app's own analysis of a position;
+//! - `GET /api/esl/position/moves?fen=`: every legal move with its value,
+//!   where the dictionary knows it;
 //! - `POST /api/esl/recognise`: read a board from a photo;
 //! - `POST /api/esl/photos/{id}/confirm`: say what a photo kept for review
 //!   showed.
@@ -25,26 +29,9 @@ use crate::error::{ApiError, ApiResult};
 use crate::http::{form, ok};
 use crate::{model, vision};
 
-/// The dictionary key for a position: the FEN without the move counters,
-/// and with an en-passant square only when an en-passant capture is
-/// actually possible, so the same position is always one entry.
+/// The dictionary key for a position (see `chess_analysis::dictionary`).
 pub fn position_key(game: &Game) -> String {
-    let fen = game.fen();
-    let mut f: Vec<&str> = fen.split_whitespace().take(4).collect();
-    if let Some(ep) = f.get(3).copied().filter(|e| *e != "-") {
-        let board = game.board();
-        let possible = game.legal_moves().iter().any(|m| {
-            m.get(2..4) == Some(ep)
-                && m.get(0..2)
-                    .and_then(|s| s.parse::<cozy_chess::Square>().ok())
-                    .and_then(|s| board.piece_on(s))
-                    == Some(cozy_chess::Piece::Pawn)
-        });
-        if !possible {
-            f[3] = "-";
-        }
-    }
-    f.join(" ")
+    chess_analysis::dictionary::position_key(game)
 }
 
 pub async fn assist(
@@ -79,43 +66,218 @@ pub struct PositionQuery {
     fen: String,
 }
 
+/// White's win/draw/loss odds for a score from the side to move's view.
+fn wdl_for(game: &Game, cp: i32) -> chess_analysis::Wdl {
+    let white_cp = if game.turn() == chess_core::Side::White { cp } else { -cp };
+    let phase = chess_analysis::eval::phase(game.board());
+    chess_analysis::Wdl::from_cp(white_cp, chess_analysis::wdl::Params::for_phase(phase))
+}
+
+fn parse_fen(fen: &str) -> Result<Game, ApiError> {
+    Game::new(Some(fen.trim())).map_err(|e| ApiError::bad(format!("bad FEN: {e:?}")))
+}
+
+/// A stored evaluation is engine help: not while you're playing here.
+async fn not_playing(ctx: &Ctx, c: &impl tokio_postgres::GenericClient, player: i64) -> ApiResult<()> {
+    if !model::ongoing_games(&ctx.db, c, player).await?.is_empty() {
+        return Err(ApiError::forbidden("position lookups are off while you have a game in progress"));
+    }
+    Ok(())
+}
+
 pub async fn position(
     State(ctx): State<Ctx>,
     who: Who,
     Query(q): Query<PositionQuery>,
 ) -> ApiResult<Response> {
-    let game = Game::new(Some(q.fen.trim())).map_err(|e| ApiError::bad(format!("bad FEN: {e:?}")))?;
+    let game = parse_fen(&q.fen)?;
     let c = ctx.db.conn().await?;
-    // A stored evaluation is engine help: not while you're playing here.
-    if !model::ongoing_games(&ctx.db, &*c, who.0.player).await?.is_empty() {
-        return Err(ApiError::forbidden("position lookups are off while you have a game in progress"));
-    }
+    not_playing(&ctx, &*c, who.0.player).await?;
     let key = position_key(&game);
     let row = c
         .query_opt(
-            &ctx.db.sql("SELECT best, score_cp, depth, engine, seen FROM chess.positions WHERE key = $1"),
+            &ctx.db.sql(
+                "SELECT best, score_cp, depth, engine, seen, photos FROM chess.positions WHERE key = $1",
+            ),
             &[&key],
         )
         .await?;
+    let hint = c
+        .query_opt(
+            &ctx.db.sql(
+                "SELECT best, score_cp, depth, engine FROM chess.position_hints WHERE key = $1
+                  ORDER BY depth DESC, at DESC LIMIT 1",
+            ),
+            &[&key],
+        )
+        .await?
+        .map(|h| {
+            let cp: i32 = h.get(1);
+            json!({"best": h.get::<_, Option<String>>(0), "scoreCp": cp, "depth": h.get::<_, i32>(2),
+                   "engine": h.get::<_, String>(3), "wdl": wdl_for(&game, cp)})
+        });
     let Some(r) = row else {
-        return Ok(Json(json!({ "key": key, "known": false })).into_response());
+        return Ok(Json(json!({ "key": key, "known": false, "hint": hint })).into_response());
     };
-    let score: i32 = r.get(1);
+    let photos: i32 = r.get(5);
+    let Some(score) = r.get::<_, Option<i32>>(1) else {
+        // Confirmed from a photo, waiting for the worker.
+        return Ok(Json(
+            json!({ "key": key, "known": false, "queued": true, "photos": photos, "hint": hint }),
+        )
+        .into_response());
+    };
     // Stored from the side to move's view; odds are given from White's.
-    let white_cp = if game.turn() == chess_core::Side::White { score } else { -score };
-    let phase = chess_analysis::eval::phase(game.board());
-    let wdl = chess_analysis::Wdl::from_cp(white_cp, chess_analysis::wdl::Params::for_phase(phase));
     Ok(Json(json!({
         "key": key,
         "known": true,
         "best": r.get::<_, Option<String>>(0),
         "scoreCp": score,
         "depth": r.get::<_, i32>(2),
-        "engine": r.get::<_, String>(3),
+        "engine": r.get::<_, Option<String>>(3),
         "seen": r.get::<_, i32>(4),
-        "wdl": wdl,
+        "photos": photos,
+        "wdl": wdl_for(&game, score),
+        "hint": hint,
     }))
     .into_response())
+}
+
+/// One move's value as the app sends it.
+#[derive(Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HintMove {
+    uci: String,
+    score_cp: i32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HintBody {
+    fen: String,
+    #[serde(default)]
+    best: Option<String>,
+    /// From the side to move's view.
+    score_cp: i32,
+    depth: i32,
+    #[serde(default)]
+    engine: Option<String>,
+    /// Every move it scored (from the side to move's view).
+    #[serde(default)]
+    moves: Vec<HintMove>,
+}
+
+/// `POST /api/esl/position`: the training app's analysis of a position, a
+/// hint for others looking it up. One per player and position (the deepest
+/// kept); never mixed with the worker's evaluations. Refused while you're
+/// playing a game here.
+pub async fn position_hint(State(ctx): State<Ctx>, who: Who, Json(b): Json<HintBody>) -> ApiResult<Response> {
+    let me = who.0.player;
+    let game = parse_fen(&b.fen)?;
+    if game.outcome().is_some() {
+        return Err(ApiError::bad("the game is over in that position"));
+    }
+    if !(1..=99).contains(&b.depth) || b.score_cp.abs() > 32_000 || b.moves.len() > 256 {
+        return Err(ApiError::bad("depth is 1–99, scores within ±32000, at most 256 moves"));
+    }
+    let legal = game.legal_moves();
+    if b.best.as_ref().is_some_and(|m| !legal.contains(m)) || b.moves.iter().any(|m| !legal.contains(&m.uci))
+    {
+        return Err(ApiError::bad("a move that isn't legal there"));
+    }
+    let engine: String = b.engine.as_deref().unwrap_or("open-chess app").chars().take(60).collect();
+    let moves =
+        if b.moves.is_empty() { None } else { Some(serde_json::to_value(&b.moves).unwrap_or_default()) };
+    let c = ctx.db.conn().await?;
+    not_playing(&ctx, &*c, me).await?;
+    c.execute(
+        &ctx.db.sql(
+            "INSERT INTO chess.position_hints (key, player_id, best, score_cp, depth, engine, moves)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (key, player_id) DO UPDATE SET best = EXCLUDED.best, score_cp = EXCLUDED.score_cp,
+                 depth = EXCLUDED.depth, engine = EXCLUDED.engine, moves = EXCLUDED.moves, at = now()
+               WHERE EXCLUDED.depth >= chess.position_hints.depth",
+        ),
+        &[&position_key(&game), &me, &b.best, &b.score_cp, &b.depth, &engine, &moves],
+    )
+    .await?;
+    Ok(ok())
+}
+
+/// `GET /api/esl/position/moves?fen=`: every legal move, each with the
+/// best value the dictionary has for it, from the mover's view, and
+/// White's odds after it: the worker's scoring of this position's moves
+/// first, then the evaluation stored for the position the move leads to,
+/// then an app's hint. `null` where nothing is known.
+pub async fn position_moves(
+    State(ctx): State<Ctx>,
+    who: Who,
+    Query(q): Query<PositionQuery>,
+) -> ApiResult<Response> {
+    let game = parse_fen(&q.fen)?;
+    let c = ctx.db.conn().await?;
+    not_playing(&ctx, &*c, who.0.player).await?;
+    let key = position_key(&game);
+    let legal = game.legal_moves();
+    // (uci, the position after it)
+    let mut children = Vec::with_capacity(legal.len());
+    for m in &legal {
+        let mut g = game.clone();
+        if g.play_uci(m).is_ok() {
+            children.push((m.clone(), g));
+        }
+    }
+    let child_keys: Vec<String> = children.iter().map(|(_, g)| position_key(g)).collect();
+    let mut known: std::collections::HashMap<String, (i32, i32)> = std::collections::HashMap::new();
+    for r in c
+        .query(
+            &ctx.db.sql("SELECT key, score_cp, depth FROM chess.positions WHERE key = ANY($1) AND score_cp IS NOT NULL"),
+            &[&child_keys],
+        )
+        .await?
+    {
+        known.insert(r.get(0), (r.get(1), r.get(2)));
+    }
+    let moves_of = |row: Option<tokio_postgres::Row>| {
+        row.and_then(|r| r.get::<_, Option<serde_json::Value>>(0))
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+    };
+    let worker = moves_of(
+        c.query_opt(&ctx.db.sql("SELECT moves FROM chess.positions WHERE key = $1"), &[&key]).await?,
+    );
+    let hints = moves_of(
+        c.query_opt(
+            &ctx.db.sql(
+                "SELECT moves FROM chess.position_hints WHERE key = $1 AND moves IS NOT NULL ORDER BY depth DESC LIMIT 1",
+            ),
+            &[&key],
+        )
+        .await?,
+    );
+    let find = |list: &[serde_json::Value], uci: &str, field: &str| {
+        list.iter().find(|m| m["uci"] == uci).and_then(|m| m[field].as_i64()).map(|v| v as i32)
+    };
+    let moves: Vec<serde_json::Value> = children
+        .iter()
+        .zip(&child_keys)
+        .map(|((uci, after), ck)| {
+            let (cp, depth, source) = if let Some(cp) = find(&worker, uci, "cp") {
+                (Some(cp), find(&worker, uci, "depth"), "engine")
+            } else if let Some(&(cp, d)) = known.get(ck) {
+                // Stored for the side to move after it: the other side.
+                (Some(-cp), Some(d), "after")
+            } else if let Some(cp) = find(&hints, uci, "scoreCp") {
+                (Some(cp), None, "hint")
+            } else {
+                (None, None, "unknown")
+            };
+            let wdl = cp.map(|v| wdl_for(after, -v));
+            json!({"uci": uci, "san": chess_analysis::explain_san(game.board(), uci).map(|e| e.san), "scoreCp": cp,
+                   "depth": depth, "source": source, "wdl": wdl})
+        })
+        .collect();
+    Ok(Json(json!({"key": key, "moves": moves})).into_response())
 }
 
 /// `GET /api/esl/tablebase?fen=`: Lichess's tablebase answer (category,
@@ -365,6 +527,28 @@ pub struct ConfirmBody {
     /// The position the photo shows, as FEN (only the placement is used,
     /// from White's side).
     placement: String,
+    /// The full position, when the app knows it (side to move, castling):
+    /// what goes into the position dictionary. Without it, both sides to
+    /// move are queued.
+    #[serde(default)]
+    fen: Option<String>,
+}
+
+/// Queue a confirmed photo's position(s) in the dictionary for the
+/// fair-play worker to evaluate (counting the photos of each).
+pub async fn queue_photo_positions(
+    db: &crate::db::Db,
+    c: &impl tokio_postgres::GenericClient,
+    games: &[Game],
+) -> anyhow::Result<()> {
+    let sql = db.sql(
+        "INSERT INTO chess.positions (key, score_cp, depth, engine, seen, photos) VALUES ($1, NULL, 0, NULL, 0, 1)
+         ON CONFLICT (key) DO UPDATE SET photos = chess.positions.photos + 1",
+    );
+    for g in games.iter().filter(|g| g.outcome().is_none()) {
+        c.execute(&sql, &[&position_key(g)]).await?;
+    }
+    Ok(())
 }
 
 /// `POST /api/esl/photos/{id}/confirm`: the player who sent a photo says
@@ -393,21 +577,19 @@ pub async fn confirm_photo(
     if n == 0 {
         return Err(ApiError::not_found("photo"));
     }
-    Ok(ok())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn key_drops_move_counters_and_idle_en_passant() {
-        let typed = Game::new(Some("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1")).unwrap();
-        let played = Game::from_moves(None, "e2e4").unwrap();
-        assert_eq!(position_key(&typed), "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -");
-        assert_eq!(position_key(&played), position_key(&typed));
-        // A real en-passant chance is part of the position.
-        let ep = Game::from_moves(None, "e2e4 a7a6 e4e5 d7d5").unwrap();
-        assert!(position_key(&ep).ends_with(" d6"), "{}", position_key(&ep));
+    // The position joins the dictionary: the given one if it matches the
+    // placement, else each side to move.
+    let given = b
+        .fen
+        .as_deref()
+        .and_then(|f| Game::new(Some(f.trim())).ok())
+        .filter(|g| g.fen().split_whitespace().next() == Some(placement.as_str()));
+    let games = match given {
+        Some(g) => vec![g],
+        None => chess_analysis::dictionary::photo_positions(&grid, None),
+    };
+    if let Err(e) = queue_photo_positions(&ctx.db, &*c, &games).await {
+        tracing::warn!("queueing a photo's position: {e:#}");
     }
+    Ok(ok())
 }

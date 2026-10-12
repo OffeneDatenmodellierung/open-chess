@@ -775,7 +775,26 @@ async fn unsure_photos_are_kept_for_review_and_confirmed() {
     let path = format!("/api/esl/photos/{id}/confirm");
     assert_eq!(post(&path, &other, serde_json::json!({"placement": start})).await.unwrap().status(), 404);
     assert_eq!(post(&path, &token, serde_json::json!({"placement": "8/8/8"})).await.unwrap().status(), 400);
-    assert_eq!(post(&path, &token, serde_json::json!({"placement": start})).await.unwrap().status(), 200);
+    assert_eq!(
+        post(&path, &token, serde_json::json!({"placement": start, "fen": start})).await.unwrap().status(),
+        200
+    );
+    // The confirmed position joins the dictionary, waiting for the worker.
+    let queued: serde_json::Value = http
+        .get(format!("{}/api/esl/position", env.base[0]))
+        .query(&[("fen", start)])
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        (queued["known"].as_bool(), queued["queued"].as_bool(), queued["photos"].as_i64()),
+        (Some(false), Some(true), Some(1)),
+        "{queued}"
+    );
     let row = env
         .pg
         .query_one(
@@ -803,6 +822,107 @@ async fn unsure_photos_are_kept_for_review_and_confirmed() {
         404
     );
 
+    env.teardown().await;
+}
+
+#[tokio::test]
+async fn the_dictionary_takes_hints_and_scores_every_move() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let (_, token) = env.player("analyst", &["board:play"]).await;
+    let http = reqwest::Client::new();
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    let hint = |body: serde_json::Value| {
+        http.post(format!("{}/api/esl/position", env.base[0])).bearer_auth(&token).json(&body).send()
+    };
+    let get = |path: &str| {
+        http.get(format!("{}{path}", env.base[0])).query(&[("fen", start)]).bearer_auth(&token).send()
+    };
+    // An app's analysis: legal moves only.
+    let bad = serde_json::json!({"fen": start, "best": "e2e5", "scoreCp": 30, "depth": 8});
+    assert_eq!(hint(bad).await.unwrap().status(), 400);
+    let good = serde_json::json!({"fen": start, "best": "e2e4", "scoreCp": 30, "depth": 8, "engine": "test",
+        "moves": [{"uci": "e2e4", "scoreCp": 30}, {"uci": "a2a3", "scoreCp": -10}]});
+    assert_eq!(hint(good).await.unwrap().status(), 200);
+    // A shallower one from the same player doesn't replace it.
+    let shallow = serde_json::json!({"fen": start, "best": "a2a3", "scoreCp": -5, "depth": 2});
+    assert_eq!(hint(shallow).await.unwrap().status(), 200);
+    let pos: serde_json::Value = get("/api/esl/position").await.unwrap().json().await.unwrap();
+    assert_eq!(pos["known"], false);
+    assert_eq!(
+        (pos["hint"]["best"].as_str(), pos["hint"]["depth"].as_i64()),
+        (Some("e2e4"), Some(8)),
+        "{pos}"
+    );
+
+    // The worker's evaluation of the position after 1.d4, from Black's view.
+    env.pg
+        .execute(
+            &format!(
+                "INSERT INTO {}.positions (key, best, score_cp, depth, engine) VALUES ($1, 'g8f6', -25, 20, 'sf')",
+                env.chess
+            ),
+            &[&"rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq -"],
+        )
+        .await
+        .unwrap();
+    let all: serde_json::Value = get("/api/esl/position/moves").await.unwrap().json().await.unwrap();
+    let moves = all["moves"].as_array().unwrap();
+    assert_eq!(moves.len(), 20);
+    let by = |uci: &str| moves.iter().find(|m| m["uci"] == uci).unwrap().clone();
+    // Black's -25 after 1.d4 is +25 for White, the mover.
+    assert_eq!((by("d2d4")["scoreCp"].as_i64(), by("d2d4")["source"].as_str()), (Some(25), Some("after")));
+    assert_eq!(by("d2d4")["san"], "d4");
+    assert_eq!((by("e2e4")["scoreCp"].as_i64(), by("e2e4")["source"].as_str()), (Some(30), Some("hint")));
+    assert_eq!(by("g1f3")["source"], "unknown");
+    assert!(by("g1f3")["scoreCp"].is_null());
+
+    // With Stockfish, the worker evaluates a queued photo position, every move.
+    if let Some(sf) = chess_engine::find_stockfish() {
+        let key = "4k3/8/8/8/8/8/4P3/4K3 w - -";
+        env.pg
+            .execute(
+                &format!("INSERT INTO {}.positions (key, score_cp, depth, engine, seen, photos) VALUES ($1, NULL, 0, NULL, 0, 1)", env.chess),
+                &[&key],
+            )
+            .await
+            .unwrap();
+        let db = Db::connect(&env.cfg).unwrap();
+        let (_tx, rx) = watch::channel(false);
+        let acfg = AnalyseConfig {
+            stockfish: Some(sf),
+            depth: 8,
+            threads: 1,
+            hash_mb: 16,
+            skip_plies: 0,
+            model: None,
+            flag_score: None,
+            min_moves: Some(5),
+            app_depth: 3,
+            app_nodes: 20_000,
+            app_net: None,
+            once: true,
+        };
+        open_chess_server::analyse::run(db, open_chess_server::metrics::Metrics::new(), acfg, rx)
+            .await
+            .unwrap();
+        let row = env
+            .pg
+            .query_one(
+                &format!(
+                    "SELECT score_cp, best, jsonb_array_length(moves) FROM {}.positions WHERE key = $1",
+                    env.chess
+                ),
+                &[&key],
+            )
+            .await
+            .unwrap();
+        assert!(row.get::<_, Option<i32>>(0).unwrap() > 0, "White's pawn up");
+        assert!(row.get::<_, Option<String>>(1).is_some());
+        // King: 4 moves (d1, d2, f1, f2), pawn: 2.
+        assert_eq!(row.get::<_, Option<i32>>(2), Some(6));
+    } else {
+        eprintln!("no Stockfish: the worker part skipped");
+    }
     env.teardown().await;
 }
 

@@ -205,6 +205,59 @@ fn describe_line(moves: Vec<Move>, start: &Board, searched: usize, max: usize) -
     out
 }
 
+/// One legal move's value: every move gets one, not just the best lines.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MoveScore {
+    pub uci: String,
+    /// From White's point of view.
+    pub score: Score,
+    /// Centipawns from the mover's point of view (mates ±10 000).
+    pub cp: i32,
+    pub wdl: Wdl,
+    /// 1 for the best move here, and so on.
+    pub rank: usize,
+}
+
+/// Score every legal move: one search with as many lines as there are
+/// moves, so each move gets its own value (a shallower look than the top
+/// lines get, but on the same scale). Best first.
+pub fn score_moves(
+    searcher: &mut Searcher,
+    game: &Game,
+    depth: u8,
+    nodes: u64,
+    time_ms: Option<u64>,
+) -> Vec<MoveScore> {
+    if game.outcome().is_some() {
+        return Vec::new();
+    }
+    let board = game.board();
+    let stm = board.side_to_move();
+    let params = Params::for_phase(phase(board));
+    let n = legal(board).len();
+    let r = searcher.search(
+        board,
+        &history_hashes(game),
+        Limits { depth: depth.max(1), nodes, multipv: n.max(1), time_ms },
+    );
+    r.lines
+        .iter()
+        .filter_map(|l| {
+            let mv = *l.moves.first()?;
+            let score = white_view(l.score, stm);
+            Some((mv, score, l.score.as_cp()))
+        })
+        .enumerate()
+        .map(|(i, (mv, score, cp))| MoveScore {
+            uci: crate::util::std_uci(board, mv),
+            score,
+            cp,
+            wdl: Wdl::from_score(score, params),
+            rank: i + 1,
+        })
+        .collect()
+}
+
 /// Every legal move in the position, explained, with its motifs: the
 /// training dictionary for "what could I play here?".
 pub fn legal_moves(game: &Game) -> Vec<MoveInfo> {
@@ -267,6 +320,24 @@ mod tests {
         assert!(
             moves.iter().any(|m| m.explanation.san == "Nc3" && m.explanation.text == "Knight from b1 to c3.")
         );
+    }
+
+    #[test]
+    fn every_legal_move_gets_a_score() {
+        let g = Game::new(None).unwrap();
+        let s = score_moves(&mut Searcher::default(), &g, 3, 400_000, None);
+        assert_eq!(s.len(), 20);
+        let mut ucis: Vec<&str> = s.iter().map(|m| m.uci.as_str()).collect();
+        ucis.sort_unstable();
+        ucis.dedup();
+        assert_eq!(ucis.len(), 20, "each move once");
+        assert_eq!(s[0].rank, 1);
+        // Best first, from White's side (White to move).
+        assert!(s.windows(2).all(|w| w[0].score.as_cp() >= w[1].score.as_cp()));
+        // A hanging queen is the worst move.
+        let g = Game::new(Some("4k3/8/8/3q4/8/8/3Q4/4K3 w - - 0 1")).unwrap();
+        let s = score_moves(&mut Searcher::default(), &g, 3, 200_000, None);
+        assert_eq!(s[0].uci, "d2d5", "take the queen");
     }
 
     #[test]

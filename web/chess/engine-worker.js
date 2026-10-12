@@ -25,6 +25,9 @@ self.onmessage = async (e) => {
     if (op === "analyse") {
       const { depth, nodes, lines, plies, timeMs } = args;
       result = JSON.parse(session.analyse(depth, nodes, lines, plies, timeMs || 0));
+    } else if (op === "moves") {
+      const { depth, nodes, timeMs } = args;
+      result = JSON.parse(session.scoreMoves(depth, nodes, timeMs || 0));
     } else if (op === "bot") {
       result = JSON.parse(session.botMove(args.level, args.seed >>> 0));
     } else if (op === "best") {

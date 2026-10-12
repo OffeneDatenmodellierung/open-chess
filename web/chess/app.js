@@ -475,10 +475,35 @@ function renderOptions() {
     ? `Moves for the ${list[0]?.piece ?? "piece"} on ${app.selected}. Tap it again to see every move.`
     : `${app.legal.length} legal moves. Tap one of the pieces to see only its moves.`;
   const order = ["king", "queen", "rook", "bishop", "knight", "pawn"];
-  const sorted = [...list].sort((a, b) => order.indexOf(a.piece) - order.indexOf(b.piece) || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
+  const vals = helpOn() ? moveValues() : null;
+  const byValue = (a, b) => (vals.get(b.uci)?.mover ?? -1e9) - (vals.get(a.uci)?.mover ?? -1e9);
+  const sorted = [...list].sort((a, b) => (vals?.size ? byValue(a, b) : 0) || order.indexOf(a.piece) - order.indexOf(b.piece) || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
   box.innerHTML = `<ul class="moves">${sorted
-    .map((m) => `<li><button type="button" class="san-btn" data-uci="${m.uci}" ${canMove() ? "" : "disabled"}>${esc(m.san)}</button><span class="txt">${esc(m.text)}</span>${patternChips(m.patterns)}</li>`)
+    .map((m) => `<li><button type="button" class="san-btn" data-uci="${m.uci}" ${canMove() ? "" : "disabled"}>${esc(m.san)}</button>${valueChip(vals?.get(m.uci))}<span class="txt">${esc(m.text)}</span>${patternChips(m.patterns)}</li>`)
     .join("")}</ul>`;
+}
+
+/// Each legal move's value here: the server's dictionary where it has a
+/// real evaluation (deeper), else this device's quick scoring of every
+/// move. uci → {mover (centipawns for the side moving), wdl, rank?, source}.
+function moveValues() {
+  const key = viewKey().moves;
+  const out = new Map();
+  const local = app.moveScores?.for === key ? app.moveScores.list : [];
+  for (const m of local) out.set(m.uci, { mover: m.cp, wdl: m.wdl, rank: m.rank, source: "this device" });
+  const server = app.serverMoves?.for === key ? app.serverMoves.list : [];
+  for (const m of server) {
+    if (m.scoreCp == null || m.source === "hint") continue;
+    out.set(m.uci, { mover: m.scoreCp, wdl: m.wdl, rank: out.get(m.uci)?.rank, source: m.source === "engine" ? `server, depth ${m.depth}` : `server (the position after), depth ${m.depth}` });
+  }
+  return out;
+}
+
+function valueChip(v) {
+  if (!v) return "";
+  const cp = Math.abs(v.mover) >= 9000 ? (v.mover > 0 ? "mates" : "is mated") : `${v.mover > 0 ? "+" : ""}${(v.mover / 100).toFixed(2)}`;
+  const mine = app.vst.turn === "white" ? v.wdl.white : v.wdl.black;
+  return `<span class="chip value" title="Value for the side moving (${esc(v.source)}); their chance of winning after it">${cp} · ${pct(mine)}</span>`;
 }
 
 function renderSanResult() {
@@ -541,13 +566,23 @@ function renderLines() {
   $("opening").textContent = app.vst.opening ? `${app.vst.opening.name} (${app.vst.opening.eco})` : "";
   const key = viewKey().moves;
   const tb = app.tablebase?.for === key ? app.tablebase : null;
-  const dict = app.dictionary?.for === key && app.dictionary.entry?.known ? app.dictionary.entry : null;
+  const entry = app.dictionary?.for === key ? app.dictionary.entry : null;
+  const dict = entry && (entry.known || entry.queued || entry.hint) ? entry : null;
   $("tbBox").hidden = !(helpOn() && tb);
   if (tb) $("tbBox").innerHTML = `<b>Tablebase</b> ${esc(tb.text)}${tb.best ? ` Best move: <b>${esc(tb.best)}</b>.` : ""} <span class="hint">${esc(tb.source)}</span>`;
   $("dictBox").hidden = !(helpOn() && dict);
   if (dict) {
     const v = dict.scoreCp / 100;
-    $("dictBox").innerHTML = `<b>Seen before</b> in ${dict.seen} screened game${dict.seen === 1 ? "" : "s"}: ${esc(dict.engine)} at depth ${dict.depth} prefers <b>${esc(dict.best || "—")}</b> (${v > 0 ? "+" : ""}${v.toFixed(2)} for the side to move).`;
+    const signed = (cp) => `${cp > 0 ? "+" : ""}${(cp / 100).toFixed(2)}`;
+    const parts = [];
+    if (dict.known) {
+      const seen = [dict.seen ? `in ${dict.seen} screened game${dict.seen === 1 ? "" : "s"}` : "", dict.photos ? `in ${dict.photos} confirmed photo${dict.photos === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+      parts.push(`<b>Seen before</b>${seen ? ` ${seen}` : ""}: ${esc(dict.engine || "the engine")} at depth ${dict.depth} prefers <b>${esc(dict.best || "—")}</b> (${signed(dict.scoreCp)} for the side to move).`);
+    } else if (dict.queued) {
+      parts.push(`<b>Seen before</b> in ${dict.photos} confirmed photo${dict.photos === 1 ? "" : "s"}: waiting for the server's engine to evaluate it.`);
+    }
+    if (dict.hint) parts.push(`<span class="hint">A player's app (${esc(dict.hint.engine)}, depth ${dict.hint.depth}) suggests ${esc(dict.hint.best || "—")} (${signed(dict.hint.scoreCp)}): a hint, not checked.</span>`);
+    $("dictBox").innerHTML = parts.join(" ");
   }
   if (!helpOn()) {
     box.innerHTML = onlineLive()
@@ -621,6 +656,40 @@ async function requestAnalysis() {
     app.analysisFor = key.moves;
     renderLines();
   }
+  await requestMoveScores(key);
+}
+
+/// Score every legal move (a shallower search with a line per move), then
+/// offer this device's analysis to the server's dictionary as a hint.
+async function requestMoveScores(key) {
+  if (app.moveScores?.for === key.moves) return;
+  let list;
+  try {
+    list = await analysisEngine.run("moves", key, { depth: 5, nodes: 400_000 });
+  } catch {
+    return;
+  }
+  if (viewKey().moves !== key.moves || !helpOn()) return;
+  app.moveScores = { for: key.moves, list };
+  renderOptions();
+  sendHint(key, list);
+}
+
+const hintsSent = new Set();
+function sendHint(key, list) {
+  const api = siteApi();
+  const a = app.analysis;
+  if (!api || onlineLive() || !navigator.onLine || !list.length || !a?.final || app.analysisFor !== key.moves) return;
+  const fen = app.vst.fen;
+  if (hintsSent.has(fen)) return;
+  hintsSent.add(fen);
+  const clamp = (cp) => Math.max(-1000, Math.min(1000, cp));
+  const best = a.lines?.[0];
+  const white = app.vst.turn === "white";
+  const top = best ? clamp(best.score.kind === "mate" ? (best.score.moves > 0) === white ? 1000 : -1000 : white ? best.score.value : -best.score.value) : clamp(list[0].cp);
+  api
+    .positionHint({ fen, best: best?.moves?.[0]?.uci ?? list[0].uci, scoreCp: top, depth: a.depth || 1, engine: "open-chess app", moves: list.map((m) => ({ uci: m.uci, scoreCp: clamp(m.cp) })) })
+    .catch(() => {});
 }
 
 /// Exact results for small endings: Lichess's server (up to 7 pieces)
@@ -681,10 +750,12 @@ async function requestDictionary() {
   const key = viewKey().moves;
   if (app.dictionary?.for === key) return;
   try {
-    const entry = await api.position(app.vst.fen);
+    const [entry, moves] = await Promise.all([api.position(app.vst.fen), api.positionMoves(app.vst.fen).catch(() => null)]);
     if (viewKey().moves === key) {
       app.dictionary = { for: key, entry };
+      if (moves) app.serverMoves = { for: key, list: moves.moves || [] };
       renderLines();
+      renderOptions();
     }
   } catch {
     app.dictionary = { for: key, entry: null };
@@ -918,7 +989,7 @@ function confirmPhoto(fen) {
   app.photo = null;
   const api = siteApi();
   if (!p || !api) return;
-  api.confirmPhoto(p.id, String(fen).split(" ")[0]).catch((e) => console.warn("confirming the photo:", e));
+  api.confirmPhoto(p.id, String(fen)).catch((e) => console.warn("confirming the photo:", e));
 }
 
 function chooseCandidate(cands, reading) {

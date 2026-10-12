@@ -214,6 +214,7 @@ dialog.promo .piece { font-size: 2.4rem; }
 .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
 .chip { border: 1px solid var(--rule); border-radius: 6px; font-size: 0.85rem; background: var(--paper); }
 .chip summary { list-style: none; cursor: pointer; padding: 0.15rem 0.5rem; font-weight: 700; }
+.chip.value { display: inline-block; padding: 0.1rem 0.45rem; margin: 0 0.4rem; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
 .chip summary::-webkit-details-marker { display: none; }
 .chip[open] { flex-basis: 100%; }
 .chip p { margin: 0 0.5rem 0.4rem; }

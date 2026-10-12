@@ -180,7 +180,8 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/api/fairplay/reviews", post(fairplay::review))
         // our additions for the training app
         .route("/api/board/game/{id}/assist", post(lab::assist))
-        .route("/api/esl/position", get(lab::position))
+        .route("/api/esl/position", get(lab::position).post(lab::position_hint))
+        .route("/api/esl/position/moves", get(lab::position_moves))
         .route("/api/esl/tablebase", get(lab::tablebase))
         // Photos are sent as base64: allow up to 10 MB.
         .route(

@@ -32,6 +32,7 @@
 
 pub mod analysis;
 pub mod bot;
+pub mod dictionary;
 pub mod eval;
 pub mod explain;
 pub mod nnue;
@@ -55,7 +56,10 @@ pub fn engine_id() -> String {
     format!("{}+r{}", env!("CARGO_PKG_VERSION"), ENGINE_REVISION)
 }
 
-pub use analysis::{AnalyseOptions, Analysis, Line, LineMove, MoveInfo, analyse, analyse_with, legal_moves};
+pub use analysis::{
+    AnalyseOptions, Analysis, Line, LineMove, MoveInfo, MoveScore, analyse, analyse_with, legal_moves,
+    score_moves,
+};
 pub use bot::{BotMove, Level, best_move, bot_move};
 pub use explain::{MoveExplanation, explain_move, explain_san, glossary};
 pub use openings::{Opening, opening};

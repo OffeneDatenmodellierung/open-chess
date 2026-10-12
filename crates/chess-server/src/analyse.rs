@@ -1,13 +1,15 @@
 //! The fair-play worker (`open-chess analyse`): takes finished games off the
 //! queue, has Stockfish evaluate every position, and stores a screening
-//! report per human player. Run as many as you like (games are claimed with
+//! report per human player. With no game to screen, it evaluates positions
+//! people confirmed from board photos for the position dictionary, scoring
+//! every legal move. Run as many as you like (games are claimed with
 //! SKIP LOCKED and a lease, so a crashed worker's game is picked up again).
 
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chess_core::Side;
-use chess_engine::{Limit, UciEngine};
+use chess_engine::{Engine as _, Limit, UciEngine};
 use chess_fairplay::{
     AnalysisConfig, Model, app_match, app_suggestions, assess_with_app, evaluate_game, features,
 };
@@ -187,6 +189,77 @@ async fn store_positions(
     Ok(())
 }
 
+/// The most positions' moves a dictionary evaluation scores (every legal
+/// move, up to Stockfish's MultiPV limit).
+const MAX_MULTIPV: u32 = 256;
+/// Mates as centipawns, on the scale the screened positions are stored
+/// with (chess-fairplay's).
+const MATE_CP: i32 = 1000;
+
+/// Evaluate one position waiting in the dictionary (from a photo): the
+/// best move and score, and every legal move's score. `false` when there
+/// was nothing to do.
+async fn evaluate_queued(db: &Db, engine: &mut UciEngine, cfg: &AnalyseConfig) -> Result<bool> {
+    let c = db.conn().await?;
+    let Some(key) = c
+        .query_opt(
+            &db.sql(
+                "UPDATE chess.positions SET eval_lease_until = now() + interval '10 minutes'
+                  WHERE key = (SELECT key FROM chess.positions
+                                WHERE score_cp IS NULL AND (eval_lease_until IS NULL OR eval_lease_until < now())
+                                ORDER BY updated_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+                 RETURNING key",
+            ),
+            &[],
+        )
+        .await?
+        .map(|r| r.get::<_, String>(0))
+    else {
+        return Ok(false);
+    };
+    drop(c);
+    let fen = chess_analysis::dictionary::fen_of_key(&key);
+    let legal = chess_core::Game::new(Some(&fen)).map_or(0, |g| g.legal_moves().len());
+    if legal == 0 {
+        // Not a position anyone can play on: drop it.
+        let c = db.conn().await?;
+        c.execute(&db.sql("DELETE FROM chess.positions WHERE key = $1 AND score_cp IS NULL"), &[&key])
+            .await?;
+        return Ok(true);
+    }
+    let multipv = u32::try_from(legal).unwrap_or(MAX_MULTIPV).min(MAX_MULTIPV);
+    engine.new_game().await?;
+    let a = engine.analyse(&fen, &[], Limit::Depth(cfg.depth), multipv).await?;
+    let Some(top) = a.lines.first() else { anyhow::bail!("no lines for {key}") };
+    let moves: Vec<serde_json::Value> = a
+        .lines
+        .iter()
+        .filter_map(|l| {
+            Some(serde_json::json!({"uci": l.pv.first()?, "cp": l.score.to_cp(MATE_CP), "depth": l.depth}))
+        })
+        .collect();
+    let best = a.best_move.clone().or_else(|| top.pv.first().cloned());
+    let c = db.conn().await?;
+    c.execute(
+        &db.sql(
+            "UPDATE chess.positions SET best = $2, score_cp = $3, depth = $4, engine = $5, moves = $6,
+                    eval_lease_until = NULL, updated_at = now()
+              WHERE key = $1",
+        ),
+        &[
+            &key,
+            &best,
+            &top.score.to_cp(MATE_CP),
+            &(top.depth as i32),
+            &engine.name(),
+            &serde_json::Value::from(moves),
+        ],
+    )
+    .await?;
+    info!(position = key, moves = legal, "dictionary position evaluated");
+    Ok(true)
+}
+
 pub async fn run(
     db: Db,
     metrics: Metrics,
@@ -212,6 +285,15 @@ pub async fn run(
             }
         };
         let Some(id) = id else {
+            // Nothing to screen: a photo position for the dictionary.
+            match evaluate_queued(&db, &mut engine, &cfg).await {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(e) => {
+                    warn!("dictionary position: {e:#}");
+                    engine = spawn_engine(&cfg).await?;
+                }
+            }
             if cfg.once {
                 break;
             }

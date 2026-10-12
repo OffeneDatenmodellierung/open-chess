@@ -12,6 +12,7 @@ members = [
     "crates/chess-vision",
     "crates/chess-train",
     "crates/chess-vision-train",
+    "crates/chess-conformance",
 ]
 
 [workspace.package]
