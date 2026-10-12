@@ -1,0 +1,10 @@
+# Build context: sources only.
+target/
+data/
+.git/
+.github/
+deploy/
+docs/
+*.png
+# …but the training app's icons are part of it.
+!web/chess/*.png

@@ -1,0 +1,160 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 6 * * *" # daily: catch new advisories against an unchanged lockfile
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # A pinned Rust, so a new release's lints can't fail CI out of the blue.
+  # Move it on in its own PR.
+  RUST_TOOLCHAIN: "1.97.0"
+
+jobs:
+  lint:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets --locked
+
+  # Everything, the server's end-to-end tests included (two replicas on a
+  # real Postgres, fair play with Stockfish).
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: chess
+          POSTGRES_PASSWORD: chess
+          POSTGRES_DB: chess
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U chess" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq stockfish
+      # The crates the image builds on their own: a feature only the
+      # workspace build turns on would otherwise only show in the image.
+      - name: cargo check, image crates alone
+        run: |
+          cargo check --locked -p open-chess-server
+          cargo check --locked -p open-chess-train
+      - name: cargo test
+        env:
+          CHESS_TEST_DATABASE_URL: postgres://chess:chess@127.0.0.1:5432/chess?sslmode=disable
+          STOCKFISH: /usr/games/stockfish
+        run: cargo test --workspace --locked --no-fail-fast
+
+  # The Chess lab app: the engine and board reader built for wasm and bound
+  # with wasm-bindgen, plus the static files, ready to serve.
+  app:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: app
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: wasm-bindgen CLI matching Cargo.lock
+        run: |
+          v=$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/version = |"/,""); print; exit}' Cargo.lock)
+          echo "WASM_BINDGEN_VERSION=$v" >> "$GITHUB_ENV"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@${{ env.WASM_BINDGEN_VERSION }}
+      - run: scripts/build-chess-app.sh dist/chess && ls -l dist/chess dist/chess/pkg
+      - uses: actions/upload-artifact@v5
+        with:
+          name: chess-app
+          path: dist/chess
+          retention-days: 30
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: cargo deny (advisories, licences, bans, sources)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check all
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit --deny warnings
+
+  image:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the image (not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: open-chess:ci
+          build-args: PROFILE=release
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test
+        run: |
+          docker run --rm open-chess:ci --version
+          docker run --rm open-chess:ci analyse --help >/dev/null
+          echo quit | docker run --rm -i --entrypoint /usr/games/stockfish open-chess:ci | head -1
+          docker run --rm --entrypoint ls open-chess:ci /usr/share/open-chess/app/index.html /usr/share/open-chess/app/pkg
+
+  deploy-examples:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate the Kubernetes example
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -strict -summary -ignore-missing-schemas deploy/k8s/*.yaml
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Type-check the Cloudflare example and validate wrangler.jsonc
+        working-directory: deploy/cloudflare
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx wrangler deploy --dry-run --containers-rollout=none --outdir /tmp/wr

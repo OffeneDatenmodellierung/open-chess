@@ -1,0 +1,13 @@
+/target
+/data
+/runs/
+*.local.toml
+.env
+.env.*
+node_modules/
+deploy/cloudflare/.wrangler/
+web/chess/pkg/
+web/chess/nets/*.safetensors
+/dist/
+# A deployment's tuned fair-play model stays private.
+fairplay-model*.json

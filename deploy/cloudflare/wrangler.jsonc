@@ -1,0 +1,65 @@
+// open-chess on Cloudflare (an example to copy and adjust): a Worker in front of Container
+// instances of open-chess (the Lichess-compatible API), plus one fair-play
+// worker container kept awake by a cron. Same database as the host site. See
+// README.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "open-chess",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+
+  // Settings that aren't secret. Secrets: `wrangler secret put NAME` (see README).
+  "vars": {
+    // API instances requests are spread over (more for more players).
+    "CHESS_INSTANCES": "2",
+    // Where clients reach the API: its own host (the route below). Set the
+    // site's session cookie domain to the shared parent so the OAuth consent
+    // page here sees who is signed in to the site.
+    "CHESS_PUBLIC_URL": "https://chess.example.com",
+    // The site, for "sign in first" links.
+    "ESPORTS_PUBLIC_URL": "https://example.com",
+    "CHESS_SITE_NAME": "open-chess",
+    // "false" stops the cron waking the fair-play worker.
+    "ANALYSE_ENABLED": "true",
+    "RUST_LOG": "info"
+  },
+
+  "containers": [
+    {
+      "class_name": "Chess",
+      // One image for both roles, built from the repository root.
+      "image": "../../Dockerfile",
+      "image_build_context": "../..",
+      // 1/4 vCPU, 1 GiB: plenty for the API; add instances for more players.
+      "instance_type": "basic",
+      // At least CHESS_INSTANCES.
+      "max_instances": 6
+    },
+    {
+      "class_name": "Analyse",
+      "image": "../../Dockerfile",
+      "image_build_context": "../..",
+      // Stockfish is CPU-bound: 1/2 vCPU.
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHESS", "class_name": "Chess" },
+      { "name": "ANALYSE", "class_name": "Analyse" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Chess", "Analyse"] }],
+
+  // Every five minutes: wake the fair-play worker (it then keeps itself busy
+  // until the queue is empty and sleeps after `sleepAfter`).
+  "triggers": { "crons": ["*/5 * * * *"] },
+
+  // Its own host (the zone must be in this Cloudflare account; Cloudflare
+  // makes the DNS record). To serve under the site at /chess instead, drop
+  // this, set CHESS_PUBLIC_URL to https://<site>/chess and turn on the site
+  // Worker's service binding for this Worker.
+  "routes": [{ "pattern": "chess.example.com", "custom_domain": true }]
+}

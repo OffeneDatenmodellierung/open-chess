@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Chess lab</title>
+  <meta name="description" content="Play chess offline against a bot or online, with plain-English move explanations and win odds.">
+  <meta name="theme-color" content="#ECEFF2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121820" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preload" href="fonts/atkinson-hyperlegible-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Chess lab</h1>
+    <div class="modes" role="radiogroup" aria-label="Who you play">
+      <button type="button" role="radio" data-mode="bot" aria-checked="true">Bot</button>
+      <button type="button" role="radio" data-mode="local" aria-checked="false">Two players</button>
+      <button type="button" role="radio" data-mode="analyse" aria-checked="false">Analyse</button>
+      <button type="button" role="radio" data-mode="online" aria-checked="false">Online</button>
+    </div>
+    <button type="button" class="icon-btn" id="openSettings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+    </button>
+  </header>
+
+  <main class="play">
+    <section class="table" aria-label="Board">
+      <div class="odds" id="odds" hidden>
+        <div class="odds-bar" role="img" id="oddsBar">
+          <span class="seg white" id="segWhite"></span><span class="seg draw" id="segDraw"></span><span class="seg black" id="segBlack"></span>
+        </div>
+        <div class="odds-nums">
+          <span><b id="pWhite">–</b> White</span>
+          <span class="mid"><b id="pDraw">–</b> draw</span>
+          <span class="end"><b id="pBlack">–</b> Black</span>
+        </div>
+        <p class="odds-note" id="oddsNote">Estimated from the engine's search.</p>
+      </div>
+
+      <div class="player" id="playerTop"><span class="who"></span><span class="clock" hidden></span></div>
+      <div id="board"></div>
+      <div class="player" id="playerBottom"><span class="who"></span><span class="clock" hidden></span></div>
+
+      <div class="steps" role="group" aria-label="Step through the game">
+        <button type="button" id="stepFirst" aria-label="First position"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14M18 5l-9 7 9 7z"/></svg></button>
+        <button type="button" id="stepBack" aria-label="Previous move"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5l-9 7 9 7z"/></svg></button>
+        <span id="stepLabel" class="step-label"></span>
+        <button type="button" id="stepFwd" aria-label="Next move"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l9 7-9 7z"/></svg></button>
+        <button type="button" id="stepLast" aria-label="Latest position"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14M6 5l9 7-9 7z"/></svg></button>
+      </div>
+
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+
+      <div id="controls">
+        <div class="controls">
+          <button type="button" id="newGame">New game</button>
+          <button type="button" id="undo">Take back</button>
+          <button type="button" id="flip">Flip board</button>
+          <label class="switch"><input type="checkbox" id="train"> <span>Training</span></label>
+        </div>
+        <p class="hint train-note" id="trainNote" hidden></p>
+        <div class="controls" id="analyseTools" hidden>
+          <button type="button" id="setUp">Set up position</button>
+          <button type="button" id="photoNew">Start from a photo</button>
+          <button type="button" id="photoNext">Next move from a photo</button>
+          <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
+        </div>
+        <p class="hint" id="photoNote" hidden>Photos the board reader isn't sure of are sent to your chess server (when you're signed in), which may keep them so a person can check the position and the reader can learn from it.</p>
+      </div>
+
+      <section class="editor" id="editor" hidden aria-label="Board editor">
+        <div class="palette" id="palette"></div>
+        <div class="row">
+          <div class="seg-pick" role="group" aria-label="Side to move">
+            <button type="button" id="editWhite">White to move</button>
+            <button type="button" id="editBlack">Black to move</button>
+          </div>
+        </div>
+        <div class="row">
+          <button type="button" id="editClear">Empty board</button>
+          <button type="button" id="editStart">Starting position</button>
+        </div>
+        <p class="error" id="editError" role="alert"></p>
+        <div class="row end">
+          <button type="button" id="editCancel">Cancel</button>
+          <button type="button" class="primary" id="editDone">Analyse this position</button>
+        </div>
+      </section>
+      <div class="controls online-only" id="onlineControls" hidden>
+        <button type="button" id="offerDraw">Offer draw</button>
+        <button type="button" id="resign">Resign</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="Training">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" id="tab-lines" aria-controls="pane-lines" aria-selected="true">Best lines</button>
+        <button type="button" role="tab" id="tab-options" aria-controls="pane-options" aria-selected="false">Your moves</button>
+        <button type="button" role="tab" id="tab-moves" aria-controls="pane-moves" aria-selected="false">Game</button>
+        <button type="button" role="tab" id="tab-dict" aria-controls="pane-dict" aria-selected="false">Dictionary</button>
+        <button type="button" role="tab" id="tab-online" aria-controls="pane-online" aria-selected="false" hidden>Play online</button>
+      </div>
+
+      <div class="pane" role="tabpanel" id="pane-lines" aria-labelledby="tab-lines">
+        <p class="opening" id="opening"></p>
+        <p class="tb" id="tbBox" hidden></p>
+        <p class="tb" id="dictBox" hidden></p>
+        <div id="lines"></div>
+      </div>
+
+      <div class="pane" role="tabpanel" id="pane-options" aria-labelledby="tab-options" hidden>
+        <label class="field">
+          <span>Type a move to decode it</span>
+          <input id="sanInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="e.g. Nf3, exd5, O-O, e8=Q+">
+        </label>
+        <div id="sanResult"></div>
+        <p class="hint" id="optionsHint">Tap one of your pieces to see only its moves.</p>
+        <div id="options"></div>
+      </div>
+
+      <div class="pane" role="tabpanel" id="pane-moves" aria-labelledby="tab-moves" hidden>
+        <ol class="history" id="history"></ol>
+        <div class="row">
+          <button type="button" id="copyPgn">Copy PGN</button>
+        </div>
+      </div>
+
+      <div class="pane" role="tabpanel" id="pane-dict" aria-labelledby="tab-dict" hidden>
+        <h2>Notation</h2>
+        <dl class="dict" id="glossary"></dl>
+        <h2>Patterns the trainer spots</h2>
+        <dl class="dict" id="motifs"></dl>
+        <h2>Openings it recognises</h2>
+        <ul class="book" id="book"></ul>
+      </div>
+
+      <div class="pane" role="tabpanel" id="pane-online" aria-labelledby="tab-online" hidden>
+        <div id="online"></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="settings" aria-labelledby="settingsTitle">
+    <form method="dialog">
+      <h2 id="settingsTitle">Settings</h2>
+      <fieldset>
+        <legend>Bot</legend>
+        <label class="field"><span>Strength <output id="levelOut">3</output> (1 to 8, then max)</span>
+          <input type="range" id="level" min="1" max="9" value="3"></label>
+        <label class="field"><span>Thinking time at max: <output id="thinkOut">5</output> seconds a move</span>
+          <input type="range" id="think" min="1" max="60" value="5"></label>
+        <p class="hint">Max plays the strongest move it finds in that time. More time makes it stronger.</p>
+        <label class="field"><span>You play</span>
+          <select id="side"><option value="white">White</option><option value="black">Black</option><option value="random">Either, at random</option></select></label>
+      </fieldset>
+      <fieldset>
+        <legend>Training</legend>
+        <label class="field"><span>Search</span>
+          <select id="depth">
+            <option value="quick">Quick (about half a second)</option>
+            <option value="normal" selected>Normal</option>
+            <option value="deep">Deep (a few seconds)</option>
+            <option value="max">Max (uses the thinking time)</option>
+          </select></label>
+        <label class="field"><span>Moves shown per line</span>
+          <select id="plies"><option value="5">5 plies</option><option value="10" selected>5 moves each (10 plies)</option></select></label>
+      </fieldset>
+      <fieldset>
+        <legend>Chess server</legend>
+        <label class="field"><span>Chess API address</span><input id="siteBase" inputmode="url" spellcheck="false"></label>
+      </fieldset>
+      <div class="row end"><button value="close" class="primary">Done</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="pickMove" aria-labelledby="pickTitle">
+    <h2 id="pickTitle">Which move does the photo show?</h2>
+    <p class="hint">The photo didn't match one move clearly. These are the closest positions.</p>
+    <ul class="pick" id="pickList"></ul>
+    <div class="row end">
+      <button type="button" id="pickSetup">Set up from the photo instead</button>
+      <form method="dialog"><button>Cancel</button></form>
+    </div>
+  </dialog>
+
+  <noscript>Chess lab needs JavaScript to run.</noscript>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

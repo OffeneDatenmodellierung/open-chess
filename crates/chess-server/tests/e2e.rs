@@ -1,0 +1,892 @@
+//! End-to-end tests against a real Postgres: two server replicas sharing
+//! one database, driven through the Lichess API with the chess client.
+//!
+//! Set `CHESS_TEST_DATABASE_URL` (a database you can create schemas in) to
+//! run them; without it they skip. Each test makes its own pair of schemas
+//! and drops them afterwards.
+//!
+//!   CHESS_TEST_DATABASE_URL=postgres://dev:dev@127.0.0.1/chessdev?sslmode=disable \
+//!     cargo test -p open-chess-server --test e2e
+
+#![allow(clippy::many_single_char_names)] // short names for players keep the scenarios readable
+
+use std::time::Duration;
+
+use chess_client::proto::{BoardEvent, Side, Status, StreamEvent};
+use chess_client::{Api, ChallengeRequest, Client, Ndjson};
+use open_chess_server::app::{self, Ctx};
+use open_chess_server::auth::{hash_key, random_token};
+use open_chess_server::config::{AnalyseConfig, Config};
+use open_chess_server::db::Db;
+use tokio::sync::watch;
+
+struct Env {
+    site: String,
+    chess: String,
+    /// Two replicas on the same database.
+    base: [String; 2],
+    pg: tokio_postgres::Client,
+    stop: watch::Sender<bool>,
+    cfg: Config,
+}
+
+const SITE_SQL: &str = "
+CREATE TABLE {s}.players (
+    id bigserial PRIMARY KEY, name text NOT NULL, email text, key_hash text,
+    role text NOT NULL DEFAULT 'player', roles text[] NOT NULL DEFAULT '{}', disabled_at timestamptz);
+CREATE TABLE {s}.sessions (
+    id bigserial PRIMARY KEY, token_hash text NOT NULL UNIQUE, player_id bigint NOT NULL REFERENCES {s}.players,
+    created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL,
+    last_seen_at timestamptz NOT NULL DEFAULT now(), user_agent text, revoked_at timestamptz);
+CREATE TABLE {s}.api_tokens (
+    id bigserial PRIMARY KEY, player_id bigint NOT NULL REFERENCES {s}.players ON DELETE CASCADE,
+    name text NOT NULL, token_hash text NOT NULL UNIQUE, prefix text NOT NULL, scopes text[] NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL,
+    last_used_at timestamptz, revoked_at timestamptz, revoked_by text);
+";
+
+async fn setup(tweak: impl FnOnce(&mut Config)) -> Option<Env> {
+    let Ok(url) = std::env::var("CHESS_TEST_DATABASE_URL") else {
+        eprintln!("CHESS_TEST_DATABASE_URL not set: skipped");
+        return None;
+    };
+    let (pg, conn) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await.expect("test database");
+    tokio::spawn(conn);
+    let tag = random_token(6).to_lowercase();
+    let site = format!("t_site_{tag}");
+    let chess = format!("t_chess_{tag}");
+    pg.batch_execute(&format!("CREATE SCHEMA {site}; {}", SITE_SQL.replace("{s}", &site))).await.unwrap();
+    let mut cfg = Config {
+        database_url: url,
+        listen_database_url: None,
+        site_schema: site.clone(),
+        schema: chess.clone(),
+        pool_size: 6,
+        public_url: "http://chess.test".into(),
+        site_url: "http://site.test".into(),
+        site_name: "open-chess".into(),
+        bind: "127.0.0.1:0".into(),
+        metrics_bind: "127.0.0.1:0".into(),
+        lag_comp_ms: 100,
+        challenge_ttl_secs: 20,
+        first_move_secs: 30,
+        gone_after_secs: 2,
+        claim_win_secs: 1,
+        public_delay_plies: 3,
+        fairplay: true,
+        block_marked: true,
+        sweep_ms: 200,
+        vision_endpoint: String::new(),
+        vision_model: "test".into(),
+        vision_api_key: None,
+        vision_local_model: String::new(),
+        vision_min_confidence: 0.5,
+        vision_review: true,
+        vision_review_max: 5000,
+        app_dir: None,
+        tablebase_url: String::new(),
+    };
+    tweak(&mut cfg);
+    let (stop, rx) = watch::channel(false);
+    let mut base = [String::new(), String::new()];
+    for b in &mut base {
+        let db = Db::connect(&cfg).unwrap();
+        db.migrate().await.unwrap();
+        let ctx = Ctx::new(db, cfg.clone()).with_reader().unwrap();
+        open_chess_server::spawn_background(&ctx, &rx);
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        *b = format!("http://{}", l.local_addr().unwrap());
+        let router = app::router(&ctx).unwrap();
+        tokio::spawn(async move { axum::serve(l, router).await });
+    }
+    // Let both LISTEN connections come up.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    Some(Env { site, chess, base, pg, stop, cfg })
+}
+
+impl Env {
+    /// A site player with an API token carrying `scopes`.
+    async fn player(&self, name: &str, scopes: &[&str]) -> (i64, String) {
+        let id: i64 = self
+            .pg
+            .query_one(
+                &format!("INSERT INTO {}.players (name) VALUES ($1) RETURNING id", self.site),
+                &[&name],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        let token = format!("esl_{}", random_token(36));
+        let scopes: Vec<String> = scopes.iter().map(|s| (*s).to_owned()).collect();
+        self.pg
+            .execute(
+                &format!(
+                    "INSERT INTO {}.api_tokens (player_id, name, token_hash, prefix, scopes, expires_at)
+                     VALUES ($1, 'test', $2, 'esl_xx', $3, now() + interval '1 day')",
+                    self.site
+                ),
+                &[&id, &hash_key(&token), &scopes],
+            )
+            .await
+            .unwrap();
+        (id, token)
+    }
+
+    fn client(&self, replica: usize, token: &str) -> Client {
+        Client::new(&self.base[replica], Some(token)).unwrap()
+    }
+
+    async fn teardown(self) {
+        let _ = self.stop.send(true);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        self.pg
+            .batch_execute(&format!("DROP SCHEMA {} CASCADE; DROP SCHEMA {} CASCADE;", self.chess, self.site))
+            .await
+            .unwrap();
+    }
+}
+
+const HUMAN: &[&str] = &["board:play", "challenge:read", "challenge:write", "email:read"];
+const BOT: &[&str] = &["bot:play", "challenge:read", "challenge:write"];
+
+async fn next_board(s: &mut Ndjson<BoardEvent>) -> BoardEvent {
+    tokio::time::timeout(Duration::from_secs(10), s.next())
+        .await
+        .expect("stream timed out")
+        .expect("stream ended")
+        .unwrap()
+}
+
+async fn next_event(s: &mut Ndjson<StreamEvent>) -> StreamEvent {
+    tokio::time::timeout(Duration::from_secs(10), s.next())
+        .await
+        .expect("stream timed out")
+        .expect("stream ended")
+        .unwrap()
+}
+
+/// Read game states until one satisfies `f`.
+async fn until_state(
+    s: &mut Ndjson<BoardEvent>,
+    f: impl Fn(&chess_client::proto::GameState) -> bool,
+) -> chess_client::proto::GameState {
+    loop {
+        match next_board(s).await {
+            BoardEvent::GameState(g) if f(&g) => return g,
+            BoardEvent::GameFull(g) if f(&g.state) => return g.state,
+            _ => {}
+        }
+    }
+}
+
+/// Start a game the way a host site's Lichess backend does: the home
+/// player challenges with the away player's token in `acceptByToken`.
+async fn start(
+    env: &Env,
+    home: &str,
+    away_name: &str,
+    away_token: &str,
+    clock: Option<(u32, u32)>,
+) -> String {
+    let c = env.client(0, home);
+    let ch = c
+        .challenge(
+            away_name,
+            &ChallengeRequest {
+                limit_secs: clock.map(|c| c.0),
+                increment_secs: clock.map(|c| c.1),
+                accept_by_token: Some(away_token.to_owned()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(ch.status, "accepted");
+    ch.id
+}
+
+/// (white token, black token) for a game.
+async fn colours(env: &Env, id: &str, a: (&str, &str), b: (&str, &str)) -> (String, String) {
+    let g = env.client(0, a.1).export_game(id).await.unwrap();
+    if g.players.white.user.name == a.0 {
+        (a.1.to_owned(), b.1.to_owned())
+    } else {
+        (b.1.to_owned(), a.1.to_owned())
+    }
+}
+
+#[tokio::test]
+async fn site_flow_across_replicas() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let (_, alice) = env.player("Alice", HUMAN).await;
+    let (_, bob) = env.player("Bob", HUMAN).await;
+    let me = env.client(0, &alice).account().await.unwrap();
+    assert_eq!((me.id.as_str(), me.username.as_str()), ("alice", "Alice"));
+    env.client(1, &bob).account().await.unwrap();
+
+    let mut events = env.client(1, &alice).stream_events().await.unwrap();
+    let id = start(&env, &alice, "bob", &bob, Some((180, 2))).await;
+    match next_event(&mut events).await {
+        StreamEvent::GameStart(g) => assert_eq!(g.game_id, id),
+        other => panic!("{other:?}"),
+    }
+
+    // Stream on replica 1, play on replica 0.
+    let (white, black) = colours(&env, &id, ("Alice", &alice), ("Bob", &bob)).await;
+    let mut stream = env.client(1, &white).stream_game(Api::Board, &id).await.unwrap();
+    match next_board(&mut stream).await {
+        BoardEvent::GameFull(g) => {
+            assert_eq!(g.id, id);
+            assert_eq!(g.initial_fen, "startpos");
+            assert_eq!(g.clock.unwrap().initial, 180_000);
+            assert_eq!(g.state.status, Status::Started);
+        }
+        other => panic!("{other:?}"),
+    }
+    let w = env.client(0, &white);
+    let b = env.client(0, &black);
+    assert!(b.make_move(Api::Board, &id, "e7e5", false).await.is_err(), "not black's turn");
+    w.make_move(Api::Board, &id, "f2f3", false).await.unwrap();
+    b.make_move(Api::Board, &id, "e7e5", false).await.unwrap();
+    w.make_move(Api::Board, &id, "g2g4", false).await.unwrap();
+    assert!(b.make_move(Api::Board, &id, "d8d1", false).await.is_err(), "illegal");
+    b.make_move(Api::Board, &id, "d8h4", false).await.unwrap();
+    let end = until_state(&mut stream, |s| s.status != Status::Started).await;
+    assert_eq!(
+        (end.status, end.winner, end.moves.as_str()),
+        (Status::Mate, Some(Side::Black), "f2f3 e7e5 g2g4 d8h4")
+    );
+
+    match next_event(&mut events).await {
+        StreamEvent::GameFinish(g) => {
+            assert_eq!((g.game_id.as_str(), g.winner), (id.as_str(), Some(Side::Black)));
+        }
+        other => panic!("{other:?}"),
+    }
+    // What a host site reads when a game ends.
+    let g = w.export_game(&id).await.unwrap();
+    assert_eq!((g.status, g.winner), (Status::Mate, Some(Side::Black)));
+    assert_eq!(g.moves.as_deref(), Some("f3 e5 g4 Qh4#"));
+    assert!(g.pgn.unwrap().contains("1. f3 { [%clk 0:03:00] } 1... e5"));
+    env.teardown().await;
+}
+
+#[tokio::test]
+async fn bots_accept_challenges_and_apis_stay_separate() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let (_, carol) = env.player("Carol", HUMAN).await;
+    let (_, bot) = env.player("Botty", BOT).await;
+    let botc = env.client(1, &bot);
+    botc.upgrade_to_bot().await.unwrap();
+    assert_eq!(botc.account().await.unwrap().title.as_deref(), Some("BOT"));
+    let mut bot_events = botc.stream_events().await.unwrap();
+
+    let ch = env
+        .client(0, &carol)
+        .challenge(
+            "botty",
+            &ChallengeRequest {
+                rated: true,
+                limit_secs: Some(60),
+                increment_secs: Some(0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(ch.status, "created");
+    let StreamEvent::Challenge(c) = next_event(&mut bot_events).await else { panic!("challenge expected") };
+    assert_eq!((c.id.as_str(), c.challenger.id.as_str(), c.rated), (ch.id.as_str(), "carol", true));
+    botc.accept_challenge(&c.id).await.unwrap();
+    let StreamEvent::GameStart(g) = next_event(&mut bot_events).await else { panic!("gameStart expected") };
+    let id = g.game_id;
+
+    // Bots use the Bot API, people the Board API.
+    assert!(botc.stream_game(Api::Board, &id).await.is_err());
+    assert!(env.client(0, &carol).stream_game(Api::Bot, &id).await.is_err());
+    let mut s = botc.stream_game(Api::Bot, &id).await.unwrap();
+    let BoardEvent::GameFull(full) = next_board(&mut s).await else { panic!() };
+    let bot_side = if full.white.id == "botty" { Api::Bot } else { Api::Board };
+    let (first, second) = if bot_side == Api::Bot { (&bot, &carol) } else { (&carol, &bot) };
+    let api_of = |t: &String| if *t == bot { Api::Bot } else { Api::Board };
+    env.client(0, first).make_move(api_of(first), &id, "e2e4", false).await.unwrap();
+    env.client(1, second).make_move(api_of(second), &id, "e7e5", false).await.unwrap();
+    env.client(0, &carol).resign(Api::Board, &id).await.unwrap();
+    let end = until_state(&mut s, |st| st.status != Status::Started).await;
+    assert_eq!(end.status, Status::Resign);
+    let carol_user = env.client(0, &carol).account().await.unwrap();
+    let bullet = &carol_user.perfs["bullet"];
+    assert_eq!(bullet.games, 1);
+    assert!(bullet.rating < 1500, "a rated loss: {bullet:?}");
+    assert_eq!(carol_user.count.unwrap().loss, 1);
+    env.teardown().await;
+}
+
+#[tokio::test]
+async fn clocks_flag_and_unplayed_games_abort() {
+    let Some(env) = setup(|c| c.first_move_secs = 1).await else { return };
+    let (_, a) = env.player("Ann", HUMAN).await;
+    let (_, b) = env.player("Ben", HUMAN).await;
+    env.client(0, &b).account().await.unwrap();
+    env.client(0, &a).account().await.unwrap();
+
+    // 0+1: both first moves are free, then white has one second.
+    let id = start(&env, &a, "ben", &b, Some((0, 1))).await;
+    let (white, black) = colours(&env, &id, ("Ann", &a), ("Ben", &b)).await;
+    let mut s = env.client(1, &black).stream_game(Api::Board, &id).await.unwrap();
+    env.client(0, &white).make_move(Api::Board, &id, "e2e4", false).await.unwrap();
+    env.client(0, &black).make_move(Api::Board, &id, "e7e5", false).await.unwrap();
+    let end = until_state(&mut s, |st| st.status != Status::Started).await;
+    assert_eq!((end.status, end.winner), (Status::Outoftime, Some(Side::Black)));
+    assert_eq!(end.wtime, 0);
+
+    // Nobody moves: aborted once the first-move time runs out.
+    let id = start(&env, &a, "ben", &b, Some((60, 0))).await;
+    let mut s = env.client(1, &a).stream_game(Api::Board, &id).await.unwrap();
+    let BoardEvent::GameFull(g) = next_board(&mut s).await else { panic!() };
+    assert_eq!(g.state.expiration.unwrap().millis_to_move, 1000);
+    let end = until_state(&mut s, |st| st.status != Status::Started).await;
+    assert_eq!((end.status, end.winner), (Status::Aborted, None));
+    env.teardown().await;
+}
+
+#[tokio::test]
+async fn draws_takebacks_and_claims() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let (_, a) = env.player("Ann", HUMAN).await;
+    let (_, b) = env.player("Ben", HUMAN).await;
+    env.client(0, &b).account().await.unwrap();
+
+    // Draw by agreement: an offer with a move, accepted.
+    let id = start(&env, &a, "ben", &b, Some((300, 0))).await;
+    let (w, bl) = colours(&env, &id, ("Ann", &a), ("Ben", &b)).await;
+    let mut s = env.client(1, &w).stream_game(Api::Board, &id).await.unwrap();
+    env.client(0, &w).make_move(Api::Board, &id, "e2e4", true).await.unwrap();
+    let st = until_state(&mut s, |st| st.wdraw).await;
+    assert_eq!(st.moves, "e2e4");
+    env.client(0, &bl).draw(Api::Board, &id, true).await.unwrap();
+    let end = until_state(&mut s, |st| st.status != Status::Started).await;
+    assert_eq!((end.status, end.winner), (Status::Draw, None));
+
+    // Takeback on the proposer's turn undoes two plies.
+    let id = start(&env, &a, "ben", &b, Some((300, 0))).await;
+    let (w, bl) = colours(&env, &id, ("Ann", &a), ("Ben", &b)).await;
+    let mut s = env.client(1, &bl).stream_game(Api::Board, &id).await.unwrap();
+    // The first two moves are free; the next two cost time.
+    env.client(0, &w).make_move(Api::Board, &id, "d2d4", false).await.unwrap();
+    env.client(0, &bl).make_move(Api::Board, &id, "d7d5", false).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    env.client(0, &w).make_move(Api::Board, &id, "c2c4", false).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    env.client(0, &bl).make_move(Api::Board, &id, "e7e6", false).await.unwrap();
+    let st = until_state(&mut s, |st| st.moves.ends_with("e7e6")).await;
+    assert!(st.btime < 300_000 - 300, "black was charged: {}", st.btime);
+    env.client(0, &w).takeback(Api::Board, &id, true).await.unwrap();
+    until_state(&mut s, |st| st.wtakeback).await;
+    env.client(0, &bl).takeback(Api::Board, &id, true).await.unwrap();
+    let st = until_state(&mut s, |st| st.moves == "d2d4 d7d5").await;
+    assert!(!st.wtakeback && st.status == Status::Started);
+    // The stored clocks, not the stream's live ones (white's is ticking):
+    // both sides get back the time of the undone moves.
+    let row = env
+        .pg
+        .query_one(&format!("SELECT white_ms, black_ms FROM {}.games WHERE id = $1", env.chess), &[&id])
+        .await
+        .unwrap();
+    assert_eq!((row.get::<_, i64>(0), row.get::<_, i64>(1)), (300_000, 300_000));
+
+    // The opponent never connects: gone, then the win can be claimed.
+    env.client(0, &w).make_move(Api::Board, &id, "e2e4", false).await.unwrap();
+    env.client(0, &bl).make_move(Api::Board, &id, "e7e5", false).await.unwrap();
+    drop(s);
+    let mut s = env.client(1, &w).stream_game(Api::Board, &id).await.unwrap();
+    assert!(env.client(0, &w).claim_victory(Api::Board, &id).await.is_err(), "too soon");
+    let mut claimable = false;
+    for _ in 0..20 {
+        if let BoardEvent::OpponentGone(g) = next_board(&mut s).await
+            && g.claim_win_in_seconds == Some(0)
+        {
+            claimable = true;
+            break;
+        }
+    }
+    assert!(claimable);
+    env.client(0, &w).claim_victory(Api::Board, &id).await.unwrap();
+    let g = env.client(0, &w).export_game(&id).await.unwrap();
+    assert_eq!(g.status, Status::Timeout);
+    env.teardown().await;
+}
+
+#[tokio::test]
+async fn oauth_pkce_issues_site_tokens() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let (pid, _) = env.player("Dana", &["board:play"]).await;
+    let session = random_token(32);
+    env.pg
+        .execute(
+            &format!("INSERT INTO {}.sessions (token_hash, player_id, expires_at) VALUES ($1, $2, now() + interval '1 day')", env.site),
+            &[&hash_key(&session), &pid],
+        )
+        .await
+        .unwrap();
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+    let redirect = "http://app.test/callback";
+    let q = [
+        ("response_type", "code"),
+        ("client_id", "test-app"),
+        ("redirect_uri", redirect),
+        ("code_challenge_method", "S256"),
+        ("code_challenge", challenge),
+        ("scope", "board:play challenge:write bot:play"),
+        ("state", "s1"),
+    ];
+    // Not signed in: asked to sign in first.
+    let page =
+        http.get(format!("{}/oauth", env.base[0])).query(&q).send().await.unwrap().text().await.unwrap();
+    assert!(page.contains("Sign in"));
+    let cookie = format!("esl_session={session}");
+    let page = http
+        .get(format!("{}/oauth", env.base[0]))
+        .query(&q)
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(page.contains("Authorize") && page.contains("board:play"));
+    assert!(!page.contains("<code>bot:play</code>"), "bot:play is for managers");
+    let csrf = page.split("name=\"csrf\" value=\"").nth(1).unwrap().split('"').next().unwrap().to_owned();
+    let form = [
+        ("client_id", "test-app"),
+        ("redirect_uri", redirect),
+        ("code_challenge", challenge),
+        ("scope", "board:play challenge:write"),
+        ("state", "s1"),
+        ("csrf", csrf.as_str()),
+        ("decision", "approve"),
+    ];
+    let r = http
+        .post(format!("{}/oauth", env.base[0]))
+        .header("cookie", &cookie)
+        .form(&form)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_redirection());
+    let loc = r.headers()["location"].to_str().unwrap().to_owned();
+    let u = url::Url::parse(&loc).unwrap();
+    let code = u.query_pairs().find(|(k, _)| k == "code").unwrap().1.into_owned();
+    assert_eq!(u.query_pairs().find(|(k, _)| k == "state").unwrap().1, "s1");
+    let tok = |verifier: &str| {
+        http.post(format!("{}/api/token", env.base[1])).form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("code_verifier", verifier),
+            ("redirect_uri", redirect),
+            ("client_id", "test-app"),
+        ])
+    };
+    let bad = tok("wrong-verifier-wrong-verifier-wrong-verifier-1").send().await.unwrap();
+    assert_eq!(bad.status(), 400);
+    // The code was used by the failed attempt: single use, as it should be.
+    let again = tok(verifier).send().await.unwrap();
+    assert_eq!(again.status(), 400);
+
+    // A fresh code, the right verifier.
+    let r = http
+        .post(format!("{}/oauth", env.base[0]))
+        .header("cookie", &cookie)
+        .form(&form)
+        .send()
+        .await
+        .unwrap();
+    let loc = r.headers()["location"].to_str().unwrap().to_owned();
+    let code2 =
+        url::Url::parse(&loc).unwrap().query_pairs().find(|(k, _)| k == "code").unwrap().1.into_owned();
+    let t: chess_client::proto::TokenResponse = http
+        .post(format!("{}/api/token", env.base[1]))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code2.as_str()),
+            ("code_verifier", verifier),
+            ("redirect_uri", redirect),
+            ("client_id", "test-app"),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(t.access_token.starts_with("esl_"));
+    let c = env.client(0, &t.access_token);
+    assert_eq!(c.account().await.unwrap().username, "Dana");
+    let scopes: Vec<String> = env
+        .pg
+        .query_one(&format!("SELECT scopes FROM {}.api_tokens WHERE name = 'OAuth: test-app'", env.site), &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(scopes, ["board:play", "challenge:write"]);
+    let r =
+        http.delete(format!("{}/api/token", env.base[0])).bearer_auth(&t.access_token).send().await.unwrap();
+    assert_eq!(r.status(), 204);
+    assert!(c.account().await.is_err(), "revoked");
+    env.teardown().await;
+}
+
+#[tokio::test]
+async fn public_stream_runs_behind_live_games() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let (_, a) = env.player("Ann", HUMAN).await;
+    let (_, b) = env.player("Ben", HUMAN).await;
+    env.client(0, &b).account().await.unwrap();
+    let id = start(&env, &a, "ben", &b, Some((300, 0))).await;
+    let (w, bl) = colours(&env, &id, ("Ann", &a), ("Ben", &b)).await;
+    for (t, m) in [(&w, "e2e4"), (&bl, "e7e5"), (&w, "g1f3"), (&bl, "b8c6"), (&w, "f1b5")] {
+        env.client(0, t).make_move(Api::Board, &id, m, false).await.unwrap();
+    }
+    let anon = Client::new(&env.base[1], None).unwrap();
+    let mut s = anon.stream_moves(&id).await.unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(5), s.next()).await.unwrap().unwrap().unwrap();
+    assert_eq!(first["id"], id.as_str());
+    // The description is as delayed as the moves: five plies played, two shown.
+    assert_eq!((first["turns"].as_i64(), first["lastMove"].as_str()), (Some(2), Some("e7e5")));
+    let mut moves = Vec::new();
+    while let Ok(Some(Ok(v))) = tokio::time::timeout(Duration::from_millis(800), s.next()).await {
+        if let Some(m) = Client::move_line(&v) {
+            moves.push(m.lm);
+        }
+    }
+    assert_eq!(moves, [None, Some("e2e4".into()), Some("e7e5".into())], "five plies played, three held back");
+    env.teardown().await;
+}
+
+#[tokio::test]
+async fn fair_play_screening_and_review() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let Some(sf) = chess_engine::find_stockfish() else {
+        eprintln!("no Stockfish: skipped");
+        env.teardown().await;
+        return;
+    };
+    let (_, a) = env.player("Ann", HUMAN).await;
+    let (_, b) = env.player("Ben", HUMAN).await;
+    let (mid, m) = env.player("Mod", &["chess:fairplay"]).await;
+    env.pg
+        .execute(&format!("UPDATE {}.players SET roles = '{{manager}}' WHERE id = $1", env.site), &[&mid])
+        .await
+        .unwrap();
+    env.client(0, &b).account().await.unwrap();
+    let id = start(&env, &a, "ben", &b, Some((600, 5))).await;
+    let (w, bl) = colours(&env, &id, ("Ann", &a), ("Ben", &b)).await;
+    // A real opening, 24 plies, then a resignation.
+    let line = "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6 e1g1 f8e7 f1e1 b7b5 a4b3 d7d6 c2c3 e8g8 h2h3 c6a5 b3c2 c7c5 d2d4 d8c7 b1d2 c5d4";
+    let http = reqwest::Client::new();
+    for (i, mv) in line.split_whitespace().enumerate() {
+        let t = if i % 2 == 0 { &w } else { &bl };
+        env.client(0, t).make_move(Api::Board, &id, mv, false).await.unwrap();
+        if i == 10 {
+            // White's app says its engine help went on: recorded as a label.
+            let r = http
+                .post(format!("{}/api/board/game/{id}/assist", env.base[0]))
+                .bearer_auth(&w)
+                .form(&[("on", "true")])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            // While playing, the position dictionary is closed to you.
+            let r = http
+                .get(format!("{}/api/esl/position", env.base[0]))
+                .query(&[("fen", "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")])
+                .bearer_auth(&w)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 403);
+        }
+    }
+    // Someone else's game: no assist marks.
+    let r = http
+        .post(format!("{}/api/board/game/{id}/assist", env.base[0]))
+        .bearer_auth(&m)
+        .form(&[("on", "true")])
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status() == 403 || r.status() == 401, "{}", r.status());
+    env.client(0, &w).resign(Api::Board, &id).await.unwrap();
+
+    let db = Db::connect(&env.cfg).unwrap();
+    let (_tx, rx) = watch::channel(false);
+    let acfg = AnalyseConfig {
+        stockfish: Some(sf),
+        depth: 8,
+        threads: 1,
+        hash_mb: 16,
+        skip_plies: 0,
+        model: None,
+        flag_score: None,
+        min_moves: Some(5),
+        app_depth: 3,
+        app_nodes: 20_000,
+        app_net: None,
+        once: true,
+    };
+    open_chess_server::analyse::run(db, open_chess_server::metrics::Metrics::new(), acfg, rx).await.unwrap();
+
+    let get =
+        |path: String, token: &str| http.get(format!("{}{path}", env.base[0])).bearer_auth(token).send();
+    assert_eq!(
+        get(format!("/api/fairplay/games/{id}"), &a).await.unwrap().status(),
+        403,
+        "players can't review"
+    );
+    let report: serde_json::Value =
+        get(format!("/api/fairplay/games/{id}"), &m).await.unwrap().json().await.unwrap();
+    assert_eq!(report["analysis"], "done");
+    let reports = report["reports"].as_array().unwrap();
+    assert_eq!(reports.len(), 2);
+    assert!(
+        reports
+            .iter()
+            .all(|r| r["moves"].as_i64().unwrap() >= 5 && r["evals"].as_array().unwrap().len() == 12)
+    );
+    let white_name = if w == a { "ann" } else { "ben" };
+    for r in reports {
+        assert!(r["appFingerprint"]["disagreements"].is_i64(), "{r}");
+        assert!(r["evals"][0]["best"].is_string());
+        let user = r["user"].as_str().unwrap().to_lowercase();
+        assert_eq!(r["declaredAssist"].as_bool(), Some(user == white_name), "{r}");
+    }
+    // The screened positions are now in the position dictionary.
+    let pos: serde_json::Value = http
+        .get(format!("{}/api/esl/position", env.base[0]))
+        .query(&[("fen", "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1")])
+        .bearer_auth(&m)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(pos["known"], true, "{pos}");
+    assert!(pos["best"].is_string() && pos["wdl"]["white"].is_number(), "{pos}");
+    // Photo reading isn't configured in tests.
+    let r = http
+        .post(format!("{}/api/esl/recognise", env.base[0]))
+        .bearer_auth(&m)
+        .json(&serde_json::json!({"image": "aGVsbG8="}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 503);
+
+    // A verdict of engine use marks the account; it can't start games.
+    let r = http
+        .post(format!("{}/api/fairplay/reviews", env.base[0]))
+        .bearer_auth(&m)
+        .json(&serde_json::json!({"username": "ann", "gameId": id, "verdict": "engine", "note": "test"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(env.client(0, &b).user("ann").await.unwrap().tos_violation, Some(true));
+    let refused = env
+        .client(0, &a)
+        .challenge(
+            "ben",
+            &ChallengeRequest { limit_secs: Some(60), increment_secs: Some(0), ..Default::default() },
+        )
+        .await;
+    assert!(matches!(refused, Err(chess_client::Error::Api { status: 403, .. })));
+    let rec: serde_json::Value =
+        get("/api/fairplay/players/ann".into(), &m).await.unwrap().json().await.unwrap();
+    assert_eq!((rec["marked"].as_bool(), rec["screened"].as_i64()), (Some(true), Some(1)));
+    env.teardown().await;
+}
+
+/// A 32×24 checkered PNG: not a chess board.
+const SMALL_PNG: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAYCAIAAAAUMWhjAAAAO0lEQVR42mNkiNJggIETDAhggcSmRJyJgcaA5haw0CJYLIZXENEiWEZT0WgqGk1Fo6loNBWNpiK6BxEAHHogiE9/DK8AAAAASUVORK5CYII=";
+
+#[tokio::test]
+async fn unsure_photos_are_kept_for_review_and_confirmed() {
+    // A tiny untrained network, so every reading is unsure.
+    let cfg = chess_vision::ModelConfig {
+        image_size: 42,
+        encoder: chess_vision::config::EncoderConfig {
+            dim: 32,
+            depth: 2,
+            heads: 2,
+            mlp_dim: 64,
+            patch: 14,
+            registers: 0,
+        },
+        decoder: chess_vision::config::DecoderConfig { dim: 16, layers: 2, heads: 2, ffn_dim: 32 },
+        mean: [0.485, 0.456, 0.406],
+        std: [0.229, 0.224, 0.225],
+    };
+    let path = std::env::temp_dir().join(format!("esl-reader-{}.safetensors", random_token(8)));
+    std::fs::write(
+        &path,
+        chess_vision::weights::random_model(&cfg, &chess_vision::ModelCard::default()).unwrap(),
+    )
+    .unwrap();
+    let model = path.to_string_lossy().into_owned();
+    let Some(env) = setup(|c| c.vision_local_model = model).await else { return };
+    let (me, token) = env.player("photographer", &["board:play"]).await;
+    let (_, other) = env.player("someone-else", &["board:play"]).await;
+    let http = reqwest::Client::new();
+    let post = |path: &str, token: &str, body: serde_json::Value| {
+        http.post(format!("{}{path}", env.base[0])).bearer_auth(token).json(&body).send()
+    };
+
+    let r = post("/api/esl/recognise", &token, serde_json::json!({"image": SMALL_PNG})).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let v: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(v["source"], "model");
+    assert_eq!(v["squares"].as_array().map(Vec::len), Some(64));
+    assert_eq!(v["review"], true, "{v}");
+    let id = v["photoId"].as_i64().expect("kept for review");
+
+    let row = env
+        .pg
+        .query_one(
+            &format!(
+                "SELECT player_id, reason, reading->>'placement', label FROM {}.board_photos WHERE id = $1",
+                env.chess
+            ),
+            &[&id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, Option<i64>>(0), Some(me));
+    assert!(["unsure", "implausible"].contains(&row.get::<_, String>(1).as_str()));
+    assert_eq!(row.get::<_, Option<String>>(2).as_deref(), v["placement"].as_str());
+    assert_eq!(row.get::<_, Option<String>>(3), None);
+
+    // Only the player who sent it can say what it showed, and only a board.
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    let path = format!("/api/esl/photos/{id}/confirm");
+    assert_eq!(post(&path, &other, serde_json::json!({"placement": start})).await.unwrap().status(), 404);
+    assert_eq!(post(&path, &token, serde_json::json!({"placement": "8/8/8"})).await.unwrap().status(), 400);
+    assert_eq!(post(&path, &token, serde_json::json!({"placement": start})).await.unwrap().status(), 200);
+    let row = env
+        .pg
+        .query_one(
+            &format!("SELECT label, label_source FROM {}.board_photos WHERE id = $1", env.chess),
+            &[&id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        row.get::<_, Option<String>>(0).as_deref(),
+        Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
+    );
+    assert_eq!(row.get::<_, Option<String>>(1).as_deref(), Some("player"));
+
+    // A reviewer's label isn't overwritten by the player.
+    env.pg
+        .execute(
+            &format!("UPDATE {}.board_photos SET label_source = 'reviewer' WHERE id = $1", env.chess),
+            &[&id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        post(&path, &token, serde_json::json!({"placement": "8/8/8/8/8/8/8/8"})).await.unwrap().status(),
+        404
+    );
+
+    env.teardown().await;
+}
+
+#[tokio::test]
+async fn serves_the_training_app() {
+    let dir = std::env::temp_dir().join(format!("esl-app-{}", random_token(8)));
+    std::fs::create_dir_all(dir.join("pkg")).unwrap();
+    std::fs::write(dir.join("index.html"), "<!doctype html><title>Chess lab</title>").unwrap();
+    std::fs::write(dir.join("sw.js"), "// worker").unwrap();
+    std::fs::write(dir.join("pkg/engine_bg.wasm"), b"\0asm\x01\0\0\0").unwrap();
+    let app_dir = dir.to_string_lossy().into_owned();
+    let Some(env) = setup(|c| c.app_dir = Some(app_dir)).await else { return };
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let base = &env.base[0];
+
+    let r = http.get(format!("{base}/app")).send().await.unwrap();
+    assert_eq!(r.status(), 308);
+    assert!(r.headers()["location"].to_str().unwrap().ends_with("/app/"));
+
+    let r = http.get(format!("{base}/app/")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["content-type"], "text/html; charset=utf-8");
+    assert_eq!(r.headers()["cache-control"], "no-cache");
+    assert!(r.text().await.unwrap().contains("Chess lab"));
+
+    let r = http.get(format!("{base}/app/pkg/engine_bg.wasm")).send().await.unwrap();
+    assert_eq!(r.headers()["content-type"], "application/wasm");
+    assert_eq!(r.bytes().await.unwrap().as_ref(), b"\0asm\x01\0\0\0");
+    let r = http.get(format!("{base}/app/sw.js")).send().await.unwrap();
+    assert_eq!(r.headers()["service-worker-allowed"], "/app/");
+
+    for bad in ["/app/missing.js", "/app/..%2f..%2fetc%2fpasswd", "/app/.hidden"] {
+        assert_eq!(http.get(format!("{base}{bad}")).send().await.unwrap().status(), 404, "{bad}");
+    }
+    // Browsers at the root go to the app; API clients still get JSON.
+    let r = http.get(format!("{base}/")).header("accept", "text/html,*/*").send().await.unwrap();
+    assert_eq!(r.status(), 303);
+    let r = http.get(format!("{base}/")).send().await.unwrap();
+    let info: serde_json::Value = r.json().await.unwrap();
+    assert!(info["app"].as_str().unwrap().ends_with("/app/"));
+    env.teardown().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn tablebase_answers_are_fetched_once_and_kept() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // A stand-in for tablebase.lichess.ovh that counts its requests.
+    let hits = Arc::new(AtomicUsize::new(0));
+    let h = hits.clone();
+    let mock = axum::Router::new().route(
+        "/standard",
+        axum::routing::get(move || {
+            h.fetch_add(1, Ordering::SeqCst);
+            async {
+                axum::Json(serde_json::json!({"category": "win", "dtz": 1, "dtm": 27,
+                    "moves": [{"uci": "h1h5", "san": "Rh5+", "category": "loss"}]}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+
+    let Some(env) = setup(|c| c.tablebase_url = mock_url).await else { return };
+    let (_, t) = env.player("Tia", HUMAN).await;
+    let http = reqwest::Client::new();
+    let ask = |fen: &str| {
+        http.get(format!("{}/api/esl/tablebase", env.base[0])).query(&[("fen", fen)]).bearer_auth(&t).send()
+    };
+    let krk = "8/8/8/4k3/8/8/8/4K2R w - - 0 1";
+    let first: serde_json::Value = ask(krk).await.unwrap().json().await.unwrap();
+    assert_eq!(first["category"], "win");
+    assert!(first.get("cached").is_none());
+    // The same position at another move number is the same entry.
+    let again: serde_json::Value =
+        ask("8/8/8/4k3/8/8/8/4K2R w - - 12 40").await.unwrap().json().await.unwrap();
+    assert_eq!(again["cached"], true);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    assert_eq!(ask(chess_core_start()).await.unwrap().status(), 400, "more than seven pieces");
+    env.teardown().await;
+}
+
+fn chess_core_start() -> &'static str {
+    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+}

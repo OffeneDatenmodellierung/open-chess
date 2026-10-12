@@ -1,0 +1,32 @@
+[package]
+name = "open-chess-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "WebAssembly bindings for the open-chess rules, bot and training analysis, used by the offline chess PWA"
+license = "MIT OR Apache-2.0"
+authors = ["Mark Olliver"]
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chess-core = { package = "open-chess-core", path = "../chess-core" }
+chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+wasm-bindgen = "0.2.129"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+new_without_default = "allow"
+needless_pass_by_value = "allow"

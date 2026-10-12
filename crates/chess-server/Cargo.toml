@@ -1,0 +1,68 @@
+[package]
+name = "open-chess-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "A Lichess-compatible chess server: the Board, Bot, Challenge and OAuth APIs on Postgres, with post-game fair-play screening"
+license = "MIT OR Apache-2.0"
+authors = ["Mark Olliver"]
+publish = false
+
+[[bin]]
+name = "open-chess"
+path = "src/main.rs"
+
+[dependencies]
+chess-core = { package = "open-chess-core", path = "../chess-core" }
+chess-proto = { package = "open-chess-proto", path = "../chess-proto" }
+chess-engine = { package = "open-chess-engine", path = "../chess-engine" }
+chess-fairplay = { package = "open-chess-fairplay", path = "../chess-fairplay" }
+chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
+chess-vision = { package = "open-chess-vision", path = "../chess-vision", features = ["decode"] }
+cozy-chess = "0.3.4"
+anyhow = "1.0.104"
+axum = "0.8.9"
+base64 = "0.23.1"
+bytes = "1"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
+deadpool = { version = "0.13.1", default-features = false, features = ["managed", "rt_tokio_1"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+hex = "0.4.3"
+prometheus = { version = "0.14.0", default-features = false }
+reqwest = { version = "0.13.5", features = ["json", "query"] }
+rand = "0.10.3"
+rustls = "0.23.45"
+rustls-native-certs = "0.8.4"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread", "time", "sync", "signal", "net", "process", "io-util", "fs"] }
+tokio-postgres = { version = "0.7.18", features = ["with-chrono-0_4", "with-serde_json-1"] }
+tokio-postgres-rustls = "0.14.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"
+urlencoding = "2.1.3"
+
+[dev-dependencies]
+chess-client = { package = "open-chess-client", path = "../chess-client" }
+reqwest = { version = "0.13.5", features = ["json", "form", "stream"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+too_many_lines = "allow"
+implicit_hasher = "allow"
+missing_panics_doc = "allow"

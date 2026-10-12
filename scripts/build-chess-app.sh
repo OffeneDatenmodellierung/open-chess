@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Build the Chess lab app (web/chess) with its wasm engine into a directory
+# ready to serve: the chess server's image does this, and so does CI.
+#
+#   scripts/build-chess-app.sh OUT_DIR
+#
+# Needs the wasm32-unknown-unknown target and wasm-bindgen-cli at the
+# version in Cargo.lock (the script says which if it's missing).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+out=${1:?usage: scripts/build-chess-app.sh OUT_DIR}
+
+want=$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/version = |"/,""); print; exit}' Cargo.lock)
+have=$(wasm-bindgen --version 2>/dev/null | awk '{print $2}' || true)
+if [[ "$have" != "$want" ]]; then
+  echo "need wasm-bindgen-cli $want (have ${have:-none}): cargo install wasm-bindgen-cli --version $want --locked" >&2
+  exit 1
+fi
+
+# The board reader's weights ship to every browser that opens the app, so
+# never an internal-only model (one trained on noncommercial data, such as
+# ChessReD): its card in the safetensors header says so.
+weights=web/chess/nets/board-reader.safetensors
+if [[ -f $weights ]]; then
+  n=$(od -An -t u8 -N 8 "$weights" | tr -d ' ')
+  if head -c $((8 + n)) "$weights" | tail -c "$n" | grep -q 'internal_only\\":true'; then
+    echo "$weights is an internal-only model (trained on noncommercial data): it can't ship in the app" >&2
+    exit 1
+  fi
+fi
+
+cargo build -p open-chess-wasm --target wasm32-unknown-unknown --release --locked
+# The board reader for photos (chess-vision): candle's rand needs getrandom's
+# JS backend in the browser.
+RUSTFLAGS="${RUSTFLAGS:-} --cfg getrandom_backend=\"wasm_js\"" \
+  cargo build -p open-chess-vision --features wasm --target wasm32-unknown-unknown --release --locked
+rm -rf "$out"
+mkdir -p "$out"
+cp -r web/chess/. "$out/"
+rm -rf "$out/pkg"
+wasm-bindgen --target web --no-typescript --out-dir "$out/pkg" \
+  target/wasm32-unknown-unknown/release/open_chess_wasm.wasm
+wasm-bindgen --target web --no-typescript --out-dir "$out/pkg" \
+  target/wasm32-unknown-unknown/release/open_chess_vision.wasm
+
+# A new cache for every release: the service worker's name changes when
+# any file of the app does.
+build=$(cd "$out" && find . -type f ! -name sw.js -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)
+sed -i "s/__BUILD__/$build/" "$out/sw.js"
+echo "built the chess app into $out (build $build)"

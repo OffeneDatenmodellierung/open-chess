@@ -1,0 +1,26 @@
+{
+  "name": "open-chess-cloudflare",
+  "private": true,
+  "description": "Runs the open-chess server (Lichess-compatible API) and its fair-play worker on Cloudflare Containers behind a Worker.",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "check": "tsc --noEmit && wrangler deploy --dry-run --containers-rollout=none --outdir .wrangler/check"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261004.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.147.0"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "fsevents@2.3.3": true,
+    "workerd@1.20261001.1": true
+  }
+}

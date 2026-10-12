@@ -1,0 +1,259 @@
+//! Settings, all from the environment (containers on Kubernetes and
+//! Cloudflare both pass configuration that way). Every variable has a
+//! working default except `DATABASE_URL`.
+
+use std::time::Duration;
+
+use anyhow::{Context, Result, bail};
+use clap::Args;
+
+#[derive(Debug, Clone, Args)]
+pub struct Config {
+    /// Postgres URL: the site's Neon database. A pooled (`-pooler`) host is
+    /// fine; notifications use the direct host automatically.
+    #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+    pub database_url: String,
+
+    /// A separate URL for LISTEN, if the direct host can't be derived.
+    #[arg(long, env = "CHESS_LISTEN_DATABASE_URL", hide_env_values = true)]
+    pub listen_database_url: Option<String>,
+
+    /// The site's schema (players, API tokens, sessions).
+    #[arg(long, env = "CHESS_SITE_SCHEMA", default_value = "esports")]
+    pub site_schema: String,
+
+    /// This server's own schema (games, challenges, ratings, fair play).
+    #[arg(long, env = "CHESS_SCHEMA", default_value = "chess")]
+    pub schema: String,
+
+    #[arg(long, env = "CHESS_POOL_SIZE", default_value_t = 8)]
+    pub pool_size: usize,
+
+    /// Where clients reach this server, including any path prefix
+    /// (`https://chess.example.com`). Used in game URLs and
+    /// to mount the API under the prefix.
+    #[arg(long, env = "CHESS_PUBLIC_URL", default_value = "http://localhost:8090")]
+    pub public_url: String,
+
+    /// The site whose players and sign-ins this server uses, for "sign in
+    /// first" links on the OAuth page.
+    #[arg(long, env = "ESPORTS_PUBLIC_URL", default_value = "http://localhost:8080")]
+    pub site_url: String,
+
+    /// What players know the site as: on the OAuth page, in PGN event
+    /// names and in `GET /` (which the training app shows).
+    #[arg(long, env = "CHESS_SITE_NAME", default_value = "open-chess")]
+    pub site_name: String,
+
+    #[arg(long, env = "CHESS_BIND", default_value = "0.0.0.0:8090")]
+    pub bind: String,
+
+    /// /metrics, /healthz and /readyz.
+    #[arg(long, env = "CHESS_METRICS_BIND", default_value = "0.0.0.0:9465")]
+    pub metrics_bind: String,
+
+    /// Milliseconds given back per move for the network round trip.
+    #[arg(long, env = "CHESS_LAG_COMP_MS", default_value_t = 100)]
+    pub lag_comp_ms: i64,
+
+    /// A real-time challenge lapses after this many seconds unless the
+    /// challenger keeps a `keepAliveStream` open.
+    #[arg(long, env = "CHESS_CHALLENGE_TTL_SECS", default_value_t = 20)]
+    pub challenge_ttl_secs: u64,
+
+    /// Each side's first move must come within this many seconds or the
+    /// game is aborted.
+    #[arg(long, env = "CHESS_FIRST_MOVE_SECS", default_value_t = 30)]
+    pub first_move_secs: u64,
+
+    /// A player with no open game stream for this long is "gone".
+    #[arg(long, env = "CHESS_GONE_AFTER_SECS", default_value_t = 20)]
+    pub gone_after_secs: u64,
+
+    /// Then the opponent may claim the win after this many more seconds.
+    #[arg(long, env = "CHESS_CLAIM_WIN_SECS", default_value_t = 10)]
+    pub claim_win_secs: u64,
+
+    /// The public move stream runs this many plies behind a live game, so
+    /// it can't feed an engine helping a player.
+    #[arg(long, env = "CHESS_PUBLIC_DELAY_PLIES", default_value_t = 3)]
+    pub public_delay_plies: usize,
+
+    /// Queue human players' finished games for fair-play analysis.
+    #[arg(long, env = "CHESS_FAIRPLAY", default_value_t = true, action = clap::ArgAction::Set)]
+    pub fairplay: bool,
+
+    /// Accounts marked for engine use can't start new games.
+    #[arg(long, env = "CHESS_BLOCK_MARKED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub block_marked: bool,
+
+    /// How often the clock sweeper looks for flags and lapsed challenges.
+    #[arg(long, env = "CHESS_SWEEP_MS", default_value_t = 500)]
+    pub sweep_ms: u64,
+
+    /// Reading boards from photos: base URL of a vision model behind an
+    /// OpenAI-style `/chat/completions` (Claude via
+    /// `https://api.anthropic.com/v1`, Qwen-VL via Ollama's
+    /// `http://localhost:11434/v1`, or a gateway). Empty: photo reading is
+    /// off.
+    #[arg(long, env = "CHESS_VISION_ENDPOINT", default_value = "")]
+    pub vision_endpoint: String,
+
+    /// The vision model's name as that server knows it.
+    #[arg(long, env = "CHESS_VISION_MODEL", default_value = "qwen3-vl:8b")]
+    pub vision_model: String,
+
+    /// Bearer token for the vision server, if it needs one.
+    #[arg(long, env = "CHESS_VISION_API_KEY", hide_env_values = true)]
+    pub vision_api_key: Option<String>,
+
+    /// Our own board reader (chess-vision): a `.safetensors` weights file
+    /// from `chess-vision-train`. It reads photos first, on this
+    /// server's CPU; the vision model at CHESS_VISION_ENDPOINT (if set) is
+    /// only asked about photos it isn't sure of. Empty: not used.
+    #[arg(long, env = "CHESS_VISION_LOCAL_MODEL", default_value = "")]
+    pub vision_local_model: String,
+
+    /// The board reader's answer is used without review when every square
+    /// is above its unsure threshold and the chance that all 64 are right
+    /// is at least this.
+    #[arg(long, env = "CHESS_VISION_MIN_CONFIDENCE", default_value_t = 0.5)]
+    pub vision_min_confidence: f32,
+
+    /// Keep photos that couldn't be read for sure for the Review page,
+    /// where a person confirms the position; confirmed photos become
+    /// training data (`open-chess photos export`). Players are told.
+    #[arg(long, env = "CHESS_VISION_REVIEW", default_value_t = true, action = clap::ArgAction::Set)]
+    pub vision_review: bool,
+
+    /// At most this many photos wait for review; beyond it, new ones
+    /// aren't kept.
+    #[arg(long, env = "CHESS_VISION_REVIEW_MAX", default_value_t = 5000)]
+    pub vision_review_max: i64,
+
+    /// Where exact endgame results (up to seven pieces) come from: a
+    /// Lichess-compatible tablebase server. Answers are kept in the
+    /// database, so each position is fetched once. Empty: off.
+    #[arg(long, env = "CHESS_TABLEBASE_URL", default_value = "https://tablebase.lichess.ovh")]
+    pub tablebase_url: String,
+
+    /// The built training app (web/chess plus its wasm engine), served at
+    /// `/app/`. The chess image puts it at /usr/share/open-chess/app.
+    #[arg(long, env = "CHESS_APP_DIR")]
+    pub app_dir: Option<String>,
+}
+
+impl Config {
+    /// The path the API lives under (`/chess`, or empty).
+    pub fn base_path(&self) -> Result<String> {
+        let u = url::Url::parse(&self.public_url).context("CHESS_PUBLIC_URL isn't a URL")?;
+        let p = u.path().trim_end_matches('/');
+        Ok(p.to_owned())
+    }
+
+    pub fn public_url(&self) -> &str {
+        self.public_url.trim_end_matches('/')
+    }
+
+    pub fn challenge_ttl(&self) -> Duration {
+        Duration::from_secs(self.challenge_ttl_secs.max(5))
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        for s in [&self.schema, &self.site_schema] {
+            if s.is_empty() || !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                bail!("schema names are letters, digits and _ (got {s:?})");
+            }
+        }
+        if self.schema == self.site_schema {
+            bail!("CHESS_SCHEMA must differ from CHESS_SITE_SCHEMA");
+        }
+        self.base_path()?;
+        Ok(())
+    }
+}
+
+/// Settings for the fair-play worker (`open-chess analyse`).
+#[derive(Debug, Clone, Args)]
+pub struct AnalyseConfig {
+    /// The UCI engine (Stockfish).
+    #[arg(long, env = "CHESS_STOCKFISH")]
+    pub stockfish: Option<String>,
+
+    /// Search depth per position.
+    #[arg(long, env = "CHESS_ANALYSIS_DEPTH", default_value_t = 14)]
+    pub depth: u32,
+
+    /// Engine threads.
+    #[arg(long, env = "CHESS_ANALYSIS_THREADS", default_value_t = 1)]
+    pub threads: u32,
+
+    /// Engine hash, MiB.
+    #[arg(long, env = "CHESS_ANALYSIS_HASH_MB", default_value_t = 64)]
+    pub hash_mb: u32,
+
+    /// Plies at the start left out of screening (opening theory).
+    #[arg(long, env = "CHESS_FAIRPLAY_SKIP_PLIES", default_value_t = 16)]
+    pub skip_plies: usize,
+
+    /// The screening model: how the fair-play signals turn into a score
+    /// and a flag (`chess_fairplay::Model`, as JSON). Either a path to a
+    /// JSON file or the JSON itself (handy as a secret). Keep a tuned
+    /// model private: its numbers tell people what screening looks for.
+    /// Unset: an untuned example model, and a warning.
+    #[arg(long, env = "CHESS_FAIRPLAY_MODEL", hide_env_values = true)]
+    pub model: Option<String>,
+
+    /// Overrides the model's flag score (0–100).
+    #[arg(long, env = "CHESS_FAIRPLAY_FLAG_SCORE")]
+    pub flag_score: Option<f64>,
+
+    /// Overrides the model's fewest screened moves before a game can be
+    /// flagged.
+    #[arg(long, env = "CHESS_FAIRPLAY_MIN_MOVES")]
+    pub min_moves: Option<usize>,
+
+    /// The training app's engine settings, for the app fingerprint (the
+    /// app's "Normal" search). Keep in step with web/chess/app.js.
+    #[arg(long, env = "CHESS_FAIRPLAY_APP_DEPTH", default_value_t = 6)]
+    pub app_depth: u8,
+
+    #[arg(long, env = "CHESS_FAIRPLAY_APP_NODES", default_value_t = 400_000)]
+    pub app_nodes: u64,
+
+    /// The NNUE weight file the app ships (web/chess/nets/default.nnue),
+    /// if it ships one, so the fingerprint uses the same evaluation.
+    #[arg(long, env = "CHESS_FAIRPLAY_APP_NET")]
+    pub app_net: Option<String>,
+
+    /// Analyse one game and exit (for testing).
+    #[arg(long)]
+    pub once: bool,
+}
+
+impl AnalyseConfig {
+    /// The screening model: `CHESS_FAIRPLAY_MODEL` (a JSON file or inline
+    /// JSON), else the untuned example, with any overrides applied.
+    /// Returns whether a model was configured, so callers can warn.
+    pub fn model(&self) -> Result<(chess_fairplay::Model, bool)> {
+        let (mut model, configured) = match self.model.as_deref().map(str::trim) {
+            None | Some("") => (chess_fairplay::Model::default(), false),
+            Some(json) if json.starts_with('{') => {
+                (serde_json::from_str(json).context("CHESS_FAIRPLAY_MODEL isn't a valid model")?, true)
+            }
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .with_context(|| format!("reading the fair-play model {path}"))?;
+                (serde_json::from_str(&text).with_context(|| format!("{path} isn't a valid model"))?, true)
+            }
+        };
+        if let Some(s) = self.flag_score {
+            model.flag_score = s;
+        }
+        if let Some(n) = self.min_moves {
+            model.min_moves = n;
+        }
+        model.validate().map_err(|e| anyhow::anyhow!("fair-play model: {e}"))?;
+        Ok((model, configured))
+    }
+}

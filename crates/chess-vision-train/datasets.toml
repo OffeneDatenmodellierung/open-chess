@@ -1,0 +1,41 @@
+# Datasets the board reader may be trained on. `chess-vision-train` refuses
+# any entry whose licence doesn't allow commercial use of the weights, or
+# that nobody has verified at the source (src/licences.rs). Noncommercial
+# data (CC BY-NC, BY-NC-SA) is allowed only with `--internal`: the model is
+# stamped internal-only and the Chess lab app build refuses to ship it.
+#
+# To use a dataset: read its licence where it's published, then fill in
+# `licence` (SPDX), `licence_url`, `licence_verified = true`, `verified_by`,
+# `verified_on`, and for CC BY the `attribution` line the model card will
+# carry.
+#
+# Not here, on purpose: the ChessQueries weights and code (PolyForm
+# Noncommercial 1.0.0) and the SLCC broadcast annotations (CC BY-NC 4.0).
+# The gate refuses them by name too.
+
+[dataset.chessred]
+# Masouris & van Gemert, 10,800 smartphone photos of 100 games, game-level
+# 60/20/20 split. https://doi.org/10.4121/99b5c721-280b-450b-b058-b2900b69a90f
+# CC BY-NC-SA 4.0, as its DOI record at 4TU.ResearchData / DataCite says
+# (the MIT licence on the authors' GitHub repo covers their code, not the
+# photos). Noncommercial: internal-only models only (`--internal`). For a
+# model we ship, ask the authors for a commercial licence.
+licence = "CC-BY-NC-SA-4.0"
+licence_url = "https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode"
+licence_verified = true
+verified_by = "Mark Olliver"
+verified_on = "2026-10-12"
+attribution = "Chess Recognition Dataset (ChessReD), A. Masouris, 4TU.ResearchData, doi:10.4121/99b5c721-280b-450b-b058-b2900b69a90f, CC BY-NC-SA 4.0"
+format = "chessred"
+path = "chessred"
+
+[dataset.esl-review]
+# Our own: board photos the chess server kept for review and a person
+# confirmed (`open-chess photos export`). Players are told photos they send
+# may be kept to improve the reader.
+licence = "LicenseRef-esl-internal"
+licence_verified = true
+verified_by = "esports-lab"
+verified_on = "2026-10-12"
+format = "jsonl"
+path = "esl-review"

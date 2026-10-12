@@ -1,0 +1,210 @@
+# The chess server (open-chess) and its fair-play worker. Both are
+# stateless: games, clocks and challenges live in Postgres (the host site's
+# database, schema `chess`), and replicas hear each other's changes through
+# LISTEN/NOTIFY, so either scales out freely.
+#
+# Image: Dockerfile (one image: `serve` and `analyse`; `--target slim`
+# is enough for the API alone). Secret `open-chess`: DATABASE_URL, ESPORTS_PUBLIC_URL (the site, for
+# sign-in links) and CHESS_FAIRPLAY_MODEL (the private screening model);
+# the other settings are below.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-chess
+  labels: &labels
+    app.kubernetes.io/name: open-chess
+    app.kubernetes.io/component: chess
+spec:
+  replicas: 2
+  selector:
+    matchLabels: *labels
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      # Game streams are long-lived: give them time to end on a rollout
+      # (clients reconnect to another replica).
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: *labels }
+      containers:
+        - name: chess
+          image: open-chess
+          args: ["serve"]
+          envFrom:
+            - secretRef: { name: open-chess }
+          env:
+            # Where clients reach the API (with the path prefix, if any). On
+            # a host of its own, set the site's session cookie domain to the
+            # shared parent so the OAuth consent page sees site sign-ins.
+            - { name: CHESS_PUBLIC_URL, value: "https://chess.example.com" }
+            - { name: CHESS_SITE_SCHEMA, value: site }
+            - { name: CHESS_SCHEMA, value: chess }
+            - { name: CHESS_POOL_SIZE, value: "8" }
+          ports:
+            - { name: http, containerPort: 8090 }
+            - { name: metrics, containerPort: 9465 }
+          startupProbe:
+            httpGet: { path: /healthz, port: metrics }
+            periodSeconds: 2
+            failureThreshold: 60   # migrations run at start
+          livenessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: metrics }
+            periodSeconds: 5
+            timeoutSeconds: 4
+            failureThreshold: 2
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-chess
+  labels:
+    app.kubernetes.io/name: open-chess
+    app.kubernetes.io/component: chess
+spec:
+  selector:
+    app.kubernetes.io/name: open-chess
+    app.kubernetes.io/component: chess
+  ports:
+    - { name: http, port: 80, targetPort: http }
+    - { name: metrics, port: 9465, targetPort: metrics }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: open-chess
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: open-chess
+      app.kubernetes.io/component: chess
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: open-chess
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: open-chess }
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+# Fair-play screening: Stockfish evaluates finished games. CPU-bound; scale
+# it with the queue (or CPU), down to one.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-chess-analyse
+  labels: &labels
+    app.kubernetes.io/name: open-chess
+    app.kubernetes.io/component: chess-analyse
+spec:
+  replicas: 1
+  selector:
+    matchLabels: *labels
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: analyse
+          image: open-chess
+          args: ["analyse"]
+          envFrom:
+            - secretRef: { name: open-chess }
+          env:
+            - { name: CHESS_SITE_SCHEMA, value: site }
+            - { name: CHESS_SCHEMA, value: chess }
+            - { name: CHESS_POOL_SIZE, value: "2" }
+            - { name: CHESS_ANALYSIS_DEPTH, value: "14" }
+            - { name: CHESS_ANALYSIS_THREADS, value: "1" }
+          ports:
+            - { name: metrics, containerPort: 9465 }
+          livenessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            periodSeconds: 15
+            failureThreshold: 4
+          resources:
+            requests: { cpu: 500m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+# For the ServiceMonitor: it finds pods through Services.
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-chess-analyse
+  labels:
+    app.kubernetes.io/name: open-chess
+    app.kubernetes.io/component: chess-analyse
+spec:
+  selector:
+    app.kubernetes.io/name: open-chess
+    app.kubernetes.io/component: chess-analyse
+  ports:
+    - { name: metrics, port: 9465, targetPort: metrics }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: open-chess-analyse
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: open-chess-analyse }
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 80 } }
+---
+# Route /chess on the site's host to the chess server, so the API shares the
+# site's origin (adjust host and class to your ingress; nginx shown). The
+# annotations keep NDJSON streams unbuffered and open.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: open-chess
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: example.com
+      http:
+        paths:
+          - path: /chess
+            pathType: Prefix
+            backend:
+              service: { name: open-chess, port: { name: http } }

@@ -1,0 +1,26 @@
+[package]
+name = "open-chess-proto"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "Lichess API wire types (board, bot, challenge, event and game streams), shared by the open-chess server, client and bots"
+license = "MIT OR Apache-2.0"
+authors = ["Mark Olliver"]
+publish = false
+
+[dependencies]
+chess-core = { package = "open-chess-core", path = "../chess-core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+struct_excessive_bools = "allow"

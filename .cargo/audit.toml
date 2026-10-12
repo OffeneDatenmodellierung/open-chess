@@ -1,0 +1,3 @@
+# cargo audit: the same exceptions as deny.toml, with the reasons there.
+[advisories]
+ignore = ["RUSTSEC-2024-0436"]
