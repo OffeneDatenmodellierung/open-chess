@@ -440,7 +440,7 @@ function renderStatus() {
     const mine = (st.turn === "white") === app.online.game.myWhite;
     msg = d?.awaitingBoard ? "Make the engine's move on the board." : mine ? "Your move: make it on the board." : "The engine is thinking…";
   }
-  if (app.mode === "online" && !app.online.game) msg = "Start or accept a game in Play online.";
+  if (app.mode === "online" && !app.online.game) msg = onDevice() ? "Set up the starting position on the board to play." : "Start or accept a game in Play online.";
   showStatus(msg);
 }
 
@@ -1150,7 +1150,7 @@ function onGameState(s) {
 /// live game (a label for the fair-play model; screening doesn't rely on it).
 function declareAssist() {
   const o = app.online;
-  if (!onlineLive() || o.serverKey !== "site") return;
+  if (!onlineLive() || o.serverKey !== "site" || onDevice()) return;
   const on = settings.train;
   if (o.assistSent === on) return;
   o.assistSent = on;
@@ -1165,7 +1165,17 @@ async function refreshDevice() {
   const o = app.online;
   if (!onDevice() || !o.api) return;
   try {
-    o.device = await o.api.device();
+    const d = await o.api.device();
+    if (JSON.stringify(d) === JSON.stringify(o.device)) return;
+    o.device = d;
+    // Sides switched on the device: turn the board and the names round.
+    const g = o.game;
+    if (g && g.id === d.gameId && (d.play === "white") !== g.myWhite) {
+      g.myWhite = d.play === "white";
+      [g.white, g.black] = [g.black, g.white];
+      board.flip(g.myWhite);
+      refresh();
+    }
     renderOnline();
     renderStatus();
   } catch {
@@ -1318,7 +1328,7 @@ function wireOnline() {
       if ($("devLevel")) form.level = $("devLevel").value;
       return onlineAction(async () => {
         const d = await api().setDevice(form);
-        o.device = d;
+        await refreshDevice();
         if (d?.said?.length) showStatus(d.said.join(" "));
       });
     }
