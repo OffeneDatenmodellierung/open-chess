@@ -27,11 +27,17 @@ impl Port {
     /// Open and configure a board's port: raw, 9600 baud, 8N1, reads that
     /// return after at most a tenth of a second.
     pub fn open(path: impl AsRef<Path>) -> io::Result<Port> {
+        Port::open_at(path, 9600)
+    }
+
+    /// The same at another speed (a DGT Centaur's board controller runs at
+    /// 1,000,000 baud).
+    pub fn open_at(path: impl AsRef<Path>, baud: u32) -> io::Result<Port> {
         let fd =
             rustix::fs::open(path.as_ref(), OFlags::RDWR | OFlags::NOCTTY | OFlags::CLOEXEC, Mode::empty())?;
         let mut t = tcgetattr(&fd)?;
         t.make_raw();
-        t.set_speed(9600)?;
+        t.set_speed(baud)?;
         t.special_codes[SpecialCodeIndex::VMIN] = 0;
         t.special_codes[SpecialCodeIndex::VTIME] = 1;
         tcsetattr(&fd, OptionalActions::Now, &t)?;
@@ -45,7 +51,8 @@ impl Port {
         self.write_all(&c.encode())
     }
 
-    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+    /// Write raw bytes (for boards with protocols of their own).
+    pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
         self.file.write_all(bytes)?;
         self.file.flush()
     }

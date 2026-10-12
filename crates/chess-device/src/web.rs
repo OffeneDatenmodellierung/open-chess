@@ -403,11 +403,11 @@ mod tests {
     use super::*;
     use crate::controller::{Controller, Setup};
     use crate::view::{EngineInfo, game_id};
-    use chess_dgt::Follower;
+    use chess_dgt::{Follower, Session};
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-    fn view(c: &Controller, f: &Follower, game: u32) -> View {
-        View::new(c, f, &EngineInfo { name: None }, game_id(1, game), 0, Instant::now())
+    fn view(c: &Controller, s: &Session, game: u32) -> View {
+        View::new(c, s, &EngineInfo { name: None }, game_id(1, game), 0, Instant::now())
     }
 
     /// A raw HTTP/1.1 request; the response's head and a reader for its body.
@@ -451,8 +451,8 @@ mod tests {
     #[tokio::test]
     async fn the_app_follows_the_board_game() {
         let c = Controller::new(Setup::default());
-        let f = Follower::new();
-        let (view_tx, view_rx) = watch::channel(view(&c, &f, 1));
+        let s = Session::new(Follower::new());
+        let (view_tx, view_rx) = watch::channel(view(&c, &s, 1));
         let (req_tx, req_rx) = std_mpsc::channel::<Request>();
         let web = Web::new(view_rx, req_tx, None, "test board");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -479,9 +479,9 @@ mod tests {
         assert_eq!(full["state"]["moves"], "");
 
         // A move on the board.
-        let mut f2 = Follower::new();
-        f2.play("e2e4").unwrap();
-        view_tx.send(view(&c, &f2, 1)).unwrap();
+        let mut s2 = Session::new(Follower::new());
+        s2.follower_mut().play("e2e4").unwrap();
+        view_tx.send(view(&c, &s2, 1)).unwrap();
         let state = json_line(&mut game).await;
         assert_eq!((state["type"].as_str(), state["moves"].as_str()), (Some("gameState"), Some("e2e4")));
 
@@ -490,7 +490,7 @@ mod tests {
         assert!(head.starts_with("HTTP/1.1 400"), "{head}");
 
         // A new game set up on the board ends this one and starts the next.
-        view_tx.send(view(&c, &Follower::new(), 2)).unwrap();
+        view_tx.send(view(&c, &Session::new(Follower::new()), 2)).unwrap();
         let end = json_line(&mut game).await;
         assert_eq!(end["status"], "aborted");
         let finish = json_line(&mut events).await;

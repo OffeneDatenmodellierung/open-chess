@@ -14,6 +14,7 @@
 //! one on the board's cable. That driver is a port of DGT's GPL `dgtpicom`,
 //! so this crate is GPL-3.0-or-later.
 
+pub mod board;
 pub mod controller;
 pub mod dgtpi;
 pub mod opponent;

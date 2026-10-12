@@ -7,6 +7,7 @@
 //!     --uci-option "Skill Level=5" --play black --time 5+3
 //! open-chess-device --board /dev/ttyACM0 --listen 0.0.0.0:8080 --app dist/chess
 //! sudo open-chess-device --board /dev/rfcomm0 --clock dgtpi   # on a DGT Pi
+//! open-chess-device --centaur                                 # on a DGT Centaur
 //! ```
 //!
 //! With `--listen`, a phone on the same network opens the device's address
@@ -34,11 +35,12 @@ mod unix {
 
     use anyhow::{Context, Result, bail};
     use chess_analysis::book::Book;
-    use chess_core::Side;
+    use chess_core::{Game, GameError, Played, Side};
     use chess_dgt::serial::Port;
-    use chess_dgt::{Event, Follower, Observation, Session};
+    use chess_dgt::{ClockButton, Command, Event, Follower, Observation, Session};
     use chess_dgtpi::driver::{Clock, Report};
     use clap::Parser;
+    use open_chess_device::board::{Board, centaur_button};
     use open_chess_device::controller::{Controller, Setup, TimeControl, describe};
     use open_chess_device::dgtpi;
     use open_chess_device::opponent::{EngineSpec, Opponent};
@@ -50,9 +52,14 @@ mod unix {
     #[command(name = "open-chess-device", version, about = "Play the engine on an electronic chess board")]
     struct Args {
         /// The board's port: /dev/ttyACM0 (USB, Linux), /dev/cu.usbmodem… (macOS),
-        /// /dev/rfcomm0 (Bluetooth, after `rfcomm bind`).
+        /// /dev/rfcomm0 (Bluetooth, after `rfcomm bind`); on a Centaur, its
+        /// controller's port (default /dev/serial0).
         #[arg(long)]
-        board: String,
+        board: Option<String>,
+
+        /// Running on a DGT Centaur: its board controller, lights and buttons.
+        #[arg(long)]
+        centaur: bool,
 
         /// open-chess's engine at this level, 1 (beginner) to 8 (the clock's
         /// buttons change it during play).
@@ -154,107 +161,118 @@ mod unix {
         Ok(book)
     }
 
-    fn run(args: &Args) -> Result<()> {
-        let spec = engine_spec(args)?;
-        let book = load_book(args)?;
-        let player = if args.play == "black" { Side::Black } else { Side::White };
-        let engine = EngineInfo {
-            name: args.uci.as_ref().map(|p| {
-                std::path::Path::new(p)
-                    .file_name()
-                    .map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned())
-            }),
-        };
-        let opponent = Opponent::start(spec)?;
-        let mut port =
-            Port::open(&args.board).with_context(|| format!("opening the board on {}", args.board))?;
-        let clock = open_clock(&args.clock)?;
-        let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
-        let mut controller = Controller::new(Setup {
-            player,
-            level: args.level,
-            book,
-            time: args.time,
-            white_on_left: args.white_clock == "left",
-            seed,
-        });
-        let mut session = Session::new(Follower::new());
-        session.start(Instant::now());
+    // ── the board, whichever kind ──
 
-        // What the app sees, and the settings it changes.
-        let mut game = (controller.games(), game_id(seed, 0), now_ms());
-        let (view_tx, view_rx) = watch::channel(View::new(
-            &controller,
-            session.follower(),
-            &engine,
-            game.1.clone(),
-            game.2,
-            Instant::now(),
-        ));
-        let (request_tx, requests) = mpsc::channel::<Request>();
-        if let Some(addr) = &args.listen {
-            let at = web::spawn(addr, Web::new(view_rx, request_tx, args.app.clone(), &args.name))
-                .with_context(|| format!("listening on {addr}"))?;
-            eprintln!("the app: http://{at}/");
+    /// What a board hands the controller.
+    enum Input {
+        Event(Event),
+        Button(ClockButton),
+    }
+
+    /// A board on a port: the game as it follows it, and the I/O.
+    trait Link: Board {
+        /// Write what's queued, read what's arrived.
+        fn exchange(&mut self, now: Instant) -> Result<Vec<Input>>;
+    }
+
+    /// A DGT board (USB, serial, Bluetooth), with a clock on its cable or
+    /// a DGT Pi's own.
+    struct DgtLink {
+        session: Session,
+        port: Port,
+        clock: Option<Clock>,
+    }
+
+    impl Board for DgtLink {
+        fn game(&self) -> &Game {
+            self.session.game()
         }
-        eprintln!("waiting for the board on {} (you play {})", args.board, args.play);
+        fn awaiting_board(&self) -> bool {
+            self.session.awaiting_board()
+        }
+        fn play(&mut self, uci: &str) -> Result<Played, GameError> {
+            Board::play(&mut self.session, uci)
+        }
+        fn send(&mut self, c: Command) {
+            self.session.send(c);
+        }
+    }
 
-        let mut buf = [0u8; 512];
-        loop {
-            send_commands(&mut session, &mut port, clock.as_ref())?;
-            let n = port.read(&mut buf)?;
-            let now = Instant::now();
-            if n > 0 {
-                for e in session.receive(&buf[..n], now) {
-                    log(&e, &session);
-                    if let Some(t) = controller.on_event(&e, &mut session, now) {
-                        opponent.ask(t);
+    impl Link for DgtLink {
+        fn exchange(&mut self, now: Instant) -> Result<Vec<Input>> {
+            for c in self.session.take_commands() {
+                match &self.clock {
+                    Some(clock) if dgtpi::is_clock(&c) => {
+                        if let Some(r) = dgtpi::request(&c) {
+                            clock.send(r);
+                        }
+                    }
+                    _ => self.port.send(&c)?,
+                }
+            }
+            let mut buf = [0u8; 512];
+            let n = self.port.read(&mut buf)?;
+            let mut inputs: Vec<Input> =
+                self.session.receive(&buf[..n], now).into_iter().map(Input::Event).collect();
+            if let Some(clock) = &self.clock {
+                for r in clock.reports() {
+                    match r {
+                        Report::Event(e) => inputs.extend(dgtpi::button(e).map(Input::Button)),
+                        Report::Ready => eprintln!("clock ready"),
+                        Report::Failed(why) => eprintln!("clock: {why}"),
                     }
                 }
             }
-            while let Some(r) = opponent.poll() {
-                if let Some(e) = &r.error {
-                    eprintln!("engine: {e}");
-                }
-                if let Some(t) = controller.on_reply(r.ply, r.uci.as_deref(), &mut session, Instant::now()) {
-                    opponent.ask(t);
-                }
-                if session.follower().awaiting_board() {
-                    let g = session.follower().game();
-                    println!(
-                        "engine plays {}  (make it on the board)",
-                        g.sans().last().map_or("", String::as_str)
-                    );
-                }
-            }
-            if let Some(clock) = &clock {
-                clock_reports(clock, &mut controller, &mut session, &opponent);
-            }
-            let mut replies = Vec::new();
-            while let Ok(r) = requests.try_recv() {
-                let result = apply(r.change, &mut controller, &mut session, &opponent);
-                replies.push((r.reply, result));
-            }
-            controller.tick(&mut session, Instant::now());
+            self.session.poll(now);
+            Ok(inputs)
+        }
+    }
 
-            if controller.games() != game.0 {
-                game = (controller.games(), game_id(seed, controller.games()), now_ms());
+    /// A DGT Centaur's board controller.
+    struct CentaurLink {
+        session: chess_centaur::Session,
+        port: Port,
+    }
+
+    impl Board for CentaurLink {
+        fn game(&self) -> &Game {
+            self.session.game()
+        }
+        fn awaiting_board(&self) -> bool {
+            self.session.awaiting_board()
+        }
+        fn play(&mut self, uci: &str) -> Result<Played, GameError> {
+            Board::play(&mut self.session, uci)
+        }
+        fn send(&mut self, c: Command) {
+            Board::send(&mut self.session, c);
+        }
+    }
+
+    impl Link for CentaurLink {
+        fn exchange(&mut self, now: Instant) -> Result<Vec<Input>> {
+            self.session.poll(now);
+            for w in self.session.take_writes() {
+                self.port.write_all(&w)?;
             }
-            let v =
-                View::new(&controller, session.follower(), &engine, game.1.clone(), game.2, Instant::now());
-            view_tx.send_if_modified(|old| {
-                if old.same(&v) {
-                    false
-                } else {
-                    *old = v;
-                    true
+            let mut buf = [0u8; 512];
+            let n = self.port.read(&mut buf)?;
+            let mut inputs = Vec::new();
+            for e in self.session.receive(&buf[..n], Instant::now()) {
+                match e {
+                    chess_centaur::Event::Connected(a) => {
+                        inputs.push(Input::Event(Event::Connected { major: a.0, minor: a.1 }));
+                    }
+                    chess_centaur::Event::Game(o) => inputs.push(Input::Event(Event::Game(o))),
+                    chess_centaur::Event::Button(b) => inputs.extend(centaur_button(b).map(Input::Button)),
+                    chess_centaur::Event::Battery { level, charging } => {
+                        if level <= 3 && !charging {
+                            eprintln!("battery low ({level}/20)");
+                        }
+                    }
                 }
-            });
-            // Answered once the change is in what the app reads.
-            for (tx, result) in replies {
-                let _ = tx.send(result);
             }
-            session.poll(now);
+            Ok(inputs)
         }
     }
 
@@ -275,35 +293,117 @@ mod unix {
         Ok(Some(clock))
     }
 
-    /// Write the session's commands: to the board, except the clock's
-    /// when the clock isn't on the board's cable.
-    fn send_commands(session: &mut Session, port: &mut Port, clock: Option<&Clock>) -> Result<()> {
-        for c in session.take_commands() {
-            match clock {
-                Some(clock) if dgtpi::is_clock(&c) => {
-                    if let Some(r) = dgtpi::request(&c) {
-                        clock.send(r);
-                    }
-                }
-                _ => port.send(&c)?,
-            }
+    fn run(args: &Args) -> Result<()> {
+        let spec = engine_spec(args)?;
+        let book = load_book(args)?;
+        let player = if args.play == "black" { Side::Black } else { Side::White };
+        let engine = EngineInfo {
+            name: args.uci.as_ref().map(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned())
+            }),
+        };
+        let opponent = Opponent::start(spec)?;
+        let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
+        let controller = Controller::new(Setup {
+            player,
+            level: args.level,
+            book,
+            time: args.time,
+            white_on_left: args.white_clock == "left",
+            seed,
+        });
+        let now = Instant::now();
+        if args.centaur {
+            let path = args.board.as_deref().unwrap_or("/dev/serial0");
+            let port = Port::open_at(path, 1_000_000)
+                .with_context(|| format!("opening the Centaur's controller on {path}"))?;
+            let mut session = chess_centaur::Session::new(chess_centaur::Follower::new());
+            session.start(now);
+            eprintln!("waiting for the Centaur's controller on {path} (you play {})", args.play);
+            play(&mut CentaurLink { session, port }, controller, &opponent, &engine, seed, args)
+        } else {
+            let Some(path) = args.board.as_deref() else { bail!("--board: the board's port (or --centaur)") };
+            let port = Port::open(path).with_context(|| format!("opening the board on {path}"))?;
+            let clock = open_clock(&args.clock)?;
+            let mut session = Session::new(Follower::new());
+            session.start(now);
+            eprintln!("waiting for the board on {path} (you play {})", args.play);
+            play(&mut DgtLink { session, port, clock }, controller, &opponent, &engine, seed, args)
         }
-        Ok(())
     }
 
-    /// The DGT Pi clock's buttons, and how it's doing.
-    fn clock_reports(clock: &Clock, controller: &mut Controller, session: &mut Session, opponent: &Opponent) {
-        for r in clock.reports() {
-            match r {
-                Report::Event(e) => {
-                    if let Some(b) = dgtpi::button(e)
-                        && let Some(t) = controller.on_button(b, session, Instant::now())
-                    {
-                        opponent.ask(t);
+    /// Play on a board until it fails.
+    fn play<L: Link>(
+        link: &mut L,
+        mut controller: Controller,
+        opponent: &Opponent,
+        engine: &EngineInfo,
+        seed: u64,
+        args: &Args,
+    ) -> Result<()> {
+        // What the app sees, and the settings it changes.
+        let mut game = (controller.games(), game_id(seed, 0), now_ms());
+        let (view_tx, view_rx) =
+            watch::channel(View::new(&controller, link, engine, game.1.clone(), game.2, Instant::now()));
+        let (request_tx, requests) = mpsc::channel::<Request>();
+        if let Some(addr) = &args.listen {
+            let at = web::spawn(addr, Web::new(view_rx, request_tx, args.app.clone(), &args.name))
+                .with_context(|| format!("listening on {addr}"))?;
+            eprintln!("the app: http://{at}/");
+        }
+
+        loop {
+            let now = Instant::now();
+            for input in link.exchange(now)? {
+                let think = match input {
+                    Input::Event(e) => {
+                        log(&e, link);
+                        controller.on_event(&e, link, now)
                     }
+                    Input::Button(b) => controller.on_button(b, link, now),
+                };
+                if let Some(t) = think {
+                    opponent.ask(t);
                 }
-                Report::Ready => eprintln!("clock ready"),
-                Report::Failed(why) => eprintln!("clock: {why}"),
+            }
+            while let Some(r) = opponent.poll() {
+                if let Some(e) = &r.error {
+                    eprintln!("engine: {e}");
+                }
+                if let Some(t) = controller.on_reply(r.ply, r.uci.as_deref(), link, Instant::now()) {
+                    opponent.ask(t);
+                }
+                if link.awaiting_board() {
+                    println!(
+                        "engine plays {}  (make it on the board)",
+                        link.game().sans().last().map_or("", String::as_str)
+                    );
+                }
+            }
+            let mut replies = Vec::new();
+            while let Ok(r) = requests.try_recv() {
+                let result = apply(r.change, &mut controller, link, opponent);
+                replies.push((r.reply, result));
+            }
+            controller.tick(link, Instant::now());
+
+            if controller.games() != game.0 {
+                game = (controller.games(), game_id(seed, controller.games()), now_ms());
+            }
+            let v = View::new(&controller, link, engine, game.1.clone(), game.2, Instant::now());
+            view_tx.send_if_modified(|old| {
+                if old.same(&v) {
+                    false
+                } else {
+                    *old = v;
+                    true
+                }
+            });
+            // Answered once the change is in what the app reads.
+            for (tx, result) in replies {
+                let _ = tx.send(result);
             }
         }
     }
@@ -312,24 +412,24 @@ mod unix {
     fn apply(
         change: Change,
         controller: &mut Controller,
-        session: &mut Session,
+        board: &mut impl Board,
         opponent: &Opponent,
     ) -> Result<String, String> {
         let now = Instant::now();
         match change {
             Change::Level(level) => {
-                controller.set_level(level, session);
+                controller.set_level(level, board);
                 Ok(format!("The engine plays at level {}.", controller.level()))
             }
             Change::Player(side) => {
-                if let Some(t) = controller.set_player(side, session, now)? {
+                if let Some(t) = controller.set_player(side, board, now)? {
                     opponent.ask(t);
                 }
                 Ok(format!("You play {}.", side.name()))
             }
             Change::Time(time) => {
                 let label = time.map_or_else(|| "untimed".to_owned(), |t| t.to_string());
-                Ok(if controller.set_time(time, session, now) {
+                Ok(if controller.set_time(time, board, now) {
                     format!("This game is {label}.")
                 } else {
                     format!("The next game is {label}.")
@@ -342,12 +442,12 @@ mod unix {
         SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(0))
     }
 
-    fn log(e: &Event, s: &Session) {
+    fn log(e: &Event, board: &impl Board) {
         match e {
-            Event::Connected { major, minor } => eprintln!("board connected (version {major}.{minor})"),
-            Event::Game(Observation::NewGame) => println!("new game ({:?})", s.follower().orientation()),
+            Event::Connected { .. } => eprintln!("board connected"),
+            Event::Game(Observation::NewGame) => println!("new game"),
             Event::Game(Observation::Move { .. } | Observation::Takeback { .. }) => {
-                println!("{}", describe(s.follower().game()));
+                println!("{}", describe(board.game()));
             }
             _ => {}
         }
