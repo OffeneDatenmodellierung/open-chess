@@ -14,6 +14,7 @@ members = [
     "crates/chess-vision-train",
     "crates/chess-conformance",
     "crates/chess-dgt",
+    "crates/chess-dgtpi",
     "crates/chess-device",
 ]
 

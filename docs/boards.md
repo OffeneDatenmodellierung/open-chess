@@ -88,6 +88,25 @@ reach the address can watch and change the settings, so listen on a home
 network (`--listen 0.0.0.0:8080` is every network the device is on; give
 one address to narrow it), never the internet.
 
+**The DGT Pi.** On a DGT Pi the clock is the Pi's own, wired to its I²C
+pins rather than the board's cable; `--clock dgtpi` drives it (a Rust port of
+DGT's `dgtpicom`, in `chess-dgtpi`). The board connects over Bluetooth or
+USB as usual. The clock driver maps the Pi's I²C registers from `/dev/mem`,
+so it runs as root, as PicoChess does:
+
+```sh
+# On the DGT Pi (64-bit Raspberry Pi OS), with the board paired:
+sudo rfcomm bind 0 <the board's Bluetooth address>
+sudo open-chess-device --board /dev/rfcomm0 --clock dgtpi --time 5+3 \
+    --listen 0.0.0.0:8080 --app /opt/open-chess/app
+```
+
+It wakes the clock if it's off, takes control of it, shows the moves and the
+time, and the five buttons work as on a DGT3000 on the cable.
+[`deploy/dgtpi`](../deploy/dgtpi) has a systemd unit to start it at boot.
+`--clock sim` runs the same code against a simulated DGT3000, to try
+everything else without one.
+
 ## Coming next
 
 In order; each lands in open-chess as it's ready.
@@ -113,8 +132,8 @@ In order; each lands in open-chess as it's ready.
 
 | Device | Inside | Status |
 |---|---|---|
-| DGT USB / Bluetooth e-Board, Smart Board, Revelation II | — (a computer drives it) | Protocol done (`chess-dgt`); runtime next |
-| DGT Pi | Raspberry Pi 3 in a DGT3000 clock; the board on USB or Bluetooth | Board via `chess-dgt`; the built-in clock (I²C) is a port of DGT's GPL `dgtpicom` to Rust, planned. Install: a 64-bit Raspberry Pi OS card with the runtime, like PicoChess v4 |
+| DGT USB / Bluetooth e-Board, Smart Board, Revelation II | — (a computer drives it) | Works: `open-chess-device` (above) |
+| DGT Pi | Raspberry Pi 3 in a DGT3000 clock; the board on USB or Bluetooth | Works: the board via `chess-dgt`, the built-in clock via `chess-dgtpi` (`--clock dgtpi`). Install: a 64-bit Raspberry Pi OS card with the runtime, like PicoChess v4 |
 | DGT Centaur | Raspberry Pi Zero (swap for a Zero 2 W), board controller on serial, e-paper | Planned, after the DGT Pi; occupancy-only sensing needs lift-and-place move reading |
 | DGT Pegasus | Bluetooth LE | Later |
 | Raspberry Pi 4 / 5 with any USB or Bluetooth board | — | With the runtime; a DGT3000 on a Pi 5 needs a different clock backend |
@@ -126,6 +145,12 @@ original back restores it.
 ## Licences
 
 The board protocol and the following of games (`chess-dgt`) are MIT or
-Apache-2.0, like the rest of open-chess. The device runtime will port parts
-of PicoChess (GPL-3.0) and DGT's `dgtpicom` (GPL-3.0), so those crates will be
-GPL-3.0-or-later; nothing MIT/Apache depends on them.
+Apache-2.0, like the rest of open-chess. The DGT Pi clock driver
+(`chess-dgtpi`) is a port of DGT's `dgtpicom` (GPL-3.0), and the device
+runtime (`chess-device`) uses it and will port parts of PicoChess (GPL-3.0),
+so both are GPL-3.0-or-later. Nothing MIT/Apache depends on them, and
+`deny.toml` allows GPL for those two crates only.
+
+Not yet tried on real hardware: the DGT Pi driver follows `dgtpicom`
+message for message (its tests check the bytes against DGT's), and is
+tested against a simulated clock.

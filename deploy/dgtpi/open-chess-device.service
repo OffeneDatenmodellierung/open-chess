@@ -1,0 +1,27 @@
+# open-chess on a DGT Pi: the board over Bluetooth, the Pi's own clock, and
+# the Chess lab app for phones on the same network.
+#
+#   sudo cp open-chess-device.service /etc/systemd/system/
+#   sudo systemctl edit open-chess-device   # set BOARD_MAC (and any options)
+#   sudo systemctl enable --now open-chess-device
+#
+# Runs as root: the DGT Pi's clock driver maps the I²C hardware from
+# /dev/mem, as PicoChess does.
+
+[Unit]
+Description=open-chess on a DGT Pi
+After=bluetooth.target network-online.target
+Wants=bluetooth.target network-online.target
+
+[Service]
+Environment=BOARD_MAC=00:00:00:00:00:00
+Environment=OPTIONS=--time 5+3
+ExecStartPre=-/usr/bin/rfcomm release 0
+ExecStartPre=/usr/bin/rfcomm bind 0 ${BOARD_MAC}
+ExecStart=/usr/local/bin/open-chess-device --board /dev/rfcomm0 --clock dgtpi \
+    --listen 0.0.0.0:8080 --app /opt/open-chess/app --name "DGT Pi" $OPTIONS
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

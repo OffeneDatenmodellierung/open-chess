@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
 description = "Play chess on an electronic board: a DGT board against open-chess's engine or any UCI engine, with opening books and the clock"
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-or-later"
 authors = ["Mark Olliver"]
 publish = false
 
@@ -17,6 +17,7 @@ chess-core = { package = "open-chess-core", path = "../chess-core" }
 chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
 chess-engine = { package = "open-chess-engine", path = "../chess-engine" }
 chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt" }
+chess-dgtpi = { package = "open-chess-dgtpi", path = "../chess-dgtpi" }
 chess-proto = { package = "open-chess-proto", path = "../chess-proto" }
 anyhow = "1.0.104"
 axum = "0.8.9"

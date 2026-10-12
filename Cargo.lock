@@ -2576,6 +2576,7 @@ dependencies = [
  "open-chess-analysis",
  "open-chess-core",
  "open-chess-dgt",
+ "open-chess-dgtpi",
  "open-chess-engine",
  "open-chess-proto",
  "serde",
@@ -2588,6 +2589,13 @@ name = "open-chess-dgt"
 version = "0.1.0"
 dependencies = [
  "open-chess-core",
+ "rustix",
+]
+
+[[package]]
+name = "open-chess-dgtpi"
+version = "0.1.0"
+dependencies = [
  "rustix",
 ]
 

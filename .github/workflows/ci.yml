@@ -31,6 +31,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
+          targets: aarch64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lint
@@ -39,6 +40,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked
       # Feature-gated code the workspace build leaves out.
       - run: cargo clippy -p open-chess-dgt --all-targets --features serial --locked
+      # The device runtime as it builds for a DGT Pi or Centaur (64-bit
+      # Raspberry Pi OS), the DGT Pi's register-level clock driver included.
+      - run: cargo clippy -p open-chess-device -p open-chess-dgtpi --target aarch64-unknown-linux-gnu --locked
 
   # Everything, the server's end-to-end tests included (two replicas on a
   # real Postgres, fair play with Stockfish).
