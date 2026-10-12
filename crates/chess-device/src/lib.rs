@@ -9,8 +9,13 @@
 //! The device can also serve the Chess lab app and a Lichess-style API
 //! ([`web`]), so a phone on the same network shows the game ([`view`]) and
 //! changes the device's settings.
+//!
+//! On a DGT Pi the clock is the Pi's own ([`dgtpi`], over I²C) rather than
+//! one on the board's cable. That driver is a port of DGT's GPL `dgtpicom`,
+//! so this crate is GPL-3.0-or-later.
 
 pub mod controller;
+pub mod dgtpi;
 pub mod opponent;
 pub mod view;
 pub mod web;

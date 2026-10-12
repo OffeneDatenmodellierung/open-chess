@@ -6,6 +6,7 @@
 //! open-chess-device --board /dev/rfcomm0 --uci /usr/games/stockfish --move-time 2 \
 //!     --uci-option "Skill Level=5" --play black --time 5+3
 //! open-chess-device --board /dev/ttyACM0 --listen 0.0.0.0:8080 --app dist/chess
+//! sudo open-chess-device --board /dev/rfcomm0 --clock dgtpi   # on a DGT Pi
 //! ```
 //!
 //! With `--listen`, a phone on the same network opens the device's address
@@ -36,8 +37,10 @@ mod unix {
     use chess_core::Side;
     use chess_dgt::serial::Port;
     use chess_dgt::{Event, Follower, Observation, Session};
+    use chess_dgtpi::driver::{Clock, Report};
     use clap::Parser;
     use open_chess_device::controller::{Controller, Setup, TimeControl, describe};
+    use open_chess_device::dgtpi;
     use open_chess_device::opponent::{EngineSpec, Opponent};
     use open_chess_device::view::{EngineInfo, View, game_id};
     use open_chess_device::web::{self, Change, Request, Web};
@@ -84,6 +87,11 @@ mod unix {
         /// Which side of the clock is White's.
         #[arg(long, default_value = "left", value_parser = ["left", "right"])]
         white_clock: String,
+
+        /// Where the clock is: on the board's cable, a DGT Pi's own clock
+        /// (I²C, needs root), or a simulated one (for trying it out).
+        #[arg(long, default_value = "board", value_parser = ["board", "dgtpi", "sim"])]
+        clock: String,
 
         /// Serve the app and the device's API here, e.g. 0.0.0.0:8080 (every
         /// network the device is on: a home network, not the internet).
@@ -160,6 +168,7 @@ mod unix {
         let opponent = Opponent::start(spec)?;
         let mut port =
             Port::open(&args.board).with_context(|| format!("opening the board on {}", args.board))?;
+        let clock = open_clock(&args.clock)?;
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
         let mut controller = Controller::new(Setup {
             player,
@@ -192,9 +201,7 @@ mod unix {
 
         let mut buf = [0u8; 512];
         loop {
-            for c in session.take_commands() {
-                port.send(&c)?;
-            }
+            send_commands(&mut session, &mut port, clock.as_ref())?;
             let n = port.read(&mut buf)?;
             let now = Instant::now();
             if n > 0 {
@@ -219,6 +226,9 @@ mod unix {
                         g.sans().last().map_or("", String::as_str)
                     );
                 }
+            }
+            if let Some(clock) = &clock {
+                clock_reports(clock, &mut controller, &mut session, &opponent);
             }
             let mut replies = Vec::new();
             while let Ok(r) = requests.try_recv() {
@@ -245,6 +255,56 @@ mod unix {
                 let _ = tx.send(result);
             }
             session.poll(now);
+        }
+    }
+
+    /// The DGT Pi's own clock, or a simulated one; `None` for a clock on
+    /// the board's cable.
+    fn open_clock(kind: &str) -> Result<Option<Clock>> {
+        let clock = match kind {
+            #[cfg(target_os = "linux")]
+            "dgtpi" => {
+                let bus = chess_dgtpi::bcm::BcmBus::open().context("the DGT Pi's clock")?;
+                Clock::spawn(bus)?
+            }
+            #[cfg(not(target_os = "linux"))]
+            "dgtpi" => bail!("--clock dgtpi: the DGT Pi's clock needs Linux on the DGT Pi"),
+            "sim" => Clock::spawn(chess_dgtpi::sim::SimClock::off())?,
+            _ => return Ok(None),
+        };
+        Ok(Some(clock))
+    }
+
+    /// Write the session's commands: to the board, except the clock's
+    /// when the clock isn't on the board's cable.
+    fn send_commands(session: &mut Session, port: &mut Port, clock: Option<&Clock>) -> Result<()> {
+        for c in session.take_commands() {
+            match clock {
+                Some(clock) if dgtpi::is_clock(&c) => {
+                    if let Some(r) = dgtpi::request(&c) {
+                        clock.send(r);
+                    }
+                }
+                _ => port.send(&c)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// The DGT Pi clock's buttons, and how it's doing.
+    fn clock_reports(clock: &Clock, controller: &mut Controller, session: &mut Session, opponent: &Opponent) {
+        for r in clock.reports() {
+            match r {
+                Report::Event(e) => {
+                    if let Some(b) = dgtpi::button(e)
+                        && let Some(t) = controller.on_button(b, session, Instant::now())
+                    {
+                        opponent.ask(t);
+                    }
+                }
+                Report::Ready => eprintln!("clock ready"),
+                Report::Failed(why) => eprintln!("clock: {why}"),
+            }
         }
     }
 

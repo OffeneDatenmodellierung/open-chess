@@ -314,7 +314,8 @@ impl Controller {
         }
     }
 
-    fn on_button(&mut self, b: ClockButton, s: &mut Session, now: Instant) -> Option<Think> {
+    /// A DGT3000 button, from the board's cable or a DGT Pi's own clock.
+    pub fn on_button(&mut self, b: ClockButton, s: &mut Session, now: Instant) -> Option<Think> {
         match b {
             ClockButton::Button(0) => {
                 let text = self.last_engine_san.clone().unwrap_or_else(|| "no move".into());
