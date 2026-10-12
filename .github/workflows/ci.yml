@@ -42,7 +42,7 @@ jobs:
       - run: cargo clippy -p open-chess-dgt --all-targets --features serial --locked
       # The device runtime as it builds for a DGT Pi or Centaur: 64-bit
       # Raspberry Pi OS, and 32-bit ARMv6 for the Centaur's original Pi Zero.
-      - run: cargo clippy -p open-chess-device -p open-chess-dgtpi -p open-chess-centaur --target aarch64-unknown-linux-gnu --locked
+      - run: cargo clippy -p open-chess-device -p open-chess-dgtpi -p open-chess-centaur -p open-chess-ble --target aarch64-unknown-linux-gnu --locked
       - run: cargo clippy -p open-chess-device -p open-chess-centaur --target arm-unknown-linux-gnueabihf --locked
 
   # Everything, the server's end-to-end tests included (two replicas on a

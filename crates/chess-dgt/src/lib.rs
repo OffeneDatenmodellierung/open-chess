@@ -33,6 +33,7 @@
 mod board;
 mod clock;
 mod follow;
+pub mod pegasus;
 mod protocol;
 #[cfg(all(feature = "serial", unix))]
 pub mod serial;

@@ -38,6 +38,8 @@ A chess server, engine and training app in Rust.
 | `chess-train` | Distributed engine training |
 | `chess-vision`, `chess-vision-train` | The board reader and its trainer |
 | `chess-dgt` | The DGT e-board protocol (USB, serial and Bluetooth boards, the Smart Board, the Revelation II, a DGT3000 on the board's cable) without I/O, and turning board readings into moves |
+| `chess-ble` | A small Bluetooth LE GATT client over the Linux kernel's sockets (no D-Bus, no system libraries) |
+| `chess-chessnut` | Chessnut's boards (Air, Air+, Pro, Go) over Bluetooth LE (GPL-3.0-or-later) |
 | `chess-centaur` | The DGT Centaur's board controller, and following a game from occupancy alone (GPL-3.0-or-later) |
 | `chess-dgtpi` | The DGT Pi's built-in clock over I²C, a port of DGT's `dgtpicom` (GPL-3.0-or-later) |
 | `chess-device` | `open-chess-device` (GPL-3.0-or-later): play open-chess's engine or any UCI engine on a DGT board, with Polyglot opening books and the clock, and serve the app as the board's screen |
@@ -82,8 +84,9 @@ Lichess's DGT connector.
 ## Licence
 
 MIT or Apache-2.0, at your option, except the device runtime
-(`chess-device`), the DGT Pi clock driver (`chess-dgtpi`) and the Centaur
-driver (`chess-centaur`), which build on GPL code and are GPL-3.0-or-later; nothing else depends on them. The app's font (Atkinson Hyperlegible)
+(`chess-device`), the DGT Pi clock driver (`chess-dgtpi`), the Centaur
+driver (`chess-centaur`) and the Chessnut driver (`chess-chessnut`), which
+build on GPL code and are GPL-3.0-or-later; nothing else depends on them. The app's font (Atkinson Hyperlegible)
 is under the SIL Open Font License (`web/chess/fonts/OFL.txt`). Stockfish,
 used by the fair-play worker and installed in the image, is a separate
 GPL-3.0 program run as a child process.

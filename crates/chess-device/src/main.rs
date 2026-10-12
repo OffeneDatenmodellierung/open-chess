@@ -8,6 +8,8 @@
 //! open-chess-device --board /dev/ttyACM0 --listen 0.0.0.0:8080 --app dist/chess
 //! sudo open-chess-device --board /dev/rfcomm0 --clock dgtpi   # on a DGT Pi
 //! open-chess-device --centaur                                 # on a DGT Centaur
+//! open-chess-device --ble AA:BB:CC:DD:EE:FF --ble-board chessnut   # Chessnut Air / Go
+//! open-chess-device --ble AA:BB:CC:DD:EE:FF --ble-board pegasus    # DGT Pegasus
 //! ```
 //!
 //! With `--listen`, a phone on the same network opens the device's address
@@ -60,6 +62,19 @@ mod unix {
         /// Running on a DGT Centaur: its board controller, lights and buttons.
         #[arg(long)]
         centaur: bool,
+
+        /// A Bluetooth LE board's address (from `bluetoothctl`, `scan on`).
+        #[arg(long)]
+        ble: Option<String>,
+
+        /// Which kind of Bluetooth LE board.
+        #[arg(long, default_value = "chessnut", value_parser = ["chessnut", "pegasus"])]
+        ble_board: String,
+
+        /// The board uses a random (static) Bluetooth address rather than
+        /// its public one (`bluetoothctl info` says "random").
+        #[arg(long)]
+        random_address: bool,
 
         /// open-chess's engine at this level, 1 (beginner) to 8 (the clock's
         /// buttons change it during play).
@@ -276,6 +291,168 @@ mod unix {
         }
     }
 
+    /// A Bluetooth LE board's GATT link.
+    #[cfg(target_os = "linux")]
+    type Ble = chess_ble::Gatt<chess_ble::l2cap::Channel>;
+
+    /// How long to wait for the board's notifications each time round.
+    const BLE_WAIT: Duration = Duration::from_millis(100);
+
+    #[cfg(target_os = "linux")]
+    fn ble_connect(args: &Args, address: &str, notify: &str) -> Result<(Ble, u16)> {
+        use chess_ble::l2cap::{AddressType, Channel};
+        let a: chess_ble::l2cap::Address = address.parse().map_err(anyhow::Error::msg)?;
+        let kind = if args.random_address { AddressType::Random } else { AddressType::Public };
+        let channel = Channel::connect(a, kind).with_context(|| format!("connecting to {address}"))?;
+        let mut gatt = chess_ble::Gatt::new(channel);
+        gatt.exchange_mtu(185)?;
+        let uuid: chess_ble::Uuid = notify.parse().map_err(anyhow::Error::msg)?;
+        let handle = gatt.subscribe(uuid).context("subscribing to the board")?;
+        Ok((gatt, handle))
+    }
+
+    /// The board's notifications for a moment.
+    #[cfg(target_os = "linux")]
+    fn ble_notifications(gatt: &mut Ble, handle: u16) -> Result<Vec<Vec<u8>>> {
+        let mut out = Vec::new();
+        let mut wait = BLE_WAIT;
+        while let Some((h, data)) = gatt.notification(wait)? {
+            if h == handle {
+                out.push(data);
+            }
+            wait = Duration::ZERO;
+        }
+        Ok(out)
+    }
+
+    /// A Chessnut Air / Go over Bluetooth LE.
+    #[cfg(target_os = "linux")]
+    struct ChessnutLink {
+        gatt: Ble,
+        notify: u16,
+        write: chess_ble::Uuid,
+        session: chess_chessnut::Session,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Board for ChessnutLink {
+        fn game(&self) -> &Game {
+            self.session.game()
+        }
+        fn awaiting_board(&self) -> bool {
+            Board::awaiting_board(&self.session)
+        }
+        fn play(&mut self, uci: &str) -> Result<Played, GameError> {
+            Board::play(&mut self.session, uci)
+        }
+        fn send(&mut self, c: Command) {
+            Board::send(&mut self.session, c);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Link for ChessnutLink {
+        fn exchange(&mut self, now: Instant) -> Result<Vec<Input>> {
+            for w in self.session.take_writes() {
+                self.gatt.write_to(self.write, &w)?;
+            }
+            for n in ble_notifications(&mut self.gatt, self.notify)? {
+                for e in self.session.receive(&n, now) {
+                    if let chess_chessnut::Event::Battery { percent, charging: false } = e
+                        && percent < 10
+                    {
+                        eprintln!("battery low ({percent}%)");
+                    }
+                }
+            }
+            Ok(self
+                .session
+                .poll(Instant::now())
+                .into_iter()
+                .filter_map(|e| match e {
+                    chess_chessnut::Event::Game(o) => Some(Input::Event(Event::Game(o))),
+                    chess_chessnut::Event::Battery { .. } => None,
+                })
+                .collect())
+        }
+    }
+
+    /// A DGT Pegasus over Bluetooth LE: the DGT protocol over the Nordic
+    /// UART service.
+    #[cfg(target_os = "linux")]
+    struct PegasusLink {
+        gatt: Ble,
+        notify: u16,
+        write: chess_ble::Uuid,
+        session: Session,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Board for PegasusLink {
+        fn game(&self) -> &Game {
+            self.session.game()
+        }
+        fn awaiting_board(&self) -> bool {
+            self.session.awaiting_board()
+        }
+        fn play(&mut self, uci: &str) -> Result<Played, GameError> {
+            Board::play(&mut self.session, uci)
+        }
+        fn send(&mut self, c: Command) {
+            if let Some(c) = chess_dgt::pegasus::translate(c) {
+                self.session.send(c);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Link for PegasusLink {
+        fn exchange(&mut self, now: Instant) -> Result<Vec<Input>> {
+            for c in self.session.take_commands() {
+                if let Some(c) = chess_dgt::pegasus::translate(c) {
+                    self.gatt.write_to(self.write, &c.encode())?;
+                }
+            }
+            let mut inputs = Vec::new();
+            for n in ble_notifications(&mut self.gatt, self.notify)? {
+                inputs.extend(self.session.receive(&n, now).into_iter().map(Input::Event));
+            }
+            self.session.poll(Instant::now());
+            Ok(inputs)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn play_ble(
+        args: &Args,
+        address: &str,
+        controller: Controller,
+        opponent: &Opponent,
+        engine: &EngineInfo,
+        seed: u64,
+    ) -> Result<()> {
+        let now = Instant::now();
+        eprintln!("connecting to {address} ({})", args.ble_board);
+        if args.ble_board == "pegasus" {
+            let (gatt, notify) = ble_connect(args, address, chess_dgt::pegasus::NOTIFY)?;
+            let write = chess_dgt::pegasus::WRITE.parse().map_err(anyhow::Error::msg)?;
+            let mut session = chess_dgt::pegasus::session(Follower::new());
+            session.start(now);
+            play(&mut PegasusLink { gatt, notify, write, session }, controller, opponent, engine, seed, args)
+        } else {
+            let (gatt, notify) = ble_connect(args, address, chess_chessnut::protocol::READ)?;
+            let write = chess_chessnut::protocol::WRITE.parse().map_err(anyhow::Error::msg)?;
+            let mut session = chess_chessnut::Session::new(Follower::new());
+            session.start(now);
+            play(&mut ChessnutLink { gatt, notify, write, session }, controller, opponent, engine, seed, args)
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn play_ble(_: &Args, _: &str, _: Controller, _: &Opponent, _: &EngineInfo, _: u64) -> Result<()> {
+        bail!("--ble: Bluetooth LE boards need Linux (a Raspberry Pi, or a Linux computer)")
+    }
+
     /// The DGT Pi's own clock, or a simulated one; `None` for a clock on
     /// the board's cable.
     fn open_clock(kind: &str) -> Result<Option<Clock>> {
@@ -315,6 +492,9 @@ mod unix {
             seed,
         });
         let now = Instant::now();
+        if let Some(address) = &args.ble {
+            return play_ble(args, address, controller, &opponent, &engine, seed);
+        }
         if args.centaur {
             let path = args.board.as_deref().unwrap_or("/dev/serial0");
             let port = Port::open_at(path, 1_000_000)
@@ -324,7 +504,9 @@ mod unix {
             eprintln!("waiting for the Centaur's controller on {path} (you play {})", args.play);
             play(&mut CentaurLink { session, port }, controller, &opponent, &engine, seed, args)
         } else {
-            let Some(path) = args.board.as_deref() else { bail!("--board: the board's port (or --centaur)") };
+            let Some(path) = args.board.as_deref() else {
+                bail!("--board: the board's port (or --centaur, or --ble)")
+            };
             let port = Port::open(path).with_context(|| format!("opening the board on {path}"))?;
             let clock = open_clock(&args.clock)?;
             let mut session = Session::new(Follower::new());

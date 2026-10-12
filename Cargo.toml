@@ -16,6 +16,8 @@ members = [
     "crates/chess-dgt",
     "crates/chess-dgtpi",
     "crates/chess-centaur",
+    "crates/chess-ble",
+    "crates/chess-chessnut",
     "crates/chess-device",
 ]
 

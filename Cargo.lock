@@ -2524,7 +2524,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-chess-ble"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+]
+
+[[package]]
 name = "open-chess-centaur"
+version = "0.1.0"
+dependencies = [
+ "open-chess-core",
+ "open-chess-dgt",
+]
+
+[[package]]
+name = "open-chess-chessnut"
 version = "0.1.0"
 dependencies = [
  "open-chess-core",
@@ -2582,7 +2597,9 @@ dependencies = [
  "clap",
  "futures-util",
  "open-chess-analysis",
+ "open-chess-ble",
  "open-chess-centaur",
+ "open-chess-chessnut",
  "open-chess-core",
  "open-chess-dgt",
  "open-chess-dgtpi",

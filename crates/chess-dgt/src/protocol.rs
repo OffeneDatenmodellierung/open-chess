@@ -101,6 +101,9 @@ pub enum Command {
     },
     /// Revelation II: all lights off.
     LightsOff,
+    /// Bytes as they are, for a board's own extensions (the Pegasus's
+    /// lights and unlocking).
+    Raw(Vec<u8>),
 }
 
 const CLOCK_MESSAGE: u8 = 0x2b;
@@ -154,6 +157,7 @@ impl Command {
                 ]
             }
             Command::LightsOff => vec![0x60, 0x04, 0x00, 0x40, 0x40, 0x00],
+            Command::Raw(bytes) => bytes.clone(),
         }
     }
 }

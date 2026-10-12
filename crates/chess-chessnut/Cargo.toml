@@ -1,0 +1,26 @@
+[package]
+name = "open-chess-chessnut"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "Chessnut's boards (Air, Air+, Pro, Go) over Bluetooth LE: their protocol and following a game on them"
+license = "GPL-3.0-or-later"
+authors = ["Mark Olliver"]
+publish = false
+
+[dependencies]
+chess-core = { package = "open-chess-core", path = "../chess-core" }
+chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+missing_panics_doc = "allow"
+cast_possible_truncation = "allow"
