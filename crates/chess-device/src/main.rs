@@ -24,8 +24,8 @@
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -34,14 +34,18 @@ use chess_core::Side;
 use chess_dgtpi::driver::Clock;
 use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
+use open_chess_device::board::Board;
+use open_chess_device::choice::{GameChoice, Site, Start};
 use open_chess_device::controller::{Controller, Setup, TimeControl};
 use open_chess_device::discover::{self, BleKind, Found};
+use open_chess_device::links::Link;
 use open_chess_device::links::{AnyLink, CentaurLink, ChessnutLink, DgtLink, PegasusLink};
 use open_chess_device::log::{self, Source};
 use open_chess_device::menu::Choices;
-use open_chess_device::online::{Challenge, Connection};
+use open_chess_device::online::{Challenge, Connection, Opening};
 use open_chess_device::opponent::{EngineSpec, Opponent};
-use open_chess_device::play::{self, Mode, Options};
+use open_chess_device::play::{self, Mode, Options, Rating};
+use open_chess_device::settings::Settings;
 use open_chess_device::view::View;
 use open_chess_device::{ble, picoini, tui};
 use tokio::sync::watch;
@@ -370,28 +374,84 @@ fn engine_list(args: &Args) -> Result<(Vec<play::EngineChoice>, usize)> {
     Ok((engines, at))
 }
 
-/// Who the board plays, for one connection.
-fn mode(args: &Args, seed: u64) -> Result<Mode> {
+/// The game the command line asks for (when no screen chooses one).
+fn choice_from_args(args: &Args) -> Result<GameChoice> {
+    let play = if args.play == "black" { Side::Black } else { Side::White };
     if let Some(addr) = &args.livechess {
-        return Ok(Mode::LiveChess { addr: addr.clone() });
+        return Ok(GameChoice::DgtPage { addr: addr.clone() });
     }
     if let Some(base) = &args.online {
         let Some(token) = &args.token else {
             bail!("--online needs the account's API token: --token or OPEN_CHESS_TOKEN")
         };
-        let challenge = args.challenge.as_ref().map(|who| Challenge {
-            opponent: who.clone(),
-            request: chess_client::ChallengeRequest {
-                rated: false,
-                limit_secs: args.time.map(|t| t.minutes * 60),
-                increment_secs: args.time.map(|t| t.increment_secs),
-                color: Some(args.play.clone()),
-                ..Default::default()
-            },
+        let site = if base.trim_end_matches('/') == "https://lichess.org" {
+            Site::Lichess
+        } else {
+            Site::Server(base.clone())
+        };
+        let start = args.challenge.clone().map_or(Start::Wait, Start::Challenge);
+        return Ok(GameChoice::Online {
+            site,
+            token: token.clone(),
+            start,
+            play: Some(play),
+            time: args.time,
+            rated: false,
+            other_token: None,
         });
-        log::line(Source::Online, format!("playing online at {base}"));
-        return Ok(Mode::Online { connection: Connection::spawn(base, token, challenge)? });
     }
+    let saved = Settings::load();
+    let name = if saved.name.is_empty() { open_chess_device::settings::login_name() } else { saved.name };
+    Ok(GameChoice::Computer { name, level: args.level, play, time: args.time })
+}
+
+/// The name of the engine "the computer" is, for the screen.
+fn engine_label(args: &Args) -> Option<String> {
+    args.uci.as_deref().map(|p| stem(Path::new(p)))
+}
+
+/// Who the board plays, for one game.
+fn mode(args: &Args, choice: &GameChoice, seed: u64) -> Result<Mode> {
+    let request =
+        |play: Option<Side>, time: Option<TimeControl>, rated: bool| chess_client::ChallengeRequest {
+            rated,
+            limit_secs: time.map(|t| t.minutes * 60),
+            increment_secs: time.map(|t| t.increment_secs),
+            color: Some(play.map_or("random", Side::name).to_owned()),
+            ..Default::default()
+        };
+    let (player, level, time, rating, two_players) = match choice {
+        GameChoice::DgtPage { addr } => return Ok(Mode::LiveChess { addr: addr.clone() }),
+        GameChoice::Online { site, token, start, play, time, rated, other_token } => {
+            let opening = match start {
+                Start::Wait => Opening::Wait,
+                Start::Challenge(who) => Opening::Challenge(Challenge {
+                    opponent: who.clone(),
+                    request: request(*play, *time, *rated),
+                }),
+                Start::Computer(level) => {
+                    Opening::Computer { level: *level, request: request(*play, *time, false) }
+                }
+                Start::Resume(id) => Opening::Resume(id.clone()),
+                Start::Accept(id) => Opening::Accept(id.clone()),
+                Start::Pair => Opening::Pair { request: request(*play, *time, *rated) },
+            };
+            log::line(Source::Online, format!("playing online at {}", site.base()));
+            let other = other_token.as_deref().filter(|t| !t.trim().is_empty());
+            let connection = Connection::spawn(site.base(), token, opening, other)?;
+            return Ok(Mode::Online { connection, both: other.is_some() });
+        }
+        GameChoice::Computer { name, level, play, time } => {
+            let rated = args.uci.is_none() && !name.trim().is_empty();
+            let rating = if rated { Rating::Against(name.trim().to_owned()) } else { Rating::None };
+            (*play, *level, *time, rating, false)
+        }
+        GameChoice::TwoPlayers { white, black, time } => {
+            let name =
+                |n: &str, d: &str| if n.trim().is_empty() { d.to_owned() } else { n.trim().to_owned() };
+            (Side::White, args.level, *time, Rating::Pair(name(white, "White"), name(black, "Black")), true)
+        }
+    };
     let (engines, engine_at) = engine_list(args)?;
     let (books, book_at) = book_list(args);
     let opponent = Opponent::start(engines[engine_at].spec.clone())?;
@@ -403,19 +463,21 @@ fn mode(args: &Args, seed: u64) -> Result<Mode> {
         engine: engine_at,
     };
     let controller = Controller::new(Setup {
-        player: if args.play == "black" { Side::Black } else { Side::White },
-        level: args.level,
+        player,
+        level,
         book: load_book(args)?,
-        time: args.time,
+        time,
         white_on_left: args.white_clock == "left",
         seed,
         choices,
+        two_players,
     });
     Ok(Mode::Engine {
         controller: Box::new(controller),
         opponent,
         engine,
         lists: play::Lists { books, engines },
+        rating,
     })
 }
 
@@ -476,13 +538,21 @@ fn open(found: &Found, args: &Args) -> Result<AnyLink> {
     })
 }
 
+/// Where a board's games come from: one, from the command line, or one
+/// after another from the screen (each with a flag that ends it).
+enum Games {
+    Once(GameChoice),
+    Chosen(mpsc::Receiver<(GameChoice, Arc<AtomicBool>)>),
+}
+
 /// Connect to a board and play on it until it fails or `stop` is set.
 fn play_on(
     found: &Found,
     args: &Args,
     seed: u64,
-    stop: Arc<AtomicBool>,
+    stop: &Arc<AtomicBool>,
     view: &watch::Sender<View>,
+    games: &Games,
 ) -> Result<()> {
     log::line(Source::Device, format!("connecting to {}", found.describe()));
     let mut link = open(found, args)?;
@@ -490,18 +560,65 @@ fn play_on(
     if matches!(found, Found::Centaur { .. }) && !args.no_screen {
         open_chess_device::epaper::start(view.subscribe());
     }
-    log::line(Source::Device, format!("connected to {} (you play {})", found.describe(), args.play));
-    let mode = mode(args, seed)?;
+    log::line(Source::Device, format!("connected to {}", found.describe()));
     let o = Options {
         white_on_left: args.white_clock == "left",
         listen: args.listen.clone(),
         app: args.app.clone(),
         name: args.name.clone(),
         seed,
-        stop,
+        stop: stop.clone(),
     };
-    play::drive(&mut link, mode, &o, view)?;
-    Ok(())
+    let requests = play::serve_web(&o, view)?;
+    let mut first = true;
+    let mut once = match games {
+        Games::Once(c) => Some((c.clone(), stop.clone())),
+        Games::Chosen(_) => None,
+    };
+    loop {
+        let (choice, game_stop) = match games {
+            Games::Once(_) => match once.take() {
+                Some(next) => next,
+                None => return Ok(()),
+            },
+            Games::Chosen(rx) => loop {
+                if stop.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                match rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(next) => break next,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        // Keep the board's messages flowing while choosing.
+                        link.exchange(Instant::now())?;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+                }
+            },
+        };
+        if !first {
+            // A fresh game: the pieces go back to the start.
+            if let Ok(g) = chess_core::Game::new(None) {
+                let _ = link.set_position(&g.fen());
+            }
+        }
+        first = false;
+        log::line(Source::Device, format!("playing {}", choice.describe()));
+        let mode = match mode(args, &choice, seed) {
+            Ok(m) => m,
+            Err(e) => {
+                log::line(Source::Device, format!("{e:#}"));
+                if matches!(games, Games::Once(_)) {
+                    return Err(e);
+                }
+                continue;
+            }
+        };
+        let o = Options { stop: game_stop, ..o.clone() };
+        play::drive(&mut link, mode, &o, view, &requests)?;
+        if stop.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+    }
 }
 
 /// Every board there is: ports, Chessnut boards on USB, Bluetooth LE.
@@ -525,20 +642,41 @@ fn run(args: Args) -> Result<()> {
         let Some(t) = target else {
             bail!("name a board (--board, --centaur, --ble, --usb), or run in a terminal to choose one")
         };
-        return play_on(&t, &args, seed, Arc::new(AtomicBool::new(false)), &view_tx);
+        let choice = choice_from_args(&args)?;
+        return play_on(&t, &args, seed, &Arc::new(AtomicBool::new(false)), &view_tx, &Games::Once(choice));
     }
+    // A board named on the command line starts straight away with the
+    // command line's game; otherwise the screen asks.
+    let first = if target.is_some() { Some(choice_from_args(&args)?) } else { None };
+    let defaults = tui::Defaults {
+        settings: Settings::load(),
+        level: args.level,
+        play: if args.play == "black" { Side::Black } else { Side::White },
+        time: args.time,
+        engine: engine_label(&args),
+        lichess_token: args
+            .token
+            .clone()
+            .filter(|_| args.online.as_deref().is_none_or(|b| b.contains("lichess.org"))),
+        server: args.online.clone().filter(|b| !b.contains("lichess.org")),
+        server_token: args
+            .token
+            .clone()
+            .filter(|_| args.online.as_deref().is_some_and(|b| !b.contains("lichess.org"))),
+        livechess: args.livechess.clone().unwrap_or_else(|| "127.0.0.1:1982".into()),
+    };
     let args = Arc::new(args);
     let connect = {
         let (args, view_tx) = (args.clone(), view_tx.clone());
-        move |found: Found, stop: Arc<AtomicBool>| {
+        move |found: Found, stop: Arc<AtomicBool>, games: mpsc::Receiver<(GameChoice, Arc<AtomicBool>)>| {
             let (args, view_tx) = (args.clone(), view_tx.clone());
             std::thread::spawn(move || {
-                play_on(&found, &args, seed, stop, &view_tx)
+                play_on(&found, &args, seed, &stop, &view_tx, &Games::Chosen(games))
                     .map_err(|e| std::io::Error::other(format!("{e:#}")))
             })
         }
     };
     let scan: Arc<tui::Scan> = Arc::new(scan_all);
-    tui::run(&args.name, &view_rx, &scan, &connect, target)?;
+    tui::run(&args.name, &view_rx, &scan, &connect, target, first, &defaults)?;
     Ok(())
 }

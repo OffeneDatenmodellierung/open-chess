@@ -26,7 +26,9 @@ use crate::board::Board;
 /// What to ask the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
-    Move { game: String, uci: String },
+    /// A move; `other` when it's the other account's (both sides played
+    /// on the board), sent with its token.
+    Move { game: String, uci: String, other: bool },
 }
 
 /// The game being played.
@@ -44,6 +46,8 @@ pub struct Live {
     pub clocks: Option<([i64; 2], Instant)>,
     pub increment_ms: i64,
     pub limit_ms: Option<i64>,
+    /// White's name and Black's.
+    pub names: [String; 2],
     /// A move of ours sent and not yet in the server's moves.
     sent: Option<String>,
 }
@@ -89,6 +93,8 @@ pub struct OnlinePlay {
     last_opponent_san: Option<String>,
     white_on_left: bool,
     games: u32,
+    /// Both sides are played on the board (the other with its own token).
+    both: bool,
 }
 
 /// What Lichess sends for an untimed side.
@@ -105,7 +111,20 @@ impl OnlinePlay {
             last_opponent_san: None,
             white_on_left,
             games: 0,
+            both: false,
         }
+    }
+
+    /// Play both sides from the board: every move made on it is sent (the
+    /// other side's with the other account's token).
+    #[must_use]
+    pub fn both_sides(mut self) -> OnlinePlay {
+        self.both = true;
+        self
+    }
+
+    pub fn plays_both_sides(&self) -> bool {
+        self.both
     }
 
     pub fn game(&self) -> Option<&Live> {
@@ -146,6 +165,7 @@ impl OnlinePlay {
             clocks: None,
             increment_ms: full.clock.map_or(0, |c| c.increment),
             limit_ms: full.clock.map(|c| c.initial),
+            names: [full.white.name.clone(), full.black.name.clone()],
             sent: None,
         });
         if fresh {
@@ -243,10 +263,11 @@ impl OnlinePlay {
         if local.len() == server.len() + 1 && local.starts_with(server) && g.started() {
             // The player's move, made on the board.
             let m = local.last().expect("one more").clone();
-            if g.turn() == g.side && board.game().turn() != g.side {
+            let mover = g.turn();
+            if (self.both || mover == g.side) && board.game().turn() != mover {
                 if g.sent.as_ref() != Some(&m) {
                     g.sent = Some(m.clone());
-                    self.requests.push(Request::Move { game: g.id.clone(), uci: m });
+                    self.requests.push(Request::Move { game: g.id.clone(), uci: m, other: mover != g.side });
                 }
             } else {
                 say(board, "not now", 4);
@@ -313,6 +334,11 @@ pub enum FromServer {
     Refused(String),
     /// Something went wrong (the device keeps trying).
     Problem(String),
+    /// A finished game's players, their ratings and what it did to them.
+    Ratings {
+        game: String,
+        players: [crate::ratings::PlayerResult; 2],
+    },
 }
 
 /// A challenge to send when starting.
@@ -320,6 +346,99 @@ pub enum FromServer {
 pub struct Challenge {
     pub opponent: String,
     pub request: chess_client::ChallengeRequest,
+}
+
+/// How the device starts playing once signed in.
+#[derive(Debug, Clone)]
+pub enum Opening {
+    /// Play whatever game starts on the site or the app.
+    Wait,
+    Challenge(Challenge),
+    /// The site's computer at this level.
+    Computer {
+        level: u8,
+        request: chess_client::ChallengeRequest,
+    },
+    /// Go back to a game of ours still in progress (after a disconnect).
+    Resume(String),
+    /// Accept a challenge waiting for us.
+    Accept(String),
+    /// A new game between this account and the other one (both on the
+    /// board): challenged and accepted with the other's token at once.
+    Pair {
+        request: chess_client::ChallengeRequest,
+    },
+}
+
+/// A game or challenge the site has open for the account, to resume or
+/// accept from the terminal screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Open {
+    /// A game in progress: its id, the opponent, our side, whether it's
+    /// our move.
+    Playing { id: String, opponent: String, side: Side, my_turn: bool },
+    /// A challenge to us: its id, who from, the time control, rated.
+    Challenged { id: String, from: String, time: String, rated: bool },
+}
+
+impl Open {
+    pub fn describe(&self) -> String {
+        match self {
+            Open::Playing { opponent, side, my_turn, .. } => format!(
+                "resume v {opponent} (you play {}{})",
+                side.name(),
+                if *my_turn { ", your move" } else { "" }
+            ),
+            Open::Challenged { from, time, rated, .. } => {
+                format!("accept {from}'s challenge ({time}{})", if *rated { ", rated" } else { "" })
+            }
+        }
+    }
+}
+
+/// Start a game between two accounts: the first challenges the second,
+/// accepted at once with the second's token. Returns the game's id.
+async fn pair(
+    first: &chess_client::Client,
+    second: &chess_client::Client,
+    second_token: &str,
+    request: &chess_client::ChallengeRequest,
+) -> anyhow::Result<String> {
+    let them = second.account().await?;
+    let mut r = request.clone();
+    r.accept_by_token = Some(second_token.to_owned());
+    Ok(first.challenge(&them.id, &r).await?.id)
+}
+
+/// What the site has open for the account: games in progress, then
+/// challenges to it.
+pub fn open_games(base: &str, token: &str) -> anyhow::Result<Vec<Open>> {
+    let client = chess_client::Client::new(base, Some(token))?;
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    rt.block_on(async {
+        let mut out = Vec::new();
+        for g in client.playing().await?.now_playing {
+            out.push(Open::Playing {
+                id: g.game_id,
+                opponent: g.opponent.username,
+                side: g.color,
+                my_turn: g.is_my_turn,
+            });
+        }
+        for c in client.challenges().await?.incoming {
+            let time = match c.time_control {
+                chess_proto::TimeControl::Clock { limit, increment, .. } => {
+                    format!("{}+{increment}", limit / 60)
+                }
+                chess_proto::TimeControl::Correspondence { days_per_turn } => {
+                    format!("{days_per_turn} days a move")
+                }
+                chess_proto::TimeControl::Unlimited => "no clock".into(),
+            };
+            out.push(Open::Challenged { id: c.id, from: c.challenger.name, time, rated: c.rated });
+        }
+        Ok(out)
+    })
 }
 
 /// The connection to the server, on a thread of its own.
@@ -330,8 +449,18 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn spawn(base: &str, token: &str, challenge: Option<Challenge>) -> anyhow::Result<Connection> {
+    /// Sign in and follow the account's games until the connection is
+    /// dropped. With `other_token`, the other side's moves (both played on
+    /// the board) are sent as that account.
+    pub fn spawn(
+        base: &str,
+        token: &str,
+        opening: Opening,
+        other_token: Option<&str>,
+    ) -> anyhow::Result<Connection> {
         let client = chess_client::Client::new(base, Some(token))?;
+        let other = other_token.map(|t| chess_client::Client::new(base, Some(t))).transpose()?;
+        let other_token = other_token.unwrap_or_default().to_owned();
         let (tx, mut requests) = tokio::sync::mpsc::unbounded_channel::<Request>();
         let (out, rx) = mpsc::channel::<FromServer>();
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
@@ -347,22 +476,74 @@ impl Connection {
                     }
                 };
                 let _ = out.send(FromServer::Account(me));
-                if let Some(c) = challenge
-                    && let Err(e) = client.challenge(&c.opponent, &c.request).await
-                {
-                    let _ = out.send(FromServer::Problem(format!("challenging {}: {e}", c.opponent)));
-                }
+                // The one game to follow, when we started or chose it.
+                let focus = match &opening {
+                    Opening::Wait => None,
+                    Opening::Challenge(c) => match client.challenge(&c.opponent, &c.request).await {
+                        Ok(ch) => {
+                            let _ = out.send(FromServer::Problem(format!(
+                                "challenged {}: waiting for them to accept ({})",
+                                c.opponent, ch.url
+                            )));
+                            Some(ch.id)
+                        }
+                        Err(e) => {
+                            let _ = out.send(FromServer::Problem(format!("challenging {}: {e}", c.opponent)));
+                            None
+                        }
+                    },
+                    Opening::Computer { level, request } => {
+                        match client.challenge_ai(*level, request).await {
+                            Ok(id) => Some(id),
+                            Err(e) => {
+                                let _ = out.send(FromServer::Problem(format!(
+                                    "starting a game with the computer: {e}"
+                                )));
+                                None
+                            }
+                        }
+                    }
+                    Opening::Resume(id) => Some(id.clone()),
+                    Opening::Pair { request } => match &other {
+                        None => {
+                            let _ = out.send(FromServer::Problem(
+                                "two players need the other account's token".into(),
+                            ));
+                            None
+                        }
+                        Some(o) => match pair(&client, o, &other_token, request).await {
+                            Ok(id) => Some(id),
+                            Err(e) => {
+                                let _ = out.send(FromServer::Problem(format!("starting the game: {e}")));
+                                None
+                            }
+                        },
+                    },
+                    Opening::Accept(id) => {
+                        if let Err(e) = client.accept_challenge(id).await {
+                            let _ = out.send(FromServer::Problem(format!("accepting the challenge: {e}")));
+                        }
+                        Some(id.clone())
+                    }
+                };
                 let sender = client.clone();
+                let other_sender = other.clone();
                 let moves_out = out.clone();
-                tokio::spawn(async move {
+                // The moves to send; this ends when the connection is
+                // dropped, and everything else with it.
+                let moves = async move {
                     while let Some(r) = requests.recv().await {
-                        let Request::Move { game, uci } = r;
-                        if let Err(e) = sender.make_move(chess_client::Api::Board, &game, &uci, false).await {
+                        let Request::Move { game, uci, other } = r;
+                        let by = if other { other_sender.as_ref().unwrap_or(&sender) } else { &sender };
+                        if let Err(e) = by.make_move(chess_client::Api::Board, &game, &uci, false).await {
                             let _ = moves_out.send(FromServer::Refused(format!("{uci}: {e}")));
                         }
                     }
-                });
-                events(&client, &out).await;
+                };
+                tokio::select! {
+                    () = moves => {}
+                    () = events(&client, &out, focus.as_deref()) => {}
+                }
             });
         })?;
         Ok(Connection { tx, rx })
@@ -379,7 +560,9 @@ impl Connection {
 }
 
 /// Follow the event stream for good: each game that starts is streamed.
-async fn events(client: &chess_client::Client, out: &mpsc::Sender<FromServer>) {
+/// With `focus`, only that game is played (others starting are left to
+/// the site).
+async fn events(client: &chess_client::Client, out: &mpsc::Sender<FromServer>, focus: Option<&str>) {
     let mut streaming: Option<(String, tokio::task::JoinHandle<()>)> = None;
     loop {
         match client.stream_events().await {
@@ -388,6 +571,9 @@ async fn events(client: &chess_client::Client, out: &mpsc::Sender<FromServer>) {
                     match e {
                         Ok(chess_proto::StreamEvent::GameStart(info)) => {
                             let id = info.game_id.clone();
+                            if focus.is_some_and(|f| f != id) {
+                                continue;
+                            }
                             if streaming.as_ref().is_some_and(|(g, h)| *g == id && !h.is_finished()) {
                                 continue;
                             }
@@ -428,9 +614,34 @@ async fn game(client: &chess_client::Client, id: &str, out: &mpsc::Sender<FromSe
                     return;
                 }
             }
+            ratings(client, id, out).await;
         }
         Err(e) => {
             let _ = out.send(FromServer::Problem(format!("game {id}: {e}")));
+        }
+    }
+}
+
+/// Once a game's stream has ended: the players' ratings and changes, from
+/// the game's export (asked a few times: a site can take a moment to rate
+/// a game).
+async fn ratings(client: &chess_client::Client, id: &str, out: &mpsc::Sender<FromServer>) {
+    for _ in 0..4 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let Ok(g) = client.export_game(id).await else { continue };
+        if g.status == Status::Started {
+            return;
+        }
+        let rated_yet = !g.rated || g.players.white.rating_diff.is_some();
+        let player = |p: &chess_proto::GamePlayer| crate::ratings::PlayerResult {
+            name: p.user.name.clone(),
+            rating: Some(p.rating),
+            diff: p.rating_diff,
+        };
+        if rated_yet {
+            let players = [player(&g.players.white), player(&g.players.black)];
+            let _ = out.send(FromServer::Ratings { game: id.to_owned(), players });
+            return;
         }
     }
 }
@@ -532,6 +743,30 @@ mod tests {
     }
 
     #[test]
+    fn plays_both_sides_for_two_accounts() {
+        let now = Instant::now();
+        let mut s = Session::new(Follower::new());
+        let mut o = OnlinePlay::new("ann", true).both_sides();
+        show(&mut s, &mut o, "");
+        o.on_full(&full("bob", "ann", ""), &mut s, now);
+        // White's move is Bob's: sent with the other token.
+        show(&mut s, &mut o, "e2e4");
+        assert_eq!(
+            o.take_requests(),
+            [Request::Move { game: "abcd1234".into(), uci: "e2e4".into(), other: true }]
+        );
+        o.on_state(&state("e2e4", Status::Started), &mut s, now);
+        // Black's is Ann's own.
+        show(&mut s, &mut o, "e2e4 e7e5");
+        assert_eq!(
+            o.take_requests(),
+            [Request::Move { game: "abcd1234".into(), uci: "e7e5".into(), other: false }]
+        );
+        o.on_state(&state("e2e4 e7e5", Status::Started), &mut s, now);
+        assert_eq!(o.game().unwrap().names, ["bob".to_owned(), "ann".to_owned()]);
+    }
+
+    #[test]
     fn plays_an_online_game_from_the_board() {
         let now = Instant::now();
         let mut s = Session::new(Follower::new());
@@ -543,7 +778,10 @@ mod tests {
 
         // My move on the board goes to the server, once.
         show(&mut s, &mut o, "e2e4");
-        assert_eq!(o.take_requests(), [Request::Move { game: "abcd1234".into(), uci: "e2e4".into() }]);
+        assert_eq!(
+            o.take_requests(),
+            [Request::Move { game: "abcd1234".into(), uci: "e2e4".into(), other: false }]
+        );
         show(&mut s, &mut o, "e2e4");
         assert!(o.take_requests().is_empty());
 

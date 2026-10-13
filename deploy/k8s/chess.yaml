@@ -38,7 +38,7 @@ spec:
           labelSelector: { matchLabels: *labels }
       containers:
         - name: chess
-          image: ghcr.io/offenedatenmodellierung/open-chess:0.1.1
+          image: ghcr.io/offenedatenmodellierung/open-chess:0.1.2
           args: ["serve"]
           envFrom:
             - secretRef: { name: open-chess }
@@ -139,7 +139,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: analyse
-          image: ghcr.io/offenedatenmodellierung/open-chess:0.1.1
+          image: ghcr.io/offenedatenmodellierung/open-chess:0.1.2
           args: ["analyse"]
           envFrom:
             - secretRef: { name: open-chess }

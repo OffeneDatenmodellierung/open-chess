@@ -1,20 +1,26 @@
-//! The terminal screen: pick a board, watch the game, read the log.
+//! The terminal screen: pick a board, pick a game, watch it, read the log.
 //!
 //! Boards found nearby (Bluetooth LE) and attached (USB and serial ports,
-//! Chessnut boards on USB) are listed to choose from; once one is
-//! connected the screen shows the board, the game and its clocks, and the
-//! log newest first: the board, the engine, the online game, and every
-//! request from the app, PicoChess's tools and Lichess's DGT page.
+//! Chessnut boards on USB) are listed to choose from. Once one is
+//! connected the screen asks what to play ([`crate::chooser`]): the
+//! computer, two people on the board, Lichess or an open-chess server (a
+//! new game, one still in progress, or a challenge waiting), or the board
+//! for Lichess's DGT page. Then it shows the board, the players and their
+//! clocks, the opening and every move in words beside its notation (newest
+//! first), and the log newest first: the board, the engine, the online
+//! game, and every request from the app, PicoChess's tools and Lichess's
+//! DGT page. When the game ends it says who won and what it did to the
+//! players' ratings; `n` picks the next game on the same board.
 
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
 use chess_core::Side;
 use ratatui::crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -24,49 +30,114 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wra
 use ratatui::{DefaultTerminal, Frame};
 use tokio::sync::watch;
 
+use crate::choice::GameChoice;
+pub use crate::chooser::Defaults;
+use crate::chooser::{Action, Form};
 use crate::discover::Found;
 use crate::log::{self, Source};
+use crate::online::Open;
 use crate::view::View;
 
-/// Starts playing on a board: returns the thread playing, which stops when
-/// the flag is set (or the board fails).
-pub type Connect = dyn Fn(Found, Arc<AtomicBool>) -> JoinHandle<io::Result<()>>;
+/// Games for a connected board, each with the flag that ends it.
+pub type Games = mpsc::Receiver<(GameChoice, Arc<AtomicBool>)>;
+
+/// Connects to a board: returns the thread holding it, which plays the
+/// games that come on the channel and stops when the flag is set (or the
+/// board fails).
+pub type Connect = dyn Fn(Found, Arc<AtomicBool>, Games) -> JoinHandle<io::Result<()>>;
 
 /// Lists the boards there are (slow: it scans Bluetooth).
 pub type Scan = dyn Fn() -> Vec<Found> + Send + Sync;
 
+/// A board connected, or connecting.
+struct Connected {
+    found: Found,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<io::Result<()>>>,
+    games: mpsc::Sender<(GameChoice, Arc<AtomicBool>)>,
+}
+
+impl Connected {
+    fn open(connect: &Connect, found: Found) -> Connected {
+        log::line(Source::Device, format!("connecting to {}", found.describe()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (games, rx) = mpsc::channel();
+        let thread = Some(connect(found.clone(), stop.clone(), rx));
+        Connected { found, stop, thread, games }
+    }
+
+    /// Start a game on the board: the flag ends it.
+    fn play(&self, choice: GameChoice) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        let _ = self.games.send((choice, flag.clone()));
+        flag
+    }
+}
+
 enum State {
     Picking { list: ListState },
-    Playing { found: Found, stop: Arc<AtomicBool>, thread: Option<JoinHandle<io::Result<()>>> },
+    Choosing { board: Connected },
+    Playing { board: Connected, game: Arc<AtomicBool> },
 }
+
+/// Which pane ↑/↓ scroll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    Moves,
+    Log,
+}
+
+/// A look-up of the site's open games, when it's answered.
+type Looked = Arc<Mutex<Option<(String, String, Result<Vec<Open>, String>)>>>;
 
 struct App {
     state: State,
     found: Arc<Mutex<Vec<Found>>>,
     scanning: Arc<AtomicBool>,
     log_scroll: usize,
+    moves_scroll: usize,
+    pane: Pane,
     title: String,
     /// Where the log is also written.
     log_file: Option<std::path::PathBuf>,
+    form: Form,
+    looked: Looked,
+    /// Where the top half is on screen (the mouse wheel scrolls the moves
+    /// there, the log below).
+    top: Rect,
 }
 
-
 /// Run the screen. `start` connects at once (a board named on the command
-/// line); otherwise it starts by listing boards.
+/// line) and plays `first` if given; otherwise it starts by listing boards.
 pub fn run(
     title: &str,
     view: &watch::Receiver<View>,
     scan: &Arc<Scan>,
     connect: &Connect,
     start: Option<Found>,
+    first: Option<GameChoice>,
+    defaults: &Defaults,
 ) -> io::Result<()> {
     log::quiet(true);
     let log_file = log::file_path();
     let mut terminal = ratatui::init();
-    // The mouse wheel scrolls the log (hold Option on macOS, or Shift
-    // elsewhere, to select text; --log-file keeps it all in a file).
+    // The mouse wheel scrolls (hold Option on macOS, or Shift elsewhere,
+    // to select text; --log-file keeps the log in a file).
     let _ = execute!(io::stdout(), EnableMouseCapture);
-    let result = main_loop(&mut terminal, title, view, scan, connect, start, log_file);
+    let mut app = App {
+        state: State::Picking { list: ListState::default().with_selected(Some(0)) },
+        found: Arc::new(Mutex::new(Vec::new())),
+        scanning: Arc::new(AtomicBool::new(false)),
+        log_scroll: 0,
+        moves_scroll: 0,
+        pane: Pane::Log,
+        title: title.to_owned(),
+        log_file,
+        form: Form::new(defaults),
+        looked: Arc::new(Mutex::new(None)),
+        top: Rect::default(),
+    };
+    let result = main_loop(&mut terminal, &mut app, view, scan, connect, start, first);
     let _ = execute!(io::stdout(), DisableMouseCapture);
     ratatui::restore();
     log::quiet(false);
@@ -87,56 +158,89 @@ fn rescan(app: &App, scan: &Arc<Scan>) {
     });
 }
 
+fn picking() -> State {
+    State::Picking { list: ListState::default().with_selected(Some(0)) }
+}
+
+/// Look up the site's open games for the form, on a thread.
+fn look_up(app: &mut App) {
+    if !matches!(app.state, State::Choosing { .. }) {
+        return;
+    }
+    if let Some((base, token)) = app.form.wants_lookup() {
+        let looked = app.looked.clone();
+        std::thread::spawn(move || {
+            let r = crate::online::open_games(&base, &token).map_err(|e| format!("{e:#}"));
+            *looked.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((base, token, r));
+        });
+    }
+    let answer = app.looked.lock().ok().and_then(|mut l| l.take());
+    if let Some((base, token, r)) = answer {
+        app.form.looked_up(&base, &token, r);
+    }
+}
+
+fn stop_all(state: &State) {
+    match state {
+        State::Playing { board, game } => {
+            game.store(true, Ordering::SeqCst);
+            board.stop.store(true, Ordering::SeqCst);
+        }
+        State::Choosing { board } => board.stop.store(true, Ordering::SeqCst),
+        State::Picking { .. } => {}
+    }
+}
+
 fn main_loop(
     terminal: &mut DefaultTerminal,
-    title: &str,
+    app: &mut App,
     view: &watch::Receiver<View>,
     scan: &Arc<Scan>,
     connect: &Connect,
     start: Option<Found>,
-    log_file: Option<std::path::PathBuf>,
+    first: Option<GameChoice>,
 ) -> io::Result<()> {
-    let mut app = App {
-        state: State::Picking { list: ListState::default().with_selected(Some(0)) },
-        found: Arc::new(Mutex::new(Vec::new())),
-        scanning: Arc::new(AtomicBool::new(false)),
-        log_scroll: 0,
-        title: title.to_owned(),
-        log_file,
-    };
     match start {
         Some(f) => {
-            let stop = Arc::new(AtomicBool::new(false));
-            let thread = Some(connect(f.clone(), stop.clone()));
-            app.state = State::Playing { found: f, stop, thread };
+            let board = Connected::open(connect, f);
+            app.state = match first {
+                Some(c) => {
+                    let game = board.play(c);
+                    State::Playing { board, game }
+                }
+                None => State::Choosing { board },
+            };
         }
-        None => rescan(&app, scan),
+        None => rescan(app, scan),
     }
     loop {
         // A board that stopped (failed, or unplugged): back to the list.
-        if let State::Playing { thread, found, .. } = &mut app.state
-            && thread.as_ref().is_some_and(JoinHandle::is_finished)
+        if let State::Choosing { board } | State::Playing { board, .. } = &mut app.state
+            && board.thread.as_ref().is_some_and(JoinHandle::is_finished)
         {
-            let what = found.describe();
-            match thread.take().map(JoinHandle::join) {
+            let what = board.found.describe();
+            match board.thread.take().map(JoinHandle::join) {
                 Some(Ok(Err(e))) => log::line(Source::Device, format!("{what}: {e}")),
                 Some(Err(_)) => log::line(Source::Device, format!("{what}: stopped unexpectedly")),
                 _ => log::line(Source::Device, format!("{what}: disconnected")),
             }
-            app.state = State::Picking { list: ListState::default().with_selected(Some(0)) };
+            app.state = picking();
         }
+        look_up(app);
         let v = view.borrow().clone();
-        terminal.draw(|f| draw(f, &mut app, &v))?;
+        terminal.draw(|f| draw(f, app, &v))?;
         if !event::poll(Duration::from_millis(250))? {
             continue;
         }
         let k = match event::read()? {
             Event::Key(k) => k,
             Event::Mouse(m) => {
+                let over_top = m.row < app.top.y + app.top.height;
+                let scroll = if over_top { &mut app.moves_scroll } else { &mut app.log_scroll };
                 match m.kind {
                     // Newest at the top: down goes back in time.
-                    MouseEventKind::ScrollDown => app.log_scroll += 3,
-                    MouseEventKind::ScrollUp => app.log_scroll = app.log_scroll.saturating_sub(3),
+                    MouseEventKind::ScrollDown => *scroll += 3,
+                    MouseEventKind::ScrollUp => *scroll = scroll.saturating_sub(3),
                     _ => {}
                 }
                 continue;
@@ -146,60 +250,106 @@ fn main_loop(
         if k.kind != KeyEventKind::Press {
             continue;
         }
+        let ctrl_c = k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c');
+        let typing = matches!(app.state, State::Choosing { .. }) && app.form.typing();
+        let quit = ctrl_c
+            || (!typing && matches!(k.code, KeyCode::Char('q')))
+            || (k.code == KeyCode::Esc && !matches!(app.state, State::Choosing { .. }));
+        if quit {
+            stop_all(&app.state);
+            return Ok(());
+        }
         match k.code {
-            KeyCode::Char('q') | KeyCode::Esc => {
-                if let State::Playing { stop, .. } = &app.state {
-                    stop.store(true, Ordering::SeqCst);
-                }
-                return Ok(());
-            }
             KeyCode::PageDown => app.log_scroll += 10,
             KeyCode::PageUp => app.log_scroll = app.log_scroll.saturating_sub(10),
-            KeyCode::Home => app.log_scroll = 0,
+            KeyCode::Home => {
+                app.log_scroll = 0;
+                app.moves_scroll = 0;
+            }
             _ => {}
         }
-        let count = app.found.lock().map_or(0, |l| l.len());
-        match &mut app.state {
-            State::Picking { list } => match k.code {
+        let state = std::mem::replace(&mut app.state, picking());
+        app.state = next(app, state, k.code, scan, connect);
+    }
+}
+
+/// What a key does in each state.
+fn next(app: &mut App, state: State, code: KeyCode, scan: &Arc<Scan>, connect: &Connect) -> State {
+    let count = app.found.lock().map_or(0, |l| l.len());
+    match state {
+        State::Picking { mut list } => {
+            match code {
                 KeyCode::Up => list.select(Some(list.selected().unwrap_or(0).saturating_sub(1))),
                 KeyCode::Down => {
                     list.select(Some((list.selected().unwrap_or(0) + 1).min(count.saturating_sub(1))));
                 }
-                KeyCode::Char('r') => rescan(&app, scan),
+                KeyCode::Char('r') => rescan(app, scan),
                 KeyCode::Enter => {
                     let chosen = list.selected().and_then(|i| app.found.lock().ok()?.get(i).cloned());
                     if let Some(f) = chosen {
-                        log::line(Source::Device, format!("connecting to {}", f.describe()));
-                        let stop = Arc::new(AtomicBool::new(false));
-                        let thread = Some(connect(f.clone(), stop.clone()));
-                        app.state = State::Playing { found: f, stop, thread };
+                        return State::Choosing { board: Connected::open(connect, f) };
                     }
                 }
                 _ => {}
-            },
-            State::Playing { stop, .. } => match k.code {
-                // Disconnect: the board loop stops and the list comes back.
-                KeyCode::Char('b') => stop.store(true, Ordering::SeqCst),
-                KeyCode::Down => app.log_scroll += 1,
-                KeyCode::Up => app.log_scroll = app.log_scroll.saturating_sub(1),
-                _ => {}
-            },
+            }
+            State::Picking { list }
         }
+        State::Choosing { board } => match code {
+            KeyCode::Esc => {
+                board.stop.store(true, Ordering::SeqCst);
+                picking()
+            }
+            code => match app.form.key(code) {
+                Action::Start(choice) => {
+                    app.form.settings().save();
+                    app.moves_scroll = 0;
+                    let game = board.play(choice);
+                    State::Playing { board, game }
+                }
+                Action::None => State::Choosing { board },
+            },
+        },
+        State::Playing { board, game } => match code {
+            KeyCode::Char('b') => {
+                game.store(true, Ordering::SeqCst);
+                board.stop.store(true, Ordering::SeqCst);
+                picking()
+            }
+            KeyCode::Char('n') => {
+                log::line(Source::Device, "choose the next game");
+                game.store(true, Ordering::SeqCst);
+                State::Choosing { board }
+            }
+            code => {
+                let scroll =
+                    if app.pane == Pane::Moves { &mut app.moves_scroll } else { &mut app.log_scroll };
+                match code {
+                    KeyCode::Tab => app.pane = if app.pane == Pane::Moves { Pane::Log } else { Pane::Moves },
+                    KeyCode::Down => *scroll += 1,
+                    KeyCode::Up => *scroll = scroll.saturating_sub(1),
+                    _ => {}
+                }
+                State::Playing { board, game }
+            }
+        },
     }
 }
 
 fn draw(f: &mut Frame, app: &mut App, v: &View) {
+    let height = f.area().height;
+    let top_height = (height.saturating_mul(3) / 5).max(13);
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(12), Constraint::Min(5), Constraint::Length(1)])
+        .constraints([Constraint::Length(top_height), Constraint::Min(5), Constraint::Length(1)])
         .split(f.area());
+    app.top = rows[0];
     let top = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(30), Constraint::Min(30)])
         .split(rows[0]);
+    draw_board(f, top[0], v);
     match &mut app.state {
         State::Picking { list } => {
-            draw_board(f, top[0], v);
             let found = app.found.lock().map(|l| l.clone()).unwrap_or_default();
             let scanning = app.scanning.load(Ordering::SeqCst);
             let items: Vec<ListItem> = if found.is_empty() {
@@ -219,16 +369,39 @@ fn draw(f: &mut Frame, app: &mut App, v: &View) {
                 .highlight_symbol("▶ ");
             f.render_stateful_widget(widget, top[1], list);
         }
-        State::Playing { found, .. } => {
-            draw_board(f, top[0], v);
-            draw_game(f, top[1], v, &format!(" {}: {} ", app.title, found.describe()));
+        State::Choosing { board } => {
+            let title = format!(" {}: {}: choose a game ", app.title, board.found.describe());
+            f.render_widget(
+                Paragraph::new(app.form.lines())
+                    .wrap(Wrap { trim: false })
+                    .block(Block::default().borders(Borders::ALL).title(title)),
+                top[1],
+            );
+        }
+        State::Playing { board, .. } => {
+            let mut title = format!(" {}: {} ", app.title, board.found.describe());
+            if app.pane == Pane::Moves {
+                title.push_str("(↑↓ scroll the moves) ");
+            }
+            app.moves_scroll = app.moves_scroll.min(v.moves.len().saturating_sub(1));
+            draw_game(f, top[1], v, &title, app.moves_scroll);
         }
     }
     app.log_scroll = app.log_scroll.min(log::len().saturating_sub(1));
-    draw_log(f, rows[1], app.log_scroll, app.log_file.as_deref());
+    let log_title = if app.pane == Pane::Log && matches!(app.state, State::Playing { .. }) {
+        " (↑↓ scroll)"
+    } else {
+        ""
+    };
+    draw_log(f, rows[1], app.log_scroll, app.log_file.as_deref(), log_title);
     let keys = match app.state {
         State::Picking { .. } => " ↑↓ choose · Enter connect · r look again · PgUp/PgDn log · q quit",
-        State::Playing { .. } => " b back to the boards · ↑↓/wheel/PgUp/PgDn log · Home newest · q quit",
+        State::Choosing { .. } => {
+            " ↑↓ setting · ←→ change it · type to fill in · Enter start · Esc back to the boards"
+        }
+        State::Playing { .. } => {
+            " n next game · b back to the boards · Tab moves/log · ↑↓ or wheel scroll · Home newest · q quit"
+        }
     };
     f.render_widget(Paragraph::new(keys).style(Style::default().fg(Color::DarkGray)), rows[2]);
 }
@@ -331,12 +504,10 @@ fn clock(ms: i64) -> String {
     }
 }
 
-fn draw_game(f: &mut Frame, area: Rect, v: &View, title: &str) {
+fn draw_game(f: &mut Frame, area: Rect, v: &View, title: &str, scroll: usize) {
     let now = Instant::now();
-    let opponent = v.engine.name.clone().unwrap_or_else(|| format!("open-chess level {}", v.level));
-    let (white, black) =
-        if v.player == Side::White { ("you", opponent.as_str()) } else { (opponent.as_str(), "you") };
-    let mut lines = vec![Line::from(format!("White: {white}    Black: {black}"))];
+    let mut lines =
+        vec![Line::from(format!("White: {}    Black: {}", v.name_of(Side::White), v.name_of(Side::Black)))];
     if let Some([w, b]) = v.clocks_at(now) {
         let run = |s: Side| if v.running == Some(s) { "▶" } else { " " };
         lines.push(Line::from(format!(
@@ -348,10 +519,36 @@ fn draw_game(f: &mut Frame, area: Rect, v: &View, title: &str) {
             if v.paused { "  (paused)" } else { "" }
         )));
     }
-    let status = v.status_line();
-    lines.push(Line::styled(status, Style::default().add_modifier(Modifier::BOLD)));
+    let over = !v.started() && v.status != chess_core::Status::Created;
+    let style = if over {
+        Style::default().add_modifier(Modifier::BOLD).fg(Color::Green)
+    } else {
+        Style::default().add_modifier(Modifier::BOLD)
+    };
+    lines.push(Line::styled(v.status_line(), style));
+    if over {
+        if let Some(r) = &v.ratings {
+            for p in r {
+                lines.push(Line::from(format!("  {}", p.describe())));
+            }
+        }
+        lines.push(Line::styled(
+            "  set the pieces up for another, or n to choose the next game",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    if let Some(name) = v.opening_name() {
+        lines.push(Line::styled(format!("Opening: {name}"), Style::default().fg(Color::Cyan)));
+    }
     lines.push(Line::from(""));
-    lines.push(Line::from(v.movetext()));
+    let moves = v.moves_in_words();
+    for (number, san, words) in moves.iter().rev().skip(scroll) {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{number:>4} "), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{san:<8}"), Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(words.clone()),
+        ]));
+    }
     f.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
@@ -360,7 +557,7 @@ fn draw_game(f: &mut Frame, area: Rect, v: &View, title: &str) {
     );
 }
 
-fn draw_log(f: &mut Frame, area: Rect, scroll: usize, file: Option<&std::path::Path>) {
+fn draw_log(f: &mut Frame, area: Rect, scroll: usize, file: Option<&std::path::Path>, note: &str) {
     let height = usize::from(area.height.saturating_sub(2));
     let (lines, _) = log::newest(scroll + height);
     let items: Vec<Line> = lines
@@ -387,7 +584,7 @@ fn draw_log(f: &mut Frame, area: Rect, scroll: usize, file: Option<&std::path::P
         .collect();
     let back = if scroll == 0 { String::new() } else { format!(", {scroll} back") };
     let saved = file.map(|p| format!(", also in {}", p.display())).unwrap_or_default();
-    let title = format!(" log, newest first (UTC){back}{saved} ");
+    let title = format!(" log, newest first (UTC){back}{saved}{note} ");
     f.render_widget(
         Paragraph::new(items)
             .wrap(Wrap { trim: false })
@@ -419,26 +616,70 @@ mod tests {
         log::quiet(true);
         log::line(Source::LiveChess, "a page connected");
         let v = view(&["e2e4", "e7e5"]);
+        let (games, _rx) = mpsc::channel();
         let mut app = App {
             state: State::Playing {
-                found: Found::Serial { path: "/dev/ttyACM0".into(), label: "USB".into() },
-                stop: Arc::new(AtomicBool::new(false)),
-                thread: None,
+                board: Connected {
+                    found: Found::Serial { path: "/dev/ttyACM0".into(), label: "USB".into() },
+                    stop: Arc::new(AtomicBool::new(false)),
+                    thread: None,
+                    games,
+                },
+                game: Arc::new(AtomicBool::new(false)),
             },
             found: Arc::new(Mutex::new(Vec::new())),
             scanning: Arc::new(AtomicBool::new(false)),
             log_scroll: 0,
+            moves_scroll: 0,
+            pane: Pane::Log,
             title: "open-chess".into(),
             log_file: None,
+            form: Form::new(&Defaults { level: 4, ..Defaults::default() }),
+            looked: Arc::new(Mutex::new(None)),
+            top: Rect::default(),
         };
         let mut t = Terminal::new(TestBackend::new(100, 30)).unwrap();
         t.draw(|f| draw(f, &mut app, &v)).unwrap();
         let screen: String =
             t.backend().buffer().content().iter().map(ratatui::buffer::Cell::symbol).collect();
-        assert!(screen.contains("1. e4 e5"), "{screen}");
+        assert!(screen.contains("King's Pawn Game (C20)"), "{screen}");
+        assert!(screen.contains("1… e5"), "{screen}");
         assert!(screen.contains("5:00"));
         assert!(screen.contains("a page connected"));
         assert!(screen.contains('♚'));
+    }
+
+    #[test]
+    fn draws_the_game_picker() {
+        let (games, _rx) = mpsc::channel();
+        let mut app = App {
+            state: State::Choosing {
+                board: Connected {
+                    found: Found::Serial { path: "/dev/ttyACM0".into(), label: "USB".into() },
+                    stop: Arc::new(AtomicBool::new(false)),
+                    thread: None,
+                    games,
+                },
+            },
+            found: Arc::new(Mutex::new(Vec::new())),
+            scanning: Arc::new(AtomicBool::new(false)),
+            log_scroll: 0,
+            moves_scroll: 0,
+            pane: Pane::Log,
+            title: "open-chess".into(),
+            log_file: None,
+            form: Form::new(&Defaults::default()),
+            looked: Arc::new(Mutex::new(None)),
+            top: Rect::default(),
+        };
+        let mut t = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        t.draw(|f| draw(f, &mut app, &view(&[]))).unwrap();
+        let screen: String =
+            t.backend().buffer().content().iter().map(ratatui::buffer::Cell::symbol).collect();
+        for want in ["choose a game", "Game type", "play the computer", "Level", "(rated 1400)", "Your name"]
+        {
+            assert!(screen.contains(want), "{want}: {screen}");
+        }
     }
 
     #[test]

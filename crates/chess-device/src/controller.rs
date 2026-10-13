@@ -91,6 +91,8 @@ pub struct Setup {
     pub seed: u64,
     /// The books and engines the menu offers.
     pub choices: Choices,
+    /// Two people play on the board: the engine never moves.
+    pub two_players: bool,
 }
 
 impl Default for Setup {
@@ -103,6 +105,7 @@ impl Default for Setup {
             white_on_left: true,
             seed: 1,
             choices: Choices::default(),
+            two_players: false,
         }
     }
 }
@@ -164,6 +167,10 @@ impl Controller {
 
     pub fn player(&self) -> Side {
         self.player
+    }
+
+    pub fn two_players(&self) -> bool {
+        self.setup.two_players
     }
 
     pub fn level(&self) -> u8 {
@@ -467,7 +474,7 @@ impl Controller {
     }
 
     fn engine_turn(&mut self, s: &mut impl Board, now: Instant) -> Option<Think> {
-        if self.check_end(s) || self.thinking.is_some() || s.awaiting_board() {
+        if self.check_end(s) || self.thinking.is_some() || s.awaiting_board() || self.setup.two_players {
             return None;
         }
         let game = s.game();

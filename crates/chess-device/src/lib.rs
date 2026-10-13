@@ -16,6 +16,8 @@
 
 pub mod ble;
 pub mod board;
+pub mod choice;
+pub mod chooser;
 pub mod controller;
 pub mod dgtpi;
 pub mod discover;
@@ -29,7 +31,9 @@ pub mod opponent;
 pub mod pico;
 pub mod picoini;
 pub mod play;
+pub mod ratings;
 pub mod serial;
+pub mod settings;
 pub mod tui;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub mod usb;
