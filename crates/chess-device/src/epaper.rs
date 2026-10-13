@@ -14,7 +14,6 @@ use chess_centaur::screen::{Shown, render};
 use chess_core::Side;
 use tokio::sync::watch;
 
-use crate::log::{self, Source};
 use crate::view::View;
 
 /// A full refresh after this many partial ones.
@@ -107,6 +106,7 @@ pub fn spawn<P: Panel + Send + 'static>(
 /// The Centaur's own panel, on its Raspberry Pi.
 #[cfg(target_os = "linux")]
 pub fn start(view: watch::Receiver<View>) {
+    use crate::log::{self, Source};
     match chess_centaur::epd::pi::Pi::open() {
         Ok(pi) => match spawn(pi, view) {
             Ok(_) => log::line(Source::Device, "e-paper screen on"),

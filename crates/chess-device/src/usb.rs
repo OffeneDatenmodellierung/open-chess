@@ -90,6 +90,7 @@ mod hidapi_impl {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)] // used as map_err(err)
     fn err(e: hidapi::HidError) -> io::Error {
         io::Error::other(e.to_string())
     }
