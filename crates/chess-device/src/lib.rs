@@ -17,6 +17,7 @@
 pub mod board;
 pub mod controller;
 pub mod dgtpi;
+pub mod online;
 pub mod opponent;
 pub mod view;
 pub mod web;

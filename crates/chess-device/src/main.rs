@@ -10,6 +10,7 @@
 //! open-chess-device --centaur                                 # on a DGT Centaur
 //! open-chess-device --ble AA:BB:CC:DD:EE:FF --ble-board chessnut   # Chessnut Air / Go
 //! open-chess-device --ble AA:BB:CC:DD:EE:FF --ble-board pegasus    # DGT Pegasus
+//! OPEN_CHESS_TOKEN=lip_… open-chess-device --board /dev/ttyACM0 --online   # on lichess.org
 //! ```
 //!
 //! With `--listen`, a phone on the same network opens the device's address
@@ -45,6 +46,7 @@ mod unix {
     use open_chess_device::board::{Board, centaur_button};
     use open_chess_device::controller::{Controller, Setup, TimeControl, describe};
     use open_chess_device::dgtpi;
+    use open_chess_device::online::{Challenge, Connection, FromServer, OnlinePlay};
     use open_chess_device::opponent::{EngineSpec, Opponent};
     use open_chess_device::view::{EngineInfo, View, game_id};
     use open_chess_device::web::{self, Change, Request, Web};
@@ -127,6 +129,22 @@ mod unix {
         /// The device's name, shown in the app.
         #[arg(long, default_value = "open-chess board")]
         name: String,
+
+        /// Play online instead of the engine: on lichess.org, or the open-chess
+        /// server at this address. Games started on the site or the app (a
+        /// seek, a challenge accepted) are played on the board.
+        #[arg(long, num_args = 0..=1, default_missing_value = "https://lichess.org")]
+        online: Option<String>,
+
+        /// The account's API token for --online (with the board:play scope;
+        /// challenge:write too for --challenge).
+        #[arg(long, env = "OPEN_CHESS_TOKEN", hide_env_values = true)]
+        token: Option<String>,
+
+        /// With --online: challenge this player at the start (to --time, playing
+        /// --play's colour).
+        #[arg(long)]
+        challenge: Option<String>,
     }
 
     pub fn main() -> ExitCode {
@@ -423,14 +441,7 @@ mod unix {
     }
 
     #[cfg(target_os = "linux")]
-    fn play_ble(
-        args: &Args,
-        address: &str,
-        controller: Controller,
-        opponent: &Opponent,
-        engine: &EngineInfo,
-        seed: u64,
-    ) -> Result<()> {
+    fn play_ble(args: &Args, address: &str, mode: Mode, seed: u64) -> Result<()> {
         let now = Instant::now();
         eprintln!("connecting to {address} ({})", args.ble_board);
         if args.ble_board == "pegasus" {
@@ -438,18 +449,18 @@ mod unix {
             let write = chess_dgt::pegasus::WRITE.parse().map_err(anyhow::Error::msg)?;
             let mut session = chess_dgt::pegasus::session(Follower::new());
             session.start(now);
-            play(&mut PegasusLink { gatt, notify, write, session }, controller, opponent, engine, seed, args)
+            drive(&mut PegasusLink { gatt, notify, write, session }, mode, seed, args)
         } else {
             let (gatt, notify) = ble_connect(args, address, chess_chessnut::protocol::READ)?;
             let write = chess_chessnut::protocol::WRITE.parse().map_err(anyhow::Error::msg)?;
             let mut session = chess_chessnut::Session::new(Follower::new());
             session.start(now);
-            play(&mut ChessnutLink { gatt, notify, write, session }, controller, opponent, engine, seed, args)
+            drive(&mut ChessnutLink { gatt, notify, write, session }, mode, seed, args)
         }
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn play_ble(_: &Args, _: &str, _: Controller, _: &Opponent, _: &EngineInfo, _: u64) -> Result<()> {
+    fn play_ble(_: &Args, _: &str, _: Mode, _: u64) -> Result<()> {
         bail!("--ble: Bluetooth LE boards need Linux (a Raspberry Pi, or a Linux computer)")
     }
 
@@ -470,7 +481,30 @@ mod unix {
         Ok(Some(clock))
     }
 
-    fn run(args: &Args) -> Result<()> {
+    /// Who the board plays: the engine, or a game online.
+    enum Mode {
+        Engine { controller: Box<Controller>, opponent: Opponent, engine: EngineInfo },
+        Online { connection: Connection },
+    }
+
+    fn mode(args: &Args, seed: u64) -> Result<Mode> {
+        if let Some(base) = &args.online {
+            let Some(token) = &args.token else {
+                bail!("--online needs the account's API token: --token or OPEN_CHESS_TOKEN")
+            };
+            let challenge = args.challenge.as_ref().map(|who| Challenge {
+                opponent: who.clone(),
+                request: chess_client::ChallengeRequest {
+                    rated: false,
+                    limit_secs: args.time.map(|t| t.minutes * 60),
+                    increment_secs: args.time.map(|t| t.increment_secs),
+                    color: Some(args.play.clone()),
+                    ..Default::default()
+                },
+            });
+            eprintln!("playing online at {base}");
+            return Ok(Mode::Online { connection: Connection::spawn(base, token, challenge)? });
+        }
         let spec = engine_spec(args)?;
         let book = load_book(args)?;
         let player = if args.play == "black" { Side::Black } else { Side::White };
@@ -482,7 +516,6 @@ mod unix {
             }),
         };
         let opponent = Opponent::start(spec)?;
-        let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
         let controller = Controller::new(Setup {
             player,
             level: args.level,
@@ -491,9 +524,24 @@ mod unix {
             white_on_left: args.white_clock == "left",
             seed,
         });
+        Ok(Mode::Engine { controller: Box::new(controller), opponent, engine })
+    }
+
+    fn drive<L: Link>(link: &mut L, mode: Mode, seed: u64, args: &Args) -> Result<()> {
+        match mode {
+            Mode::Engine { controller, opponent, engine } => {
+                play(link, *controller, &opponent, &engine, seed, args)
+            }
+            Mode::Online { connection } => play_online(link, &connection, seed, args),
+        }
+    }
+
+    fn run(args: &Args) -> Result<()> {
+        let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
+        let mode = mode(args, seed)?;
         let now = Instant::now();
         if let Some(address) = &args.ble {
-            return play_ble(args, address, controller, &opponent, &engine, seed);
+            return play_ble(args, address, mode, seed);
         }
         if args.centaur {
             let path = args.board.as_deref().unwrap_or("/dev/serial0");
@@ -502,7 +550,7 @@ mod unix {
             let mut session = chess_centaur::Session::new(chess_centaur::Follower::new());
             session.start(now);
             eprintln!("waiting for the Centaur's controller on {path} (you play {})", args.play);
-            play(&mut CentaurLink { session, port }, controller, &opponent, &engine, seed, args)
+            drive(&mut CentaurLink { session, port }, mode, seed, args)
         } else {
             let Some(path) = args.board.as_deref() else {
                 bail!("--board: the board's port (or --centaur, or --ble)")
@@ -512,7 +560,7 @@ mod unix {
             let mut session = Session::new(Follower::new());
             session.start(now);
             eprintln!("waiting for the board on {path} (you play {})", args.play);
-            play(&mut DgtLink { session, port, clock }, controller, &opponent, &engine, seed, args)
+            drive(&mut DgtLink { session, port, clock }, mode, seed, args)
         }
     }
 
@@ -587,6 +635,72 @@ mod unix {
             for (tx, result) in replies {
                 let _ = tx.send(result);
             }
+        }
+    }
+
+    /// Play online games on a board until it fails.
+    fn play_online<L: Link>(link: &mut L, connection: &Connection, seed: u64, args: &Args) -> Result<()> {
+        let white_on_left = args.white_clock == "left";
+        let waiting = game_id(seed, 0);
+        let created = now_ms();
+        let mut online = OnlinePlay::new("", white_on_left);
+        let mut signed_in = false;
+        let (view_tx, view_rx) =
+            watch::channel(View::online(&online, link, &waiting, created, Instant::now()));
+        let (request_tx, requests) = mpsc::channel::<Request>();
+        if let Some(addr) = &args.listen {
+            let at = web::spawn(addr, Web::new(view_rx, request_tx, args.app.clone(), &args.name))
+                .with_context(|| format!("listening on {addr}"))?;
+            eprintln!("the app: http://{at}/");
+        }
+        loop {
+            let now = Instant::now();
+            for input in link.exchange(now)? {
+                match input {
+                    Input::Event(e) => {
+                        log(&e, link);
+                        online.on_event(&e, link);
+                    }
+                    Input::Button(b) => online.on_button(b, link),
+                }
+            }
+            for m in connection.messages() {
+                match m {
+                    FromServer::Account(id) => {
+                        eprintln!("signed in as {id}; start a game on the site or the app");
+                        online = OnlinePlay::new(&id, white_on_left);
+                        signed_in = true;
+                    }
+                    FromServer::Full(f) if signed_in => {
+                        online.on_full(&f, link, now);
+                        if let Some(g) = online.game() {
+                            eprintln!("game {} against {}, you play {}", g.id, g.opponent, g.side.name());
+                        }
+                    }
+                    FromServer::State(st) if signed_in => online.on_state(&st, link, now),
+                    FromServer::Refused(why) => {
+                        eprintln!("move refused: {why}");
+                        online.on_refused(link);
+                    }
+                    FromServer::Problem(why) => eprintln!("online: {why}"),
+                    FromServer::Full(_) | FromServer::State(_) => {}
+                }
+            }
+            for r in online.take_requests() {
+                connection.send(r);
+            }
+            while let Ok(r) = requests.try_recv() {
+                let _ = r.reply.send(Err("playing online: set the game up on the site".into()));
+            }
+            let v = View::online(&online, link, &waiting, created, Instant::now());
+            view_tx.send_if_modified(|old| {
+                if old.same(&v) {
+                    false
+                } else {
+                    *old = v;
+                    true
+                }
+            });
         }
     }
 
