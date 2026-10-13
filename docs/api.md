@@ -30,12 +30,12 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.incre
 | Account | `GET /api/account`, `/api/account/email`, `/api/account/playing` (`nb`), `/api/user/{username}` |
 | Bots | `POST /api/bot/account/upgrade`, `GET /api/bot/online` (`nb`) |
 | Streams | `GET /api/stream/event`, `/api/board/game/stream/{id}`, `/api/bot/game/stream/{id}`, `/api/stream/game/{id}` (see [Live games](#live-games)) |
-| Challenges | `POST /api/challenge/{username}` (with `keepAliveStream`, `rules` and `acceptByToken`), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline` (`reason`), `…/cancel` |
+| Challenges | `POST /api/challenge/ai` (the computer, below), `POST /api/challenge/{username}` (with `keepAliveStream`, `rules` and `acceptByToken`), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline` (`reason`), `…/cancel` |
 | Playing | `/api/board/game/{id}/…` and `/api/bot/game/{id}/…`: `move/{uci}` (`offeringDraw`), `resign`, `abort`, `draw/{yes\|no}`, `takeback/{yes\|no}`, `claim-victory`, `claim-draw`, `chat` (GET, and POST with `room` and `text`, up to 140 characters) |
 | Games | `GET /game/export/{id}` and `/api/games/export/{id}` (PGN, or JSON with `Accept: application/json`; `pgnInJson`, `clocks`, `moves`) |
 | Fair play (ours) | `GET /api/fairplay/queue` (`limit`, default 50, up to 500; `all=true` for reviewed games too), `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` (scope `chess:fairplay`) |
 | Training app (ours) | see [below](#training-app-endpoints) |
-| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there) |
+| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them) |
 | Operations (the metrics port, `CHESS_METRICS_BIND`) | `GET /metrics` (Prometheus), `/healthz` (the process is up), `/readyz` (it can reach Postgres) |
 
 **`GET /`** answers what the server is, for the app and for tools:
@@ -63,9 +63,7 @@ An unmodified [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot)
 connects, accepts challenges, chats and plays.
 
 **Not implemented:** variants other than standard and from-position,
-correspondence games, seeks and the lobby, tournaments, the Lichess AI
-(`POST /api/challenge/ai` is taken as a challenge to a player named `ai`),
-studies, puzzles, the streams of several games at once
+correspondence games, seeks and the lobby, tournaments, studies, puzzles, the streams of several games at once
 (`/api/stream/games-by-users`, `/api/stream/games/{id}`) and TV. Paths that
 don't exist get an empty 404; unsupported options on paths that do (a
 variant, a correspondence clock) get Lichess's JSON errors. Rated games from
@@ -78,6 +76,23 @@ a position, and rated unlimited games, are refused as on Lichess.
   first move within `CHESS_FIRST_MOVE_SECS` gets the game aborted.
   Threefold repetition and the fifty-move rule draw automatically.
 * The public move stream runs behind live games (below).
+
+## Playing the computer
+
+`POST /api/challenge/ai` with `level` (1–8) plays open-chess's own engine
+at that level, as Lichess's endpoint does: `clock.limit` and
+`clock.increment` (or neither, for no clock), `color` (`white`, `black`,
+`random`) and `fen`. The game starts at once and is never rated; the answer
+is the game (`id`, `player`: your colour, `aiLevel`, `source: "ai"` …), and
+it's played through the Board API like any other. The computer is a bot
+account, `ai-level-N`, made on first use, with a fixed rating per level
+(800, 1000 … 2200) so it can't be farmed. Every server replica plays the
+computer's moves, taking each game with a Postgres advisory lock.
+
+```sh
+curl -X POST -H "Authorization: Bearer $TOKEN" -d level=4 -d clock.limit=600 -d clock.increment=5 \
+  https://chess.example.com/api/challenge/ai
+```
 
 ## Live games
 
@@ -149,6 +164,35 @@ The flow, for an app at `https://app.example/`:
 player, a bot account and a token (printed once). Bots play only through the
 Bot API and people only through the Board API, as on Lichess. See
 [lichess.md](lichess.md#bots) to run one.
+
+## The Chess lab's look
+
+A deployment can give the app (`/app/`) its own colours and fonts:
+`CHESS_APP_THEME` holds CSS (or the path of a `.css` file), served as
+`/app/theme.css` after the app's styles. The app's colours are CSS
+variables, for light (`:root`) and dark (`:root[data-theme="dark"]`, or the
+system's dark mode when nothing chose):
+
+```css
+:root, :root[data-theme="light"] { --paper: #eef2fb; --panel: #ffffff; --ink: #06114a; --muted: #4d5f8b;
+  --rule: #c9d4ee; --sq-light: #e3eafa; --sq-dark: #7b8bb0; --action: #d94a00; --action-ink: #ffffff; }
+:root[data-theme="dark"] { --paper: #06114a; --panel: #0d1e6a; --ink: #ffffff; /* … */ }
+body { font-family: Inter, system-ui, sans-serif; }
+```
+
+The others are `--amber`, `--danger`, `--w-seg`, `--b-seg`, `--d-seg`
+(the win/draw/loss bar), `--arrow-best` and `--arrow-reply`.
+
+**Embedding.** A page can show the app in an `<iframe>`:
+`/app/?embed=1&theme=dark` drops the app's own title and picks the theme
+(`light` or `dark`), and
+
+```js
+frame.contentWindow.postMessage({ type: "open-chess:theme", theme: "light" }, "*");
+```
+
+changes it when the page's own theme changes. Both stay set for the tab,
+through signing in.
 
 ## Training-app endpoints
 

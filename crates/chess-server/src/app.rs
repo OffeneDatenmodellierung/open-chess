@@ -162,6 +162,7 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/api/stream/game/{id}", get(streams::moves))
         // challenges
         .route("/api/challenge", get(challenges::list))
+        .route("/api/challenge/ai", post(challenges::ai))
         .route("/api/challenge/{id}", post(challenges::create))
         .route("/api/challenge/{id}/show", get(challenges::show))
         .route("/api/challenge/{id}/accept", post(challenges::accept))
@@ -192,6 +193,7 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         // the training app (static files)
         .route("/app", get(app_files::bare))
         .route("/app/", get(app_files::index))
+        .route("/app/theme.css", get(app_files::theme))
         .route("/app/{*path}", get(app_files::file))
         .route("/", get(http::index))
         .layer(middleware::from_fn(cors))

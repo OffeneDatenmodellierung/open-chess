@@ -179,8 +179,31 @@ mod imp {
                         .find(|c| c.uuid.to_string().eq_ignore_ascii_case(&notify))
                         .cloned()
                         .ok_or_else(|| io::Error::other(format!("the board has no characteristic {notify}")))?;
-                    p.subscribe(&n).await.map_err(err)?;
+                    // What the board offers, in the log (for boards that
+                    // don't behave as expected).
+                    for c in &chars {
+                        crate::log::debug(
+                            crate::log::Source::Board,
+                            format!("bluetooth: {} {:?}", c.uuid, c.properties),
+                        );
+                    }
                     let stream = p.notifications().await.map_err(err)?;
+                    p.subscribe(&n).await.map_err(err)?;
+                    // Everything else it notifies too: some boards answer
+                    // on a second characteristic.
+                    for c in chars.iter().filter(|c| {
+                        c.uuid != n.uuid
+                            && c.properties.intersects(
+                                btleplug::api::CharPropFlags::NOTIFY | btleplug::api::CharPropFlags::INDICATE,
+                            )
+                    }) {
+                        if let Err(e) = p.subscribe(c).await {
+                            crate::log::line(
+                                crate::log::Source::Board,
+                                format!("bluetooth: can't subscribe to {}: {e}", c.uuid),
+                            );
+                        }
+                    }
                     Ok::<_, io::Error>((p, chars, stream))
                 };
                 let (p, chars, mut stream) = match setup.await {

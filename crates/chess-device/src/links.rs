@@ -151,15 +151,41 @@ pub trait Wire: Send {
     fn read(&mut self, wait: Duration) -> io::Result<Vec<Vec<u8>>>;
 }
 
-struct BleWire(Box<dyn Transport>);
+/// A Chessnut board's Bluetooth link, logging what goes each way (every
+/// write; the first notifications, then one in a hundred), so the log
+/// shows whether a board talks at all.
+struct BleWire {
+    transport: Box<dyn Transport>,
+    heard: u64,
+}
+
+fn hex(data: &[u8]) -> String {
+    let mut s: Vec<String> = data.iter().take(40).map(|b| format!("{b:02x}")).collect();
+    if data.len() > 40 {
+        s.push(format!("… ({} bytes)", data.len()));
+    }
+    s.join(" ")
+}
 
 impl Wire for BleWire {
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
-        self.0.write(chess_chessnut::protocol::WRITE, data)
+        let r = self.transport.write(chess_chessnut::protocol::WRITE, data);
+        match &r {
+            Ok(()) => log::debug(Source::Board, format!("bluetooth → {}", hex(data))),
+            Err(e) => log::line(Source::Board, format!("bluetooth → {} failed: {e}", hex(data))),
+        }
+        r
     }
 
     fn read(&mut self, wait: Duration) -> io::Result<Vec<Vec<u8>>> {
-        self.0.notifications(wait)
+        let got = self.transport.notifications(wait)?;
+        for n in &got {
+            self.heard += 1;
+            if log::debugging() && (self.heard <= 20 || self.heard.is_multiple_of(100)) {
+                log::line(Source::Board, format!("bluetooth ← #{} {}", self.heard, hex(n)));
+            }
+        }
+        Ok(got)
     }
 }
 
@@ -178,13 +204,18 @@ impl Wire for crate::usb::Hid {
 pub struct ChessnutLink {
     pub session: chess_chessnut::Session,
     wire: Box<dyn Wire>,
+    /// When it connected, and whether the board has said anything since:
+    /// a board that stays quiet is asked again for its position.
+    since: Instant,
+    heard: bool,
+    asked_again: u8,
 }
 
 impl ChessnutLink {
     /// Over Bluetooth LE.
     pub fn bluetooth(address: &str, random: bool, now: Instant) -> io::Result<ChessnutLink> {
         let t = crate::ble::connect(address, random, chess_chessnut::protocol::READ)?;
-        Ok(ChessnutLink::over(Box::new(BleWire(t)), now))
+        Ok(ChessnutLink::over(Box::new(BleWire { transport: t, heard: 0 }), now))
     }
 
     /// Over USB (Linux: the board's `hidraw` node; macOS and Windows: its
@@ -202,7 +233,7 @@ impl ChessnutLink {
     pub fn over(wire: Box<dyn Wire>, now: Instant) -> ChessnutLink {
         let mut session = chess_chessnut::Session::new(Follower::new());
         session.start(now);
-        ChessnutLink { session, wire }
+        ChessnutLink { session, wire, since: now, heard: false, asked_again: 0 }
     }
 }
 
@@ -213,7 +244,17 @@ impl Link for ChessnutLink {
         for w in self.session.take_writes() {
             self.wire.write(&w)?;
         }
+        if !self.heard && self.asked_again < 3 && now.duration_since(self.since) >= Duration::from_secs(5) {
+            self.asked_again += 1;
+            self.since = now;
+            log::line(
+                Source::Board,
+                "nothing from the board yet: asking for its position again (is the Chessnut app connected to it?)",
+            );
+            self.session.restart(now);
+        }
         for n in self.wire.read(WAIT)? {
+            self.heard = true;
             for e in self.session.receive(&n, now) {
                 if let chess_chessnut::Event::Battery { percent, charging: false } = e
                     && percent < 10

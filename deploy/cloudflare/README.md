@@ -18,7 +18,9 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
    host, e.g. `chess.example.com`; its zone must be in this Cloudflare
    account), `CHESS_PUBLIC_URL` to match, `ESPORTS_PUBLIC_URL`,
    `ESPORTS_LOGIN` (`"true"` to let people sign in to apps through that
-   site), `CHESS_SITE_NAME` and `CHESS_INSTANCES`.
+   site), `CHESS_SITE_NAME` and `CHESS_INSTANCES`. To give the Chess lab
+   your colours, `npx wrangler secret put CHESS_APP_THEME < theme.css`
+   ([docs/api.md](../../docs/api.md#the-chess-labs-look)).
 2. Set the secrets:
 
    ```sh

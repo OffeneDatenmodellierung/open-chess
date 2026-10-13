@@ -157,6 +157,13 @@ pub struct Config {
     /// `/app/`. The chess image puts it at /usr/share/open-chess/app.
     #[arg(long, env = "CHESS_APP_DIR")]
     pub app_dir: Option<String>,
+
+    /// The app's look for this deployment: CSS (or the path of a .css file)
+    /// served as `/app/theme.css`, after the app's own styles, so it can set
+    /// the app's colour and font variables (docs/api.md, "The Chess lab's
+    /// look").
+    #[arg(long, env = "CHESS_APP_THEME")]
+    pub app_theme: Option<String>,
 }
 
 impl Config {

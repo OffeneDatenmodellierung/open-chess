@@ -20,6 +20,34 @@ use crate::model;
 
 const PLAY: &[&str] = &["challenge:write", "board:play", "bot:play"];
 
+/// `POST /api/challenge/ai`: play the computer (`level` 1–8), as on
+/// Lichess; the game starts at once.
+pub async fn ai(State(ctx): State<Ctx>, who: Who, body: Bytes) -> ApiResult<Response> {
+    let id = who.need(PLAY)?.clone();
+    let f = form(&body);
+    let level: u8 =
+        f.get("level").and_then(|l| l.trim().parse().ok()).ok_or_else(|| ApiError::bad("level is 1 to 8"))?;
+    let req = Request::parse(&f)?;
+    let ch = crate::ai::challenge(&ctx, &id, level, &req).await?;
+    let mine = if ch.challenger.player_id == id.player { ch.final_color } else { ch.final_color.opposite() };
+    let fen = chess_core::Game::new(ch.initial_fen.as_deref()).map(|g| g.fen()).unwrap_or_default();
+    Ok(Json(json!({
+        "id": ch.id,
+        "variant": {"key": ch.variant, "name": if ch.variant == "standard" { "Standard" } else { "From Position" }},
+        "speed": ch.speed().key(),
+        "perf": ch.speed().key(),
+        "rated": false,
+        "fen": fen,
+        "turns": 0,
+        "source": "ai",
+        "status": {"id": 20, "name": "started"},
+        "player": mine.name(),
+        "aiLevel": level,
+        "url": format!("{}/{}", ctx.cfg.public_url(), ch.id),
+    }))
+    .into_response())
+}
+
 pub async fn create(
     State(ctx): State<Ctx>,
     who: Who,
