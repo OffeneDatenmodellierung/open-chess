@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use candle_core::backprop::GradStore;
 use candle_core::{D, DType, Device, Tensor, Var};
 use candle_nn::{AdamW, Optimizer, ParamsAdamW, VarBuilder, VarMap};
 use chess_vision::network::Network;
@@ -23,6 +24,10 @@ use crate::data::{Sample, Split};
 pub struct Settings {
     pub epochs: usize,
     pub batch: usize,
+    /// Photos per forward and backward pass: a batch is split into passes
+    /// of this many and their gradients added, so a smaller pass trains the
+    /// same as the whole batch in less memory. 0: the whole batch at once.
+    pub micro_batch: usize,
     pub lr_decoder: f64,
     pub lr_encoder: f64,
     pub weight_decay: f64,
@@ -144,7 +149,8 @@ pub fn evaluate(
     device: &Device,
 ) -> Result<HashMap<String, Score>> {
     let mut by: HashMap<String, (usize, usize, usize)> = HashMap::new();
-    for chunk in samples.chunks(s.batch) {
+    let pass = if s.micro_batch == 0 { s.batch } else { s.micro_batch };
+    for chunk in samples.chunks(pass.max(1)) {
         let (x, y) = batch(chunk, cfg, None, &s.cache_dir, device)?;
         let pred =
             net.logits(&x.to_dtype(DType::F32)?)?.argmax(D::Minus1)?.flatten_all()?.to_vec1::<u32>()?;
@@ -173,7 +179,7 @@ pub fn evaluate(
 }
 
 /// Clip the gradients to a total norm of `max`.
-fn clip(grads: &mut candle_core::backprop::GradStore, vars: &[Var], max: f64) -> Result<f64> {
+fn clip(grads: &mut GradStore, vars: &[Var], max: f64) -> Result<f64> {
     let mut total = 0.0f64;
     for v in vars {
         if let Some(g) = grads.get(v.as_tensor()) {
@@ -249,12 +255,32 @@ pub fn run(
         let mut losses = Vec::new();
         for chunk in order.chunks(s.batch) {
             let picked: Vec<&Sample> = chunk.iter().map(|&i| train[i]).collect();
-            let (x, y) = batch(&picked, cfg, s.augment.then_some((s.seed, epoch)), &s.cache_dir, device)?;
-            let tokens = net.encode(&x)?;
-            let tokens = if frozen { tokens.detach() } else { tokens };
-            let logits = net.decode(&tokens)?.reshape(((), 13))?;
-            let loss = candle_nn::loss::cross_entropy(&logits.to_dtype(DType::F32)?, &y)?;
-            let mut grads = loss.backward()?;
+            let pass = if s.micro_batch == 0 { picked.len() } else { s.micro_batch.min(picked.len()) };
+            let mut grads = GradStore::default();
+            let mut batch_loss = 0.0;
+            for part in picked.chunks(pass) {
+                let (x, y) = batch(part, cfg, s.augment.then_some((s.seed, epoch)), &s.cache_dir, device)?;
+                let tokens = net.encode(&x)?;
+                let tokens = if frozen { tokens.detach() } else { tokens };
+                let logits = net.decode(&tokens)?.reshape(((), 13))?;
+                let loss = candle_nn::loss::cross_entropy(&logits.to_dtype(DType::F32)?, &y)?;
+                // Each pass's share of the batch's mean loss.
+                let share = part.len() as f64 / picked.len() as f64;
+                let loss = (loss * share)?;
+                let mut part_grads = loss.backward()?;
+                batch_loss += f64::from(loss.to_scalar::<f32>()?);
+                drop(loss);
+                // Keep only the parameters' gradients: the rest (every
+                // intermediate's) is the bulk of the memory.
+                let mut kept = GradStore::default();
+                for v in &all {
+                    if let Some(g) = part_grads.remove(v.as_tensor()) {
+                        kept.insert(v.as_tensor(), g);
+                    }
+                }
+                drop(part_grads);
+                grads.extend(kept)?;
+            }
             clip(&mut grads, if frozen { &dec } else { &all }, s.clip)?;
             opt_dec.set_learning_rate(s.lr_decoder * schedule(step, 0, warm, total));
             opt_dec.step(&grads)?;
@@ -262,8 +288,11 @@ pub fn run(
                 opt_enc.set_learning_rate(s.lr_encoder * schedule(step, unfreeze, warm, total));
                 opt_enc.step(&grads)?;
             }
-            losses.push(f64::from(loss.to_scalar::<f32>()?));
+            losses.push(batch_loss);
             step += 1;
+            drop(grads);
+            // Let Metal give back the buffers this step used.
+            device.synchronize()?;
         }
         let val_scores = evaluate(net, &val, cfg, s, device)?;
         let mean_exact = if val_scores.is_empty() {
