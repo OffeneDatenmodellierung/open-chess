@@ -1,3 +1,5 @@
+<p align="center"><img src="web/chess/icon.svg" alt="open-chess logo: a knight in an open ring" width="112"></p>
+
 # open-chess
 
 A chess server, engine, training app and electronic-board runtime in Rust.

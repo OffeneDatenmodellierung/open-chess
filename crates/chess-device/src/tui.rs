@@ -342,7 +342,7 @@ fn panel<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
     Block::default()
         .borders(Borders::ALL)
         .border_style(t.border())
-        .title(title.into().style(t.title()))
+        .title(title.into().patch_style(t.title()))
         .style(t.base())
 }
 
@@ -375,16 +375,26 @@ fn draw(f: &mut Frame, app: &mut App, v: &View) {
             };
             let title =
                 format!(" {}: choose a board{} ", app.title, if scanning { " (looking…)" } else { "" });
+            let pick = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(4), Constraint::Min(3)])
+                .split(top[1]);
+            f.render_widget(
+                Paragraph::new(theme::logo("play chess on a real board")).style(theme::get().base()),
+                pick[0],
+            );
             let widget = List::new(items)
-                .block(panel(title))
+                .block(panel(theme::brand_title(&title)))
                 .highlight_style(Style::default().bg(theme::get().action).fg(theme::get().paper))
                 .highlight_symbol("▶ ");
-            f.render_stateful_widget(widget, top[1], list);
+            f.render_stateful_widget(widget, pick[1], list);
         }
         State::Choosing { board } => {
             let title = format!(" {}: {}: choose a game ", app.title, board.found.describe());
             f.render_widget(
-                Paragraph::new(app.form.lines()).wrap(Wrap { trim: false }).block(panel(title)),
+                Paragraph::new(app.form.lines())
+                    .wrap(Wrap { trim: false })
+                    .block(panel(theme::brand_title(&title))),
                 top[1],
             );
         }
@@ -551,7 +561,10 @@ fn draw_game(f: &mut Frame, area: Rect, v: &View, title: &str, scroll: usize) {
             Span::raw(words.clone()),
         ]));
     }
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }).block(panel(title.to_owned())), area);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: true }).block(panel(theme::brand_title(title))),
+        area,
+    );
 }
 
 fn draw_log(f: &mut Frame, area: Rect, scroll: usize, file: Option<&std::path::Path>, note: &str) {
@@ -672,6 +685,38 @@ mod tests {
         for want in ["choose a game", "Game type", "play the computer", "Level", "(rated 1400)", "Your name"]
         {
             assert!(screen.contains(want), "{want}: {screen}");
+        }
+    }
+
+    #[test]
+    fn the_board_picker_shows_the_logo() {
+        let mut app = App {
+            state: State::Picking { list: ListState::default() },
+            found: Arc::new(Mutex::new(vec![Found::Serial {
+                path: "/dev/ttyACM0".into(),
+                label: "USB".into(),
+            }])),
+            scanning: Arc::new(AtomicBool::new(false)),
+            log_scroll: 0,
+            moves_scroll: 0,
+            pane: Pane::Log,
+            title: "open-chess".into(),
+            log_file: None,
+            form: Form::new(&Defaults::default()),
+            looked: Arc::new(Mutex::new(None)),
+            top: Rect::default(),
+        };
+        let mut t = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        t.draw(|f| draw(f, &mut app, &view(&[]))).unwrap();
+        let screen: String =
+            t.backend().buffer().content().iter().map(ratatui::buffer::Cell::symbol).collect();
+        for want in
+            ["╭───╮●", "│ ♞ │  open-chess", "play chess on a real board", "♞ open-chess: choose a board"]
+        {
+            assert!(screen.contains(want), "{want}: {screen}");
+        }
+        if let Ok(path) = std::env::var("TUI_SNAPSHOT_PICKER") {
+            std::fs::write(path, html(&t)).unwrap();
         }
     }
 

@@ -84,21 +84,28 @@ fn redirect_with(uri: &str, params: &[(&str, &str)]) -> Response {
     Redirect::to(u.as_str()).into_response()
 }
 
+/// The server's own HTML pages (sign-in, account, consent), in the Chess
+/// lab's dark colours with the open-chess logo.
 pub fn page(title: &str, body: &str) -> Response {
+    use base64::Engine as _;
+    let icon = base64::engine::general_purpose::STANDARD.encode(crate::http::LOGO_SVG);
     Html(format!(
         "<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">\
-         <title>{t}</title><style>body{{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;\
-         color:#e8eaed;background:#14161a}}a{{color:#8ab4f8}}button{{font:inherit;padding:.5rem 1.2rem;margin-right:.5rem;\
-         border-radius:6px;border:1px solid #555;background:#2a2d33;color:inherit;cursor:pointer}}button.go,a.btn{{background:#1a73e8;\
-         border-color:#1a73e8}}a.btn{{display:inline-block;padding:.5rem 1.2rem;border-radius:6px;color:#fff;text-decoration:none}}\
-         code{{background:#2a2d33;padding:0 .3rem;border-radius:4px}}li{{margin:.2rem 0}}label{{display:block;margin:.6rem 0}}\
+         <meta name=theme-color content=\"#121820\"><link rel=icon type=\"image/svg+xml\" href=\"data:image/svg+xml;base64,{icon}\">\
+         <title>{t} · open-chess</title><style>body{{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;\
+         color:#e6ebf0;background:#121820}}a{{color:#6fa3d6}}button{{font:inherit;padding:.5rem 1.2rem;margin-right:.5rem;\
+         border-radius:8px;border:1px solid #2c3845;background:#19222c;color:inherit;cursor:pointer}}button.go,a.btn{{background:#6fa3d6;\
+         border-color:#6fa3d6;color:#0c1218;font-weight:700}}a.btn{{display:inline-block;padding:.5rem 1.2rem;border-radius:8px;text-decoration:none}}\
+         code{{background:#19222c;padding:0 .3rem;border-radius:4px}}li{{margin:.2rem 0}}label{{display:block;margin:.6rem 0}}\
          label input:not([type=checkbox]){{display:block;width:100%;box-sizing:border-box;font:inherit;padding:.4rem;margin-top:.2rem;\
-         border-radius:6px;border:1px solid #555;background:#1d2025;color:inherit}}label.check{{margin:.3rem 0}}\
-         .err{{color:#ff7a8a}}.ok{{color:#7ee2a8}}.muted{{color:#9aa0a6}}table{{border-collapse:collapse;width:100%}}\
-         td,th{{text-align:left;padding:.3rem;border-bottom:1px solid #333;vertical-align:top}}code.token{{word-break:break-all}}\
-         form{{margin:.6rem 0}}</style>\
-         <h1>{t}</h1>{body}</html>",
-        t = html_escape(title)
+         border-radius:8px;border:1px solid #2c3845;background:#19222c;color:inherit}}label.check{{margin:.3rem 0}}\
+         .err{{color:#ef8277}}.ok{{color:#7ee2a8}}.muted{{color:#9aa7b4}}table{{border-collapse:collapse;width:100%}}\
+         td,th{{text-align:left;padding:.3rem;border-bottom:1px solid #2c3845;vertical-align:top}}code.token{{word-break:break-all}}\
+         form{{margin:.6rem 0}}.brand{{display:flex;align-items:center;gap:.6rem;color:#9aa7b4;font-weight:700;margin-bottom:1.5rem}}\
+         .brand svg{{border-radius:9px}}h1{{font-size:1.6rem;margin:0 0 1rem}}</style>\
+         <div class=brand>{logo}<span>open-chess</span></div><h1>{t}</h1>{body}</html>",
+        t = html_escape(title),
+        logo = crate::http::logo(36),
     ))
     .into_response()
 }

@@ -111,3 +111,34 @@ impl Theme {
         Style::default().fg(self.action).add_modifier(Modifier::BOLD)
     }
 }
+
+/// The open-chess logo for the terminal: a knight in an open ring with the
+/// amber dot, three lines tall, then the name and `tagline`.
+pub fn logo(tagline: &str) -> Vec<ratatui::text::Line<'static>> {
+    use ratatui::text::{Line, Span};
+    let t = get();
+    let ring = Style::default().fg(t.board);
+    let dot = Style::default().fg(t.accent);
+    let knight = Style::default().fg(t.ink).add_modifier(Modifier::BOLD);
+    vec![
+        Line::from(vec![Span::styled(" ╭───╮", ring), Span::styled("●", dot)]),
+        Line::from(vec![
+            Span::styled(" │ ", ring),
+            Span::styled("♞", knight),
+            Span::styled(" │  ", ring),
+            Span::styled("open-chess", t.title()),
+            Span::styled(format!("  {}", env!("CARGO_PKG_VERSION")), t.muted()),
+        ]),
+        Line::from(vec![Span::styled(" ╰───╯  ", ring), Span::styled(tagline.to_owned(), t.muted())]),
+    ]
+}
+
+/// A panel title led by the logo's knight.
+pub fn brand_title(text: &str) -> ratatui::text::Line<'static> {
+    use ratatui::text::{Line, Span};
+    let t = get();
+    Line::from(vec![
+        Span::styled(" ♞", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(text.to_owned(), t.title()),
+    ])
+}
