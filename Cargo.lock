@@ -2600,6 +2600,7 @@ dependencies = [
  "open-chess-ble",
  "open-chess-centaur",
  "open-chess-chessnut",
+ "open-chess-client",
  "open-chess-core",
  "open-chess-dgt",
  "open-chess-dgtpi",
