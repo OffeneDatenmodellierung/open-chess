@@ -27,7 +27,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.incre
 | Area | Endpoints |
 |---|---|
 | OAuth | `GET/POST /oauth` (consent page), `POST /api/token`, `DELETE /api/token`, `POST /api/token/test` |
-| Account | `GET /api/account`, `/api/account/email`, `/api/account/playing` (`nb`), `/api/user/{username}` |
+| Account | `GET /api/account`, `/api/account/email`, `/api/account/playing` (`nb`), `/api/user/{username}`, `/api/player/autocomplete` (`term`, `object`, `nb`: players whose name starts with, then contains, `term`, for a type-ahead list; no token needed) |
 | Bots | `POST /api/bot/account/upgrade`, `GET /api/bot/online` (`nb`) |
 | Streams | `GET /api/stream/event`, `/api/board/game/stream/{id}`, `/api/bot/game/stream/{id}`, `/api/stream/game/{id}` (see [Live games](#live-games)) |
 | Challenges | `POST /api/challenge/ai` (the computer, below), `POST /api/challenge/{username}` (with `keepAliveStream`, `rules` and `acceptByToken`), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline` (`reason`), `…/cancel` |

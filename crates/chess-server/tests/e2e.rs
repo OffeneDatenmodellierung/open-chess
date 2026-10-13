@@ -387,6 +387,26 @@ async fn two_accounts_play_on_one_board() {
     let (w, b) = (g.players.white.rating_diff.unwrap(), g.players.black.rating_diff.unwrap());
     assert!(w < 0 && b > 0, "{w} {b}");
     assert_eq!(g.players.black.user.name, "Bob");
+    // The type-ahead list finds them by the start of their name.
+    let http = reqwest::Client::new();
+    let found: serde_json::Value = http
+        .get(format!("{}/api/player/autocomplete?term=bo&object=true", env.base[0]))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(found["result"][0]["name"].as_str(), Some("Bob"), "{found}");
+    let names: Vec<String> = http
+        .get(format!("{}/api/player/autocomplete?term=nn", env.base[0]))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(names, ["Ann"]);
     env.teardown().await;
 }
 

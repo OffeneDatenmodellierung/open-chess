@@ -185,6 +185,11 @@ struct Args {
     #[arg(long, env = "OPEN_CHESS_DEBUG")]
     debug: bool,
 
+    /// The screen's colours: the site's (royal navy and orange) or the
+    /// terminal's own.
+    #[arg(long, env = "OPEN_CHESS_THEME", default_value = "site", value_parser = ["site", "terminal"])]
+    theme: String,
+
     /// Also write the log to this file (started afresh each run).
     #[arg(long)]
     log_file: Option<std::path::PathBuf>,
@@ -195,6 +200,7 @@ fn main() -> ExitCode {
     let args = match Args::from_arg_matches(&matches) {
         Ok(a) => {
             log::debug_on(a.debug);
+            open_chess_device::theme::choose(&a.theme);
             let file = a.log_file.clone().or_else(|| a.debug.then(|| "open-chess-device.log".into()));
             if let Some(path) = file {
                 match log::to_file(&path) {

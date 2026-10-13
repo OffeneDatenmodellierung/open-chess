@@ -24,7 +24,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::crossterm::execute;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
@@ -36,6 +36,7 @@ use crate::chooser::{Action, Form};
 use crate::discover::Found;
 use crate::log::{self, Source};
 use crate::online::Open;
+use crate::theme;
 use crate::view::View;
 
 /// Games for a connected board, each with the flag that ends it.
@@ -335,7 +336,18 @@ fn next(app: &mut App, state: State, code: KeyCode, scan: &Arc<Scan>, connect: &
     }
 }
 
+/// A bordered panel in the theme's colours.
+fn panel<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
+    let t = theme::get();
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(t.border())
+        .title(title.into().style(t.title()))
+        .style(t.base())
+}
+
 fn draw(f: &mut Frame, app: &mut App, v: &View) {
+    f.render_widget(Block::default().style(theme::get().base()), f.area());
     let height = f.area().height;
     let top_height = (height.saturating_mul(3) / 5).max(13);
     let rows = Layout::default()
@@ -364,17 +376,15 @@ fn draw(f: &mut Frame, app: &mut App, v: &View) {
             let title =
                 format!(" {}: choose a board{} ", app.title, if scanning { " (looking…)" } else { "" });
             let widget = List::new(items)
-                .block(Block::default().borders(Borders::ALL).title(title))
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                .block(panel(title))
+                .highlight_style(Style::default().bg(theme::get().action).fg(theme::get().paper))
                 .highlight_symbol("▶ ");
             f.render_stateful_widget(widget, top[1], list);
         }
         State::Choosing { board } => {
             let title = format!(" {}: {}: choose a game ", app.title, board.found.describe());
             f.render_widget(
-                Paragraph::new(app.form.lines())
-                    .wrap(Wrap { trim: false })
-                    .block(Block::default().borders(Borders::ALL).title(title)),
+                Paragraph::new(app.form.lines()).wrap(Wrap { trim: false }).block(panel(title)),
                 top[1],
             );
         }
@@ -403,7 +413,7 @@ fn draw(f: &mut Frame, app: &mut App, v: &View) {
             " n next game · b back to the boards · Tab moves/log · ↑↓ or wheel scroll · Home newest · q quit"
         }
     };
-    f.render_widget(Paragraph::new(keys).style(Style::default().fg(Color::DarkGray)), rows[2]);
+    f.render_widget(Paragraph::new(keys).style(theme::get().base().fg(theme::get().muted)), rows[2]);
 }
 
 /// The position's squares, a8 first, from a FEN.
@@ -424,14 +434,10 @@ fn squares(fen: &str) -> [Option<char>; 64] {
     out
 }
 
+/// A piece's glyph: the solid shapes for both sides (told apart by colour,
+/// which reads better than outlines on a terminal's squares).
 fn glyph(c: char) -> char {
-    match c {
-        'K' => '♔',
-        'Q' => '♕',
-        'R' => '♖',
-        'B' => '♗',
-        'N' => '♘',
-        'P' => '♙',
+    match c.to_ascii_lowercase() {
         'k' => '♚',
         'q' => '♛',
         'r' => '♜',
@@ -456,23 +462,24 @@ pub fn board_lines(v: &View) -> Vec<Line<'static>> {
         })
         .unwrap_or_default();
     let flipped = v.player == Side::Black;
+    let t = theme::get();
     let mut lines = Vec::new();
     for r in 0..8 {
         let row = if flipped { 7 - r } else { r };
-        let mut spans = vec![Span::styled(format!("{} ", 8 - row), Style::default().fg(Color::DarkGray))];
+        let mut spans = vec![Span::styled(format!("{} ", 8 - row), t.muted())];
         for c in 0..8 {
             let col = if flipped { 7 - c } else { c };
             let i = row * 8 + col;
             let light = (row + col) % 2 == 0;
-            let mut bg = if light { Color::Rgb(181, 136, 99) } else { Color::Rgb(120, 82, 54) };
+            let mut bg = if light { t.sq_light } else { t.sq_dark };
             if last.contains(&i) {
-                bg = if v.awaiting_board { Color::Rgb(200, 90, 60) } else { Color::Rgb(170, 162, 58) };
+                bg = if v.awaiting_board { t.waiting } else { t.last };
             }
             let piece = sq[i];
-            let fg = if piece.is_some_and(char::is_uppercase) { Color::White } else { Color::Black };
+            let fg = if piece.is_some_and(char::is_uppercase) { t.white_piece } else { t.black_piece };
             spans.push(Span::styled(
                 format!(" {} ", piece.map_or(' ', glyph)),
-                Style::default().bg(bg).fg(fg),
+                Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD),
             ));
         }
         lines.push(Line::from(spans));
@@ -484,15 +491,12 @@ pub fn board_lines(v: &View) -> Vec<Line<'static>> {
         files.push(f);
         files.push(' ');
     }
-    lines.push(Line::from(Span::styled(format!("  {files}"), Style::default().fg(Color::DarkGray))));
+    lines.push(Line::from(Span::styled(format!("  {files}"), t.muted())));
     lines
 }
 
 fn draw_board(f: &mut Frame, area: Rect, v: &View) {
-    f.render_widget(
-        Paragraph::new(board_lines(v)).block(Block::default().borders(Borders::ALL).title(" board ")),
-        area,
-    );
+    f.render_widget(Paragraph::new(board_lines(v)).block(panel(" board ")), area);
 }
 
 fn clock(ms: i64) -> String {
@@ -506,6 +510,7 @@ fn clock(ms: i64) -> String {
 
 fn draw_game(f: &mut Frame, area: Rect, v: &View, title: &str, scroll: usize) {
     let now = Instant::now();
+    let t = theme::get();
     let mut lines =
         vec![Line::from(format!("White: {}    Black: {}", v.name_of(Side::White), v.name_of(Side::Black)))];
     if let Some([w, b]) = v.clocks_at(now) {
@@ -521,7 +526,7 @@ fn draw_game(f: &mut Frame, area: Rect, v: &View, title: &str, scroll: usize) {
     }
     let over = !v.started() && v.status != chess_core::Status::Created;
     let style = if over {
-        Style::default().add_modifier(Modifier::BOLD).fg(Color::Green)
+        Style::default().add_modifier(Modifier::BOLD).fg(t.good)
     } else {
         Style::default().add_modifier(Modifier::BOLD)
     };
@@ -532,51 +537,43 @@ fn draw_game(f: &mut Frame, area: Rect, v: &View, title: &str, scroll: usize) {
                 lines.push(Line::from(format!("  {}", p.describe())));
             }
         }
-        lines.push(Line::styled(
-            "  set the pieces up for another, or n to choose the next game",
-            Style::default().fg(Color::DarkGray),
-        ));
+        lines.push(Line::styled("  set the pieces up for another, or n to choose the next game", t.muted()));
     }
     if let Some(name) = v.opening_name() {
-        lines.push(Line::styled(format!("Opening: {name}"), Style::default().fg(Color::Cyan)));
+        lines.push(Line::styled(format!("Opening: {name}"), Style::default().fg(t.accent)));
     }
     lines.push(Line::from(""));
     let moves = v.moves_in_words();
     for (number, san, words) in moves.iter().rev().skip(scroll) {
         lines.push(Line::from(vec![
-            Span::styled(format!("{number:>4} "), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{number:>4} "), t.muted()),
             Span::styled(format!("{san:<8}"), Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(words.clone()),
         ]));
     }
-    f.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
-            .block(Block::default().borders(Borders::ALL).title(title.to_owned())),
-        area,
-    );
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }).block(panel(title.to_owned())), area);
 }
 
 fn draw_log(f: &mut Frame, area: Rect, scroll: usize, file: Option<&std::path::Path>, note: &str) {
     let height = usize::from(area.height.saturating_sub(2));
     let (lines, _) = log::newest(scroll + height);
+    let t = theme::get();
     let items: Vec<Line> = lines
         .iter()
         .skip(scroll)
         .map(|l| {
             let secs = l.at.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            let t = format!("{:02}:{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60, secs % 60);
+            let at = format!("{:02}:{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60, secs % 60);
             let colour = match l.source {
-                Source::Board => Color::Cyan,
-                Source::Engine => Color::Magenta,
-                Source::Game => Color::Green,
-                Source::Online => Color::Yellow,
-                Source::Web | Source::LiveChess => Color::Blue,
-                Source::Clock => Color::LightCyan,
-                Source::Device => Color::Gray,
+                Source::Board | Source::Clock => t.board,
+                Source::Engine => t.engine,
+                Source::Game => t.good,
+                Source::Online => t.online,
+                Source::Web | Source::LiveChess => t.web,
+                Source::Device => t.muted,
             };
             Line::from(vec![
-                Span::styled(format!("{t} "), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{at} "), t.muted()),
                 Span::styled(format!("{:<9} ", l.source.label()), Style::default().fg(colour)),
                 Span::raw(l.text.clone()),
             ])
@@ -585,12 +582,7 @@ fn draw_log(f: &mut Frame, area: Rect, scroll: usize, file: Option<&std::path::P
     let back = if scroll == 0 { String::new() } else { format!(", {scroll} back") };
     let saved = file.map(|p| format!(", also in {}", p.display())).unwrap_or_default();
     let title = format!(" log, newest first (UTC){back}{saved}{note} ");
-    f.render_widget(
-        Paragraph::new(items)
-            .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title(title)),
-        area,
-    );
+    f.render_widget(Paragraph::new(items).wrap(Wrap { trim: false }).block(panel(title)), area);
 }
 
 #[cfg(test)]
@@ -647,6 +639,7 @@ mod tests {
         assert!(screen.contains("5:00"));
         assert!(screen.contains("a page connected"));
         assert!(screen.contains('♚'));
+        assert!(!screen.contains('♔'), "solid glyphs for both sides");
     }
 
     #[test]
@@ -680,6 +673,86 @@ mod tests {
         {
             assert!(screen.contains(want), "{want}: {screen}");
         }
+    }
+
+    /// A test terminal's screen as HTML, in its colours (to look at).
+    fn html(t: &Terminal<TestBackend>) -> String {
+        let colour = |c: ratatui::style::Color, fallback: &str| match c {
+            ratatui::style::Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+            _ => fallback.to_owned(),
+        };
+        let buf = t.backend().buffer();
+        let mut out = String::from(
+            "<html><body style='margin:0;background:#000'><pre style='font:14px/1.2 Menlo,monospace;margin:0'>",
+        );
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let c = &buf[(x, y)];
+                let bold = if c.modifier.contains(Modifier::BOLD) { "font-weight:bold;" } else { "" };
+                let sym = match c.symbol() {
+                    "<" => "&lt;",
+                    ">" => "&gt;",
+                    "&" => "&amp;",
+                    s => s,
+                };
+                out.push_str(&format!(
+                    "<span style='background:{};color:{};{bold}'>{sym}</span>",
+                    colour(c.bg, "#06114a"),
+                    colour(c.fg, "#ffffff")
+                ));
+            }
+            out.push('\n');
+        }
+        out + "</pre></body></html>"
+    }
+
+    /// Writes the playing screen, a finished game, to $TUI_SNAPSHOT.
+    #[test]
+    #[ignore = "writes a picture of the screen"]
+    fn snapshot() {
+        let Ok(path) = std::env::var("TUI_SNAPSHOT") else { return };
+        log::quiet(true);
+        log::line(Source::Board, "connected to Chessnut GO over Bluetooth");
+        log::line(Source::Game, "f3: 1. f3");
+        log::line(Source::Game, "classical rating: Ann 1500 → 1480 (-20) · Bob 1500 → 1520 (+20)");
+        let mut v = view(&["f2f3", "e7e5", "g2g4", "d8h4"]);
+        v.status = chess_core::Status::Mate;
+        v.winner = Some(Side::Black);
+        v.names = Some(["Ann".into(), "Bob".into()]);
+        v.ratings = Some([
+            crate::ratings::PlayerResult { name: "Ann".into(), rating: Some(1500), diff: Some(-20) },
+            crate::ratings::PlayerResult { name: "Bob".into(), rating: Some(1500), diff: Some(20) },
+        ]);
+        let (games, _rx) = mpsc::channel();
+        let mut app = App {
+            state: State::Playing {
+                board: Connected {
+                    found: Found::Serial { path: "Chessnut GO".into(), label: "Bluetooth".into() },
+                    stop: Arc::new(AtomicBool::new(false)),
+                    thread: None,
+                    games,
+                },
+                game: Arc::new(AtomicBool::new(false)),
+            },
+            found: Arc::new(Mutex::new(Vec::new())),
+            scanning: Arc::new(AtomicBool::new(false)),
+            log_scroll: 0,
+            moves_scroll: 0,
+            pane: Pane::Log,
+            title: "open-chess board".into(),
+            log_file: None,
+            form: Form::new(&Defaults::default()),
+            looked: Arc::new(Mutex::new(None)),
+            top: Rect::default(),
+        };
+        let mut t = Terminal::new(TestBackend::new(120, 34)).unwrap();
+        t.draw(|f| draw(f, &mut app, &v)).unwrap();
+        let mut page = html(&t);
+        let State::Playing { board, .. } = std::mem::replace(&mut app.state, picking()) else { return };
+        app.state = State::Choosing { board };
+        t.draw(|f| draw(f, &mut app, &v)).unwrap();
+        page.push_str(&html(&t));
+        std::fs::write(path, page).unwrap();
     }
 
     #[test]

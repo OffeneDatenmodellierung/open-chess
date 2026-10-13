@@ -153,6 +153,7 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/api/account/email", get(account::email))
         .route("/api/account/playing", get(account::playing))
         .route("/api/user/{username}", get(account::user))
+        .route("/api/player/autocomplete", get(account::autocomplete))
         .route("/api/bot/account/upgrade", post(account::upgrade))
         .route("/api/bot/online", get(account::bots_online))
         // streams
