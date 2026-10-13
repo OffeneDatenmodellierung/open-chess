@@ -46,6 +46,7 @@ mod unix {
     use open_chess_device::board::{Board, centaur_button};
     use open_chess_device::controller::{Controller, Setup, TimeControl, describe};
     use open_chess_device::dgtpi;
+    use open_chess_device::livechess::{self, LiveChess};
     use open_chess_device::online::{Challenge, Connection, FromServer, OnlinePlay};
     use open_chess_device::opponent::{EngineSpec, Opponent};
     use open_chess_device::view::{EngineInfo, View, game_id};
@@ -145,6 +146,12 @@ mod unix {
         /// --play's colour).
         #[arg(long)]
         challenge: Option<String>,
+
+        /// Be the board for Lichess's DGT page (lichess.org/dgt) instead of
+        /// playing the engine: answer DGT LiveChess's websocket here (the page
+        /// looks on localhost:1982, on the computer its browser runs on).
+        #[arg(long, num_args = 0..=1, default_missing_value = "127.0.0.1:1982")]
+        livechess: Option<String>,
     }
 
     pub fn main() -> ExitCode {
@@ -226,6 +233,9 @@ mod unix {
         fn play(&mut self, uci: &str) -> Result<Played, GameError> {
             Board::play(&mut self.session, uci)
         }
+        fn set_position(&mut self, fen: &str) -> Result<(), GameError> {
+            Board::set_position(&mut self.session, fen)
+        }
         fn send(&mut self, c: Command) {
             self.session.send(c);
         }
@@ -276,6 +286,9 @@ mod unix {
         }
         fn play(&mut self, uci: &str) -> Result<Played, GameError> {
             Board::play(&mut self.session, uci)
+        }
+        fn set_position(&mut self, fen: &str) -> Result<(), GameError> {
+            Board::set_position(&mut self.session, fen)
         }
         fn send(&mut self, c: Command) {
             Board::send(&mut self.session, c);
@@ -363,6 +376,9 @@ mod unix {
         fn play(&mut self, uci: &str) -> Result<Played, GameError> {
             Board::play(&mut self.session, uci)
         }
+        fn set_position(&mut self, fen: &str) -> Result<(), GameError> {
+            Board::set_position(&mut self.session, fen)
+        }
         fn send(&mut self, c: Command) {
             Board::send(&mut self.session, c);
         }
@@ -415,6 +431,9 @@ mod unix {
         }
         fn play(&mut self, uci: &str) -> Result<Played, GameError> {
             Board::play(&mut self.session, uci)
+        }
+        fn set_position(&mut self, fen: &str) -> Result<(), GameError> {
+            Board::set_position(&mut self.session, fen)
         }
         fn send(&mut self, c: Command) {
             if let Some(c) = chess_dgt::pegasus::translate(c) {
@@ -485,9 +504,13 @@ mod unix {
     enum Mode {
         Engine { controller: Box<Controller>, opponent: Opponent, engine: EngineInfo },
         Online { connection: Connection },
+        LiveChess { addr: String },
     }
 
     fn mode(args: &Args, seed: u64) -> Result<Mode> {
+        if let Some(addr) = &args.livechess {
+            return Ok(Mode::LiveChess { addr: addr.clone() });
+        }
         if let Some(base) = &args.online {
             let Some(token) = &args.token else {
                 bail!("--online needs the account's API token: --token or OPEN_CHESS_TOKEN")
@@ -533,6 +556,7 @@ mod unix {
                 play(link, *controller, &opponent, &engine, seed, args)
             }
             Mode::Online { connection } => play_online(link, &connection, seed, args),
+            Mode::LiveChess { addr } => play_livechess(link, &addr),
         }
     }
 
@@ -638,6 +662,43 @@ mod unix {
         }
     }
 
+    /// Be the board for Lichess's DGT page until the board fails.
+    fn play_livechess<L: Link>(link: &mut L, addr: &str) -> Result<()> {
+        let mut lc = LiveChess::new();
+        let (feed_tx, feed_rx) = watch::channel(lc.feed(link));
+        let (setup_tx, setups) = mpsc::channel::<String>();
+        let (log_tx, lines) = mpsc::channel::<String>();
+        let at = livechess::serve(addr, feed_rx, setup_tx, log_tx)
+            .with_context(|| format!("listening on {addr}"))?;
+        eprintln!("LiveChess on ws://{at}/api/v1.0: open lichess.org/dgt in a browser on this computer");
+        loop {
+            let now = Instant::now();
+            for input in link.exchange(now)? {
+                if let Input::Event(e) = input {
+                    log(&e, link);
+                    if matches!(e, Event::Game(Observation::Caught)) {
+                        link.send(Command::LightsOff);
+                    }
+                }
+            }
+            for fen in setups.try_iter() {
+                lc.setup(&fen, link);
+            }
+            for line in lines.try_iter() {
+                eprintln!("{line}");
+            }
+            let f = lc.feed(link);
+            feed_tx.send_if_modified(|old| {
+                if *old == f {
+                    false
+                } else {
+                    *old = f;
+                    true
+                }
+            });
+        }
+    }
+
     /// Play online games on a board until it fails.
     fn play_online<L: Link>(link: &mut L, connection: &Connection, seed: u64, args: &Args) -> Result<()> {
         let white_on_left = args.white_clock == "left";
@@ -690,7 +751,14 @@ mod unix {
                 connection.send(r);
             }
             while let Ok(r) = requests.try_recv() {
-                let _ = r.reply.send(Err("playing online: set the game up on the site".into()));
+                let reply = match r.change {
+                    Change::Button(b) => {
+                        online.on_button(ClockButton::Button(b), link);
+                        Ok(format!("button {b}"))
+                    }
+                    _ => Err("playing online: set the game up on the site".into()),
+                };
+                let _ = r.reply.send(reply);
             }
             let v = View::online(&online, link, &waiting, created, Instant::now());
             view_tx.send_if_modified(|old| {
@@ -722,6 +790,12 @@ mod unix {
                     opponent.ask(t);
                 }
                 Ok(format!("You play {}.", side.name()))
+            }
+            Change::Button(b) => {
+                if let Some(t) = controller.on_button(ClockButton::Button(b), board, now) {
+                    opponent.ask(t);
+                }
+                Ok(format!("button {b}"))
             }
             Change::Time(time) => {
                 let label = time.map_or_else(|| "untimed".to_owned(), |t| t.to_string());

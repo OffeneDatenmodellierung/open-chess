@@ -128,6 +128,14 @@ impl Follower {
         Ok(played)
     }
 
+    /// Start again from a position (the board is then expected to show
+    /// it; until it does, nothing it shows is a move).
+    pub fn set_position(&mut self, fen: &str) -> Result<(), GameError> {
+        self.game = Game::new(Some(fen))?;
+        self.awaiting_board = false;
+        Ok(())
+    }
+
     /// A piece lifted or put down.
     pub fn field(&mut self, f: Field) -> Observation {
         match f {

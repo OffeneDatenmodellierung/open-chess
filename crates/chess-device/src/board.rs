@@ -17,6 +17,8 @@ pub trait Board {
     fn play(&mut self, uci: &str) -> Result<Played, GameError>;
     /// Tell the board or clock something.
     fn send(&mut self, c: Command);
+    /// Follow the game from this position.
+    fn set_position(&mut self, fen: &str) -> Result<(), GameError>;
 }
 
 impl Board for Session {
@@ -35,9 +37,17 @@ impl Board for Session {
     fn send(&mut self, c: Command) {
         Session::send(self, c);
     }
+
+    fn set_position(&mut self, fen: &str) -> Result<(), GameError> {
+        self.follower_mut().set_position(fen)
+    }
 }
 
 impl Board for chess_centaur::Session {
+    fn set_position(&mut self, fen: &str) -> Result<(), GameError> {
+        self.follower_mut().set_position(fen)
+    }
+
     fn game(&self) -> &Game {
         self.follower().game()
     }
@@ -63,6 +73,10 @@ impl Board for chess_centaur::Session {
 }
 
 impl Board for chess_chessnut::Session {
+    fn set_position(&mut self, fen: &str) -> Result<(), GameError> {
+        self.follower_mut().set_position(fen)
+    }
+
     fn game(&self) -> &Game {
         self.follower().game()
     }

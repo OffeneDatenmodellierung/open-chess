@@ -17,7 +17,9 @@
 pub mod board;
 pub mod controller;
 pub mod dgtpi;
+pub mod livechess;
 pub mod online;
 pub mod opponent;
+pub mod pico;
 pub mod view;
 pub mod web;
