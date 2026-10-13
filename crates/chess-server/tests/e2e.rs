@@ -64,6 +64,7 @@ async fn setup(tweak: impl FnOnce(&mut Config)) -> Option<Env> {
         pool_size: 6,
         public_url: "http://chess.test".into(),
         site_url: "http://site.test".into(),
+        esports_login: true,
         site_name: "open-chess".into(),
         bind: "127.0.0.1:0".into(),
         metrics_bind: "127.0.0.1:0".into(),
@@ -536,6 +537,51 @@ async fn oauth_pkce_issues_site_tokens() {
         http.delete(format!("{}/api/token", env.base[0])).bearer_auth(&t.access_token).send().await.unwrap();
     assert_eq!(r.status(), 204);
     assert!(c.account().await.is_err(), "revoked");
+    env.teardown().await;
+}
+
+#[tokio::test]
+async fn without_esports_login_there_is_no_browser_sign_in() {
+    let Some(env) = setup(|c| c.esports_login = false).await else { return };
+    let (pid, token) = env.player("Eli", &["board:play"]).await;
+    let session = random_token(32);
+    env.pg
+        .execute(
+            &format!("INSERT INTO {}.sessions (token_hash, player_id, expires_at) VALUES ($1, $2, now() + interval '1 day')", env.site),
+            &[&hash_key(&session), &pid],
+        )
+        .await
+        .unwrap();
+    let http = reqwest::Client::new();
+    let about: serde_json::Value = http
+        .get(&env.base[0])
+        .header("accept", "application/json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(about["login"], false);
+    let q = [
+        ("response_type", "code"),
+        ("client_id", "test-app"),
+        ("redirect_uri", "http://app.test/callback"),
+        ("code_challenge_method", "S256"),
+        ("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"),
+        ("scope", "board:play"),
+    ];
+    let r = http
+        .get(format!("{}/oauth", env.base[0]))
+        .query(&q)
+        .header("cookie", format!("esl_session={session}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403, "the site's session isn't accepted");
+    assert!(r.text().await.unwrap().contains("No sign-in here"));
+    // Tokens still work.
+    assert_eq!(env.client(0, &token).account().await.unwrap().username, "Eli");
     env.teardown().await;
 }
 

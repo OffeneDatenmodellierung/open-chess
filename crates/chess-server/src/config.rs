@@ -40,6 +40,21 @@ pub struct Config {
     #[arg(long, env = "ESPORTS_PUBLIC_URL", default_value = "http://localhost:8080")]
     pub site_url: String,
 
+    /// Sign in through the host site (esports-lab): the OAuth page accepts
+    /// the site's session cookie and links to its sign-in. Off by default,
+    /// so a server without that site offers no browser sign-in; API
+    /// tokens (the site's, and `open-chess bot create`) work either way.
+    #[arg(
+        long,
+        env = "ESPORTS_LOGIN",
+        default_value_t = false,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        action = clap::ArgAction::Set,
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub esports_login: bool,
+
     /// What players know the site as: on the OAuth page, in PGN event
     /// names and in `GET /` (which the training app shows).
     #[arg(long, env = "CHESS_SITE_NAME", default_value = "open-chess")]

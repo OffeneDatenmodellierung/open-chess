@@ -33,6 +33,8 @@ export async function loadSiteName(base) {
     const j = await r.json();
     if (typeof j.site === "string" && j.site.trim()) SERVERS.site.name = j.site.trim();
     SERVERS.site.device = j.device === true;
+    // `"login": false`: the server has no browser sign-in, only tokens.
+    SERVERS.site.noLogin = j.login === false;
   } catch {
     // keep the default
   }

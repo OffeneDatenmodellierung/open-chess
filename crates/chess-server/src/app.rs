@@ -53,7 +53,7 @@ impl Drop for Slot {
 impl Ctx {
     pub fn new(db: Db, cfg: Config) -> Ctx {
         Ctx {
-            auth: Auth::new(db.clone()),
+            auth: Auth::new(db.clone(), cfg.esports_login),
             db,
             cfg: Arc::new(cfg),
             metrics: Metrics::new(),
