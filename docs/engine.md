@@ -19,6 +19,9 @@ in the browser (`web/chess`, the Chess lab app).
 | `openings` | Named openings by move order (ECO codes). |
 | `photo` | Matching a board read from a photo against the position and every position one legal move away. |
 | `analysis` | All of the above for a game position, as JSON for the app. |
+| `book` | Polyglot opening books (`.bin`), the format most engines and GUIs (PicoChess among them) read. No I/O: pass the bytes. |
+| `dictionary` | Keys for the position dictionary (the chess server's stored evaluations of positions). |
+| `params` | The search's tunable parameters and their built-in defaults, which training tunes. |
 | `bot` | Levels 1–8 (search budget plus a seeded margin for human-looking slips) and `best_move` for the max level. |
 
 None of it is copied from another engine. The search techniques are the
@@ -177,8 +180,9 @@ assistance labels (`chess.assist_marks`).
 
 ## The training app
 
-`web/chess` is static files plus the wasm engine; CI builds them into the
-`chess-pwa` artifact. Modes: bot, two players, analyse, online (this
+`web/chess` is static files plus the wasm engine; CI's `app` job builds
+them into the `chess-app` artifact, and each release has them as
+`chess-app-vX.Y.Z.tar.gz`. Modes: bot, two players, analyse, online (this
 server or lichess.org through the Board API). After one visit it works
 offline: bot, analysis, built-in tablebases, editor. Online-only: play,
 Lichess's 7-piece tablebase, the position dictionary and photo reading

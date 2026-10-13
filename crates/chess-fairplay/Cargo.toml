@@ -1,17 +1,18 @@
 [package]
 name = "open-chess-fairplay"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Post-game fair-play screening: engine accuracy, engine-match rate, move-time patterns and the training-app fingerprint, for human review"
 license = "MIT OR Apache-2.0"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-chess-core = { package = "open-chess-core", path = "../chess-core" }
-chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
-chess-engine = { package = "open-chess-engine", path = "../chess-engine" }
+chess-core = { workspace = true }
+chess-analysis = { workspace = true }
+chess-engine = { workspace = true }
 serde = { version = "1.0.229", features = ["derive"] }
 
 [dev-dependencies]

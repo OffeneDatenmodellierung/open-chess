@@ -1,12 +1,13 @@
 [package]
 name = "open-chess-ble"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "A small Bluetooth LE GATT client for chess boards: ATT over the kernel's L2CAP sockets, no D-Bus or system libraries"
 license = "MIT OR Apache-2.0"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1.5", features = ["net", "event", "fs"] }

@@ -1,12 +1,13 @@
 [package]
 name = "open-chess-dgtpi"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "The DGT Pi's built-in DGT3000 clock over I²C: a Rust port of DGT's dgtpicom"
 license = "GPL-3.0-or-later"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1.5", features = ["fs", "mm"] }

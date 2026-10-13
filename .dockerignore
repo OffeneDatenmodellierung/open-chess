@@ -1,10 +1,5 @@
-# Build context: sources only.
-target/
-data/
-.git/
-.github/
-deploy/
-docs/
-*.png
-# …but the training app's icons are part of it.
-!web/chess/*.png
+# The image compiles nothing: it needs Cargo.toml (for the release version
+# to fetch) or the binaries built into dist/ (BINARIES=local).
+*
+!Cargo.toml
+!dist/

@@ -1,11 +1,13 @@
 [package]
 name = "open-chess-conformance"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Checks the open-chess server's JSON against Lichess's own OpenAPI spec, by driving a running server through a full game"
 license = "MIT OR Apache-2.0"
-authors = ["Mark Olliver"]
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish = false
 
 [[bin]]

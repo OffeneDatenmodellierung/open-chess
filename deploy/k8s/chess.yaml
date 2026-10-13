@@ -3,10 +3,11 @@
 # database, schema `chess`), and replicas hear each other's changes through
 # LISTEN/NOTIFY, so either scales out freely.
 #
-# Image: Dockerfile (one image: `serve` and `analyse`; `--target slim`
-# is enough for the API alone). Secret `open-chess`: DATABASE_URL, ESPORTS_PUBLIC_URL (the site, for
-# sign-in links) and CHESS_FAIRPLAY_MODEL (the private screening model);
-# the other settings are below.
+# Image: ghcr.io/offenedatenmodellierung/open-chess (one image: `serve`
+# and `analyse`; the `slim` tag is enough for the API alone). Pin a
+# release's version. Secret `open-chess`: DATABASE_URL, ESPORTS_PUBLIC_URL
+# (the site, for sign-in links) and CHESS_FAIRPLAY_MODEL (the private
+# screening model); the other settings are below.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,15 +38,17 @@ spec:
           labelSelector: { matchLabels: *labels }
       containers:
         - name: chess
-          image: open-chess
+          image: ghcr.io/offenedatenmodellierung/open-chess:0.1.0
           args: ["serve"]
           envFrom:
             - secretRef: { name: open-chess }
           env:
-            # Where clients reach the API (with the path prefix, if any). On
-            # a host of its own, set the site's session cookie domain to the
-            # shared parent so the OAuth consent page sees site sign-ins.
-            - { name: CHESS_PUBLIC_URL, value: "https://chess.example.com" }
+            # Where clients reach the API, with the path the Ingress below
+            # routes (the API is mounted under it). Under the site's origin,
+            # the OAuth consent page sees site sign-ins with nothing more.
+            - { name: CHESS_PUBLIC_URL, value: "https://example.com/chess" }
+            # People sign in to apps (OAuth) through the site.
+            - { name: ESPORTS_LOGIN, value: "true" }
             - { name: CHESS_SITE_SCHEMA, value: site }
             - { name: CHESS_SCHEMA, value: chess }
             - { name: CHESS_POOL_SIZE, value: "8" }
@@ -136,7 +139,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: analyse
-          image: open-chess
+          image: ghcr.io/offenedatenmodellierung/open-chess:0.1.0
           args: ["analyse"]
           envFrom:
             - secretRef: { name: open-chess }

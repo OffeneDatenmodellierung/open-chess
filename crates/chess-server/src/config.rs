@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use clap::Args;
 
 #[derive(Debug, Clone, Args)]
+#[allow(clippy::struct_excessive_bools)] // settings switches
 pub struct Config {
     /// Postgres URL: the site's Neon database. A pooled (`-pooler`) host is
     /// fine; notifications use the direct host automatically.

@@ -1,24 +1,26 @@
 [package]
 name = "open-chess-server"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "A Lichess-compatible chess server: the Board, Bot, Challenge and OAuth APIs on Postgres, with post-game fair-play screening"
 license = "MIT OR Apache-2.0"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 
 [[bin]]
 name = "open-chess"
 path = "src/main.rs"
 
 [dependencies]
-chess-core = { package = "open-chess-core", path = "../chess-core" }
-chess-proto = { package = "open-chess-proto", path = "../chess-proto" }
-chess-engine = { package = "open-chess-engine", path = "../chess-engine" }
-chess-fairplay = { package = "open-chess-fairplay", path = "../chess-fairplay" }
-chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
-chess-vision = { package = "open-chess-vision", path = "../chess-vision", features = ["decode"] }
+chess-core = { workspace = true }
+chess-proto = { workspace = true }
+chess-engine = { workspace = true }
+chess-fairplay = { workspace = true }
+chess-analysis = { workspace = true }
+chess-vision = { workspace = true, features = ["decode"] }
 cozy-chess = "0.3.4"
 anyhow = "1.0.104"
 axum = "0.8.9"
@@ -46,7 +48,7 @@ url = "2.5.8"
 urlencoding = "2.1.3"
 
 [dev-dependencies]
-chess-client = { package = "open-chess-client", path = "../chess-client" }
+chess-client = { workspace = true }
 reqwest = { version = "0.13.5", features = ["json", "form", "stream"] }
 
 [lints.rust]

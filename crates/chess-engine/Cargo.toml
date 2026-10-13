@@ -1,12 +1,13 @@
 [package]
 name = "open-chess-engine"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Async UCI engine driver (Stockfish and friends) for fair-play analysis and bots"
 license = "MIT OR Apache-2.0"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 tokio = { version = "1.53.2", features = ["process", "io-util", "time", "sync"] }

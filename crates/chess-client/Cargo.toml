@@ -1,15 +1,16 @@
 [package]
 name = "open-chess-client"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Async client for the Lichess Board, Bot and Challenge APIs; works against lichess.org or an open-chess server"
 license = "MIT OR Apache-2.0"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-chess-proto = { package = "open-chess-proto", path = "../chess-proto" }
+chess-proto = { workspace = true }
 bytes = "1"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 reqwest = { version = "0.13.5", features = ["json", "query", "form", "stream"] }

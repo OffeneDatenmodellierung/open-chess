@@ -1,28 +1,29 @@
 [package]
 name = "open-chess-device"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
-description = "Play chess on an electronic board: a DGT board against open-chess's engine or any UCI engine, with opening books and the clock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Play chess on an electronic board (DGT USB/Bluetooth/serial boards, DGT Pi, Centaur, Pegasus, Chessnut Air/Go): against an engine, online on Lichess, or as the board for Lichess's DGT page; PicoChess-compatible"
 license = "GPL-3.0-or-later"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "open-chess-device"
 path = "src/main.rs"
 
 [dependencies]
-chess-core = { package = "open-chess-core", path = "../chess-core" }
-chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
-chess-engine = { package = "open-chess-engine", path = "../chess-engine" }
-chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt" }
-chess-ble = { package = "open-chess-ble", path = "../chess-ble" }
-chess-chessnut = { package = "open-chess-chessnut", path = "../chess-chessnut" }
-chess-client = { package = "open-chess-client", path = "../chess-client" }
-chess-centaur = { package = "open-chess-centaur", path = "../chess-centaur" }
-chess-dgtpi = { package = "open-chess-dgtpi", path = "../chess-dgtpi" }
-chess-proto = { package = "open-chess-proto", path = "../chess-proto" }
+chess-core = { workspace = true }
+chess-analysis = { workspace = true }
+chess-engine = { workspace = true }
+chess-dgt = { workspace = true }
+chess-ble = { workspace = true }
+chess-chessnut = { workspace = true }
+chess-client = { workspace = true }
+chess-centaur = { workspace = true }
+chess-dgtpi = { workspace = true }
+chess-proto = { workspace = true }
 anyhow = "1.0.104"
 axum = { version = "0.8.9", features = ["ws"] }
 bytes = "1"
@@ -47,7 +48,7 @@ hidapi = "2.6.7"
 serialport = { version = "4.10.1", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
-chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt", features = ["serial"] }
+chess-dgt = { workspace = true, features = ["serial"] }
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -94,7 +94,7 @@ pub fn clock_text(v: &View, now: Instant) -> Option<String> {
 
 pub fn clock_message(v: &View, now: Instant) -> Option<Value> {
     clock_text(v, now)
-        .map(|t| json!({"event": "Clock", "msg": t, "running": v.running.is_some(), "menu_active": false}))
+        .map(|t| json!({"event": "Clock", "msg": t, "running": v.running.is_some(), "menu_active": v.menu.is_some()}))
 }
 
 /// What a client sees on connecting.
