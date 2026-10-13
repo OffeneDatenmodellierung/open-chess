@@ -20,7 +20,7 @@ mod status;
 pub use clock::{Clock, MoveClock};
 pub use game::{Game, GameError, Outcome, Played, Side};
 pub use glicko::{GameScore, Rating};
-pub use pgn::{PgnGame, PgnPlayer, pgn};
+pub use pgn::{PgnGame, PgnPlayer, pgn, result_str};
 pub use san::san;
 pub use speed::Speed;
 pub use status::Status;

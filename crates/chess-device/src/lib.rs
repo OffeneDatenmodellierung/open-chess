@@ -14,10 +14,21 @@
 //! one on the board's cable. That driver is a port of DGT's GPL `dgtpicom`,
 //! so this crate is GPL-3.0-or-later.
 
+pub mod ble;
 pub mod board;
 pub mod controller;
 pub mod dgtpi;
+pub mod discover;
+pub mod links;
+pub mod livechess;
+pub mod log;
 pub mod online;
 pub mod opponent;
+pub mod pico;
+pub mod play;
+pub mod serial;
+pub mod tui;
+#[cfg(target_os = "linux")]
+pub mod usb;
 pub mod view;
 pub mod web;

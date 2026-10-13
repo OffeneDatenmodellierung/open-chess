@@ -17,6 +17,9 @@
 //!   engine's level, the side the person plays, the time control), which
 //!   the app's device panel changes.
 //! * `GET /app/…`: the app's files, from `--app`.
+//! * PicoChess's web API ([`crate::pico`]): the `/event` websocket,
+//!   `POST /channel` (clock buttons, time controls), `GET /dgt` and
+//!   `GET /info`.
 //!
 //! Moves are made on the board, so the Board API's move, resign, draw and
 //! abort calls answer with an error saying so. No sign-in: anyone who can
@@ -32,7 +35,8 @@ use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::{Path as UrlPath, State};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -44,6 +48,7 @@ use serde_json::json;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::controller::TimeControl;
+use crate::pico;
 use crate::view::{self, View};
 
 /// How often an idle stream sends an empty line, as Lichess does, so
@@ -56,6 +61,8 @@ pub enum Change {
     Level(u8),
     Player(Side),
     Time(Option<TimeControl>),
+    /// A clock button pressed in a client (PicoChess's web clock).
+    Button(u8),
 }
 
 /// A change and where to send what came of it (a message, or why not).
@@ -119,6 +126,11 @@ pub fn router(web: Web) -> Router {
         .route("/app", get(|| async { Redirect::permanent("/app/") }))
         .route("/app/", get(app_index))
         .route("/app/{*path}", get(app_file))
+        // PicoChess's web API.
+        .route("/event", get(pico_events))
+        .route("/channel", post(pico_channel))
+        .route("/dgt", get(pico_dgt))
+        .route("/info", get(pico_info))
         .with_state(web)
 }
 
@@ -335,6 +347,101 @@ async fn feed(State(w): State<Web>, UrlPath(id): UrlPath<String>) -> Response {
         }
     });
     ndjson(out)
+}
+
+// ── PicoChess's web API ──
+
+async fn pico_events(State(w): State<Web>, ws: WebSocketUpgrade) -> Response {
+    ws.on_upgrade(move |socket| pico_socket(socket, w.view.clone()))
+}
+
+async fn pico_socket(mut socket: WebSocket, mut rx: watch::Receiver<View>) {
+    let send = |v: &serde_json::Value| Message::Text(v.to_string().into());
+    let mut last = rx.borrow_and_update().clone();
+    for m in pico::greeting(&last, Instant::now()) {
+        if socket.send(send(&m)).await.is_err() {
+            return;
+        }
+    }
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        tokio::select! {
+            changed = rx.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+                let v = rx.borrow_and_update().clone();
+                for m in pico::changes(&last, &v, Instant::now()) {
+                    if socket.send(send(&m)).await.is_err() {
+                        return;
+                    }
+                }
+                last = v;
+            }
+            _ = tick.tick() => {
+                // A running clock, once a second, as PicoChess's web clock.
+                if last.running.is_some()
+                    && let Some(m) = pico::clock_message(&last, Instant::now())
+                    && socket.send(send(&m)).await.is_err()
+                {
+                    return;
+                }
+            }
+            incoming = socket.recv() => {
+                // Clients don't send anything that matters; stop when they go.
+                if !matches!(incoming, Some(Ok(_))) {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+async fn pico_channel(State(w): State<Web>, Form(form): Form<HashMap<String, String>>) -> Response {
+    let change = match pico::command(&form) {
+        pico::Command::Button(b) => Change::Button(b),
+        pico::Command::Time(t) => {
+            Change::Time(t.map(|(minutes, increment_secs)| TimeControl { minutes, increment_secs }))
+        }
+        pico::Command::Unsupported(what) => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                &format!("{what}: not on this device (moves are made on the board)"),
+            );
+        }
+    };
+    let (tx, rx) = oneshot::channel();
+    if w.requests.send(Request { change, reply: tx }).is_err() {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "the device is stopping");
+    }
+    match tokio::time::timeout(Duration::from_secs(5), rx).await {
+        Ok(Ok(Ok(_))) => StatusCode::OK.into_response(),
+        Ok(Ok(Err(e))) => error(StatusCode::BAD_REQUEST, &e),
+        _ => error(StatusCode::SERVICE_UNAVAILABLE, "the device didn't answer"),
+    }
+}
+
+async fn pico_dgt(State(w): State<Web>, Query(q): Query<HashMap<String, String>>) -> Response {
+    match q.get("action").map(String::as_str) {
+        Some("get_last_move") => Json(pico::last_move(&w.view.borrow())).into_response(),
+        _ => StatusCode::OK.into_response(),
+    }
+}
+
+async fn pico_info(State(w): State<Web>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let v = w.view.borrow().clone();
+    match q.get("action").map(String::as_str) {
+        Some("get_headers") => Json(pico::headers(&v)).into_response(),
+        Some("get_clock_text") => {
+            pico::clock_text(&v, Instant::now()).unwrap_or_default().into_response()
+        }
+        Some("get_system_info") => {
+            Json(json!({"version": concat!("open-chess ", env!("CARGO_PKG_VERSION")), "pending_engine_move": v.awaiting_board}))
+                .into_response()
+        }
+        Some("get_ip_info") => Json(json!({})).into_response(),
+        _ => StatusCode::OK.into_response(),
+    }
 }
 
 // ── the app's files ──

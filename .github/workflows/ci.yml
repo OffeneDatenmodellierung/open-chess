@@ -54,6 +54,28 @@ jobs:
           CC_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-gcc
           AR_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-ar
 
+  # The device runtime on macOS and Windows (Bluetooth through btleplug,
+  # COM ports on Windows).
+  desktop:
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy -p open-chess-device --all-targets --locked
+      - run: cargo test -p open-chess-device --locked
+
   # Everything, the server's end-to-end tests included (two replicas on a
   # real Postgres, fair play with Stockfish).
   test:

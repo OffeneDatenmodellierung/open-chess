@@ -180,6 +180,60 @@ and `--listen` shows the game in the app too. The Board API allows rapid,
 classical and correspondence games (and blitz on lichess.org for some
 accounts), not bullet.
 
+**PicoChess's web API.** With `--listen`, the device also answers the
+API PicoChess v4's web server has, so tools written for PicoChess work
+with it: the `/event` websocket (`Game`, `Fen` with `user`, `computer` or
+`reload`, `Light` and `Clear` for the engine's move waiting on the board,
+`Clock` with PicoChess's HTML clock every second while it runs, `Header`,
+`GameEnd`), `POST /channel` (`clockbutton` and `new_time`; moves are made
+on the board, so the rest answer that), `GET /dgt?action=get_last_move` and
+`GET /info?action=get_headers|get_clock_text|get_system_info`.
+
+**Lichess's DGT page** ([lichess.org/dgt](https://lichess.org/dgt)).
+`--livechess` makes the device the board for Lichess's own DGT page, in
+place of DGT's LiveChess app, for any board it drives:
+
+```sh
+open-chess-device --board /dev/ttyACM0 --livechess      # or --centaur, --ble …
+# then open lichess.org/dgt in a browser on the same computer, and play
+```
+
+It answers LiveChess's websocket on `localhost:1982`: the page finds the
+board, follows it, and sends the moves made on it to Lichess; when the
+opponent moves, the page sends the new position, which the device plays
+on the board to be made there (lit, on boards with lights). Browsers let
+lichess.org reach a plain websocket only on `localhost`, so the browser
+must run on the computer the device runs on: the device's own screen, or a
+laptop with the board on USB or Bluetooth. (`--online` does the same
+without a browser.)
+
+**The terminal screen.** Run `open-chess-device` in a terminal without
+naming a board (or with `--tui`) and it lists the boards it finds, Bluetooth
+LE boards nearby, USB and serial ports, Chessnut boards on USB, to choose
+from with the arrow keys and Enter. Once connected it shows the board, the
+players, both clocks, the moves and what's waiting to be made on the
+board, above a log, newest first: the board, the engine, the online game,
+and every request from the app, PicoChess's tools and Lichess's DGT page
+(handy when the page doesn't connect). `b` goes back to the list, `q`
+quits, PgUp/PgDn scroll the log. All the other options work with it
+(`--online`, `--livechess`, `--listen` …).
+
+**Chessnut boards on USB.** `--usb /dev/hidraw0` (or choose it on the
+screen) plays a Chessnut Air, Air+, Pro or Go on its USB cable: the same
+messages as over Bluetooth, as HID reports, found by Chessnut's USB ids
+(those in Chessnut's EasyLink SDK). On Linux, give your user access to the
+board's `hidraw` node with a udev rule (or run as root):
+
+```
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="2d80", MODE="0660", GROUP="plugdev"
+```
+
+**macOS and Windows.** The device runs there too: DGT boards on USB
+(`/dev/cu.usbmodem…`, or `COM3`), and Bluetooth LE boards through the
+system's own Bluetooth (on a Mac a board is known by the id macOS gives it,
+which the screen shows). Chessnut boards on USB are Linux-only for now, and
+the DGT Pi clock and the Centaur are Linux by nature.
+
 ## Coming next
 
 In order; each lands in open-chess as it's ready.
@@ -189,16 +243,14 @@ In order; each lands in open-chess as it's ready.
    full clock menu comes with PicoChess compatibility (4).
 2. **The Chess lab app as the board's screen.** Done (above).
 3. **Online play from the board.** Done (above).
-4. **PicoChess compatibility.** The device answers PicoChess's web API (the
-   `/event` websocket and `/channel` commands), so PicoChess's own web page,
-   its relay and its MCP server work against it, and the `picochess.ini`
-   settings people already have carry over.
-5. **Lichess's DGT connector** ([lichess.org/dgt](https://lichess.org/dgt)):
-   the device answers the LiveChess websocket that page talks to
-   (`ws://localhost:1982/api/v1.0`), so the page works with boards LiveChess
-   doesn't drive. Browsers allow that plain websocket only to `localhost`:
-   on the device's own screen, or the runtime on the computer with the
-   browser.
+4. **PicoChess compatibility.** The web API is done (above). Still to come:
+   reading the `picochess.ini` settings people already have, and
+   PicoChess's full clock menu.
+5. **Lichess's DGT connector.** Done (above).
+6. **A terminal screen and Mac/Windows.** Done (above).
+7. **Chessnut boards over USB.** Done on Linux (above); macOS and Windows
+   next.
+8. **The Centaur's e-paper screen.**
 
 ## Devices
 
