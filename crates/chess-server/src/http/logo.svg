@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>open-chess</title>
+  <rect width="512" height="512" rx="112" fill="#121820"/>
+  <!-- an open ring (a gap at the top right, where the amber dot sits) -->
+  <path d="M 380.9 131.1 A 176 176 0 1 0 431.9 237.6" fill="none" stroke="#6FA3D6" stroke-width="34" stroke-linecap="round"/>
+  <circle cx="420" cy="170" r="17" fill="#E0A22E"/>
+  <!-- the knight, facing left -->
+  <path fill="#E6EBF0" d="M262 118 L290 150 C345 160 382 210 383 280 C384 320 372 345 360 362 L366 384 L178 384 L186 358 C205 330 240 312 262 298 C248 292 230 296 212 304 C192 314 168 312 156 296 C146 282 148 264 162 252 L226 196 C232 172 244 146 262 118 Z"/>
+  <circle cx="246" cy="214" r="13" fill="#121820"/>
+  <rect x="166" y="396" width="208" height="30" rx="10" fill="#E6EBF0"/>
+</svg>

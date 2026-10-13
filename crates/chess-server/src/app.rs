@@ -211,6 +211,11 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/app/", get(app_files::index))
         .route("/app/theme.css", get(app_files::theme))
         .route("/app/{*path}", get(app_files::file))
+        .route("/docs", get(http::docs))
+        .route("/docs/", get(http::docs))
+        .route("/docs/{guide}", get(http::docs))
+        .route("/favicon.svg", get(http::favicon))
+        .route("/favicon.ico", get(http::favicon))
         .route("/", get(http::index))
         .layer(middleware::from_fn(cors))
         .with_state(ctx.clone());

@@ -26,6 +26,49 @@ use tokio::sync::mpsc;
 
 use crate::app::Ctx;
 
+/// The open-chess logo (the Chess lab's icon, `web/chess/icon.svg`).
+pub const LOGO_SVG: &str = include_str!("logo.svg");
+
+/// The logo at `size` pixels, inline in a page.
+pub fn logo(size: u32) -> String {
+    LOGO_SVG.replacen("<svg ", &format!("<svg width=\"{size}\" height=\"{size}\" aria-hidden=\"true\" "), 1)
+}
+
+/// `GET /favicon.svg` and `/favicon.ico`: the logo (browsers take an SVG
+/// whatever the name).
+pub async fn favicon() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static("image/svg+xml")),
+            (header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=86400")),
+        ],
+        LOGO_SVG,
+    )
+        .into_response()
+}
+
+/// `GET /docs` and `/docs/{guide}`: the guides, shown in the Chess lab
+/// (`/app/#docs/…`) when it's installed, otherwise on GitHub.
+pub async fn docs(State(ctx): State<Ctx>, guide: Option<axum::extract::Path<String>>) -> Response {
+    let name = guide
+        .map(|g| g.0.trim_end_matches(".md").to_owned())
+        .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
+    let to = if ctx.cfg.app_dir.as_deref().is_some_and(|d| !d.is_empty()) {
+        let base = ctx.cfg.base_path().unwrap_or_default();
+        match name {
+            Some(n) => format!("{base}/app/#docs/{n}"),
+            None => format!("{base}/app/#docs"),
+        }
+    } else {
+        let repo = "https://github.com/OffeneDatenmodellierung/open-chess/blob/main/docs";
+        match name {
+            Some(n) => format!("{repo}/{n}.md"),
+            None => repo.to_owned(),
+        }
+    };
+    axum::response::Redirect::to(&to).into_response()
+}
+
 /// `GET /`: what this is. Browsers go to the training app when it's
 /// installed.
 pub async fn index(State(ctx): State<Ctx>, headers: axum::http::HeaderMap) -> Response {
@@ -46,6 +89,7 @@ pub async fn index(State(ctx): State<Ctx>, headers: axum::http::HeaderMap) -> Re
         "signup": ctx.cfg.signup,
         "esports": ctx.cfg.esports().is_some(),
         "app": ctx.cfg.app_dir.as_deref().is_some_and(|d| !d.is_empty()).then(|| format!("{}/app/", ctx.cfg.public_url())),
+        "docs": format!("{}/docs", ctx.cfg.public_url()),
     }))
     .into_response()
 }
@@ -96,6 +140,17 @@ mod tests {
     #[test]
     fn escapes() {
         assert_eq!(html_escape("<a href=\"x\">&'"), "&lt;a href=&quot;x&quot;&gt;&amp;&#39;");
+    }
+
+    #[test]
+    fn logo_is_the_apps_icon() {
+        // In the repository (not in a published crate) the copy here must
+        // match the Chess lab's icon.
+        let app = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/chess/icon.svg");
+        if let Ok(icon) = std::fs::read_to_string(app) {
+            assert_eq!(icon, LOGO_SVG, "copy web/chess/icon.svg to crates/chess-server/src/http/logo.svg");
+        }
+        assert!(logo(36).starts_with("<svg width=\"36\" height=\"36\""));
     }
 
     #[test]

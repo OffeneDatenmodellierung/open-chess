@@ -1570,6 +1570,20 @@ async fn serves_the_training_app() {
     let r = http.get(format!("{base}/app/docs/api.md")).send().await.unwrap();
     assert_eq!(r.headers()["content-type"], "text/markdown; charset=utf-8");
 
+    // The guides open in the app; the logo is the favicon and on the pages.
+    for (path, to) in
+        [("/docs", "/app/#docs"), ("/docs/", "/app/#docs"), ("/docs/boards.md", "/app/#docs/boards")]
+    {
+        let r = http.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(r.status(), 303, "{path}");
+        assert!(r.headers()["location"].to_str().unwrap().ends_with(to), "{path}");
+    }
+    let r = http.get(format!("{base}/favicon.ico")).send().await.unwrap();
+    assert_eq!(r.headers()["content-type"], "image/svg+xml");
+    assert!(r.text().await.unwrap().contains("<svg"));
+    let login = http.get(format!("{base}/login")).send().await.unwrap().text().await.unwrap();
+    assert!(login.contains("rel=icon") && login.contains("<svg width=\"36\""));
+
     for bad in ["/app/missing.js", "/app/..%2f..%2fetc%2fpasswd", "/app/.hidden"] {
         assert_eq!(http.get(format!("{base}{bad}")).send().await.unwrap().status(), 404, "{bad}");
     }

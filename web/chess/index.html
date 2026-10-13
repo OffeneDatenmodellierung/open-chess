@@ -10,6 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="icon" href="icon-192.png" type="image/png" sizes="192x192">
   <link rel="preload" href="fonts/atkinson-hyperlegible-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
   <!-- The deployment's look (an open-chess server's CHESS_APP_THEME); empty by default. -->
@@ -40,13 +41,16 @@
 </head>
 <body>
   <header class="top">
-    <h1>Chess lab</h1>
+    <h1><a href="#" class="brand"><img src="icon.svg" alt="" width="28" height="28"><span>Chess lab</span></a></h1>
     <div class="modes" role="radiogroup" aria-label="Who you play">
       <button type="button" role="radio" data-mode="bot" aria-checked="true">Bot</button>
       <button type="button" role="radio" data-mode="local" aria-checked="false">Two players</button>
       <button type="button" role="radio" data-mode="analyse" aria-checked="false">Analyse</button>
       <button type="button" role="radio" data-mode="online" aria-checked="false">Online</button>
     </div>
+    <a class="icon-btn" id="openDocs" href="#docs" aria-label="Guides" title="Guides" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5C6.5 4.5 9.5 4.5 12 6c2.5-1.5 5.5-1.5 8-.5V19c-2.5-1-5.5-1-8 .5-2.5-1.5-5.5-1.5-8-.5z"/><path d="M12 6v13.5"/></svg>
+    </a>
     <button type="button" class="icon-btn" id="openSettings" aria-label="Settings">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
     </button>
@@ -169,6 +173,8 @@
     </section>
   </main>
 
+  <section class="docs" id="docsView" aria-label="Guides" hidden></section>
+
   <dialog id="settings" aria-labelledby="settingsTitle">
     <form method="dialog">
       <h2 id="settingsTitle">Settings</h2>
@@ -214,5 +220,6 @@
 
   <noscript>Chess lab needs JavaScript to run.</noscript>
   <script type="module" src="app.js"></script>
+  <script type="module">import { startDocs } from "./docs.js"; startDocs();</script>
 </body>
 </html>
