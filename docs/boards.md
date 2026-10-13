@@ -15,14 +15,57 @@ Windows), or build it: `cargo build --release -p open-chess-device`.
 Run `open-chess-device` in a terminal without naming a board (or with
 `--tui`): it lists the boards it finds (Bluetooth LE boards nearby, USB and
 serial ports, Chessnut boards on USB) to choose from with the arrow keys and
-Enter. Once connected it shows the board, the players, both clocks, the
-moves and what's waiting to be made on the board, above a log, newest
-first: the board, the engine, the online game, and every request from the
-app, PicoChess's tools and Lichess's DGT page (handy when the page doesn't
-connect). `b` goes back to the list, `r` scans again, `q` quits; the
-mouse wheel, ↑/↓ (while playing), PgUp/PgDn and Home scroll the log. To
-select text with the mouse, hold Option (macOS) or Shift. Every other
-option works with it.
+Enter. While it connects, it asks what to play (↑/↓ move between the
+settings, ←/→ change one, type to fill in a name, token or address, Enter
+starts, Esc goes back to the boards):
+
+* **Play the computer**: open-chess's engine at a level (1–8), your colour,
+  the clock and your name. This is PicoChess's kind of game: with
+  `--picochess-ini` or `--uci` the computer is the engine they name, with
+  their book and options.
+* **Two players on this board**: both names and the clock. The board
+  follows both sides' moves; nobody's moves are made for them.
+* **Lichess** or **an open-chess server**: the account's API token (and the
+  server's address). The game can be a new one (wait for one started on
+  the site or the app, challenge a player, or play the site's computer at a
+  level), or, once the token is in, one the site has open for you: a game
+  still in progress (to go back to after a disconnect) or a challenge
+  waiting for you to accept. ←/→ on **Game** goes through them. Only that
+  game is played on the board; others on the account are left alone.
+* **The board for Lichess's DGT page**: see below.
+
+The names, the level, the clock, the server and the tokens are remembered
+for next time in `device.json` in the device's folder (`$OPEN_CHESS_HOME`,
+or `~/.config/open-chess`; `%APPDATA%\open-chess` on Windows), readable by
+you only.
+
+Then it shows the board, the players and their clocks, the opening's name
+and every move in words beside its notation, newest first ("2… Qh4#  Queen
+from d8 to h4, checkmate"), above the log, newest first: the board, the
+engine, the online game, and every request from the app, PicoChess's tools
+and Lichess's DGT page (handy when the page doesn't connect). When the game
+ends it says who won and how, and each player's rating before it and what
+the game did to it. Set the pieces up again for another game of the same
+kind, or press `n` to choose the next game on the same board.
+
+`b` goes back to the list of boards, `r` scans again, `q` quits. The mouse
+wheel scrolls the moves (over the top half) or the log (below); Tab picks
+which one ↑/↓ scroll; PgUp/PgDn scroll the log and Home goes back to the
+newest of both. To select text with the mouse, hold Option (macOS) or
+Shift. Every other option works with it.
+
+**Ratings.** Games against open-chess's engine and between two people on
+the board are rated as FIDE rates: Elo, the expected score from the rating
+difference (capped at 400), K = 40 for a player's first 30 games, 10 once
+they've reached 2400, 20 otherwise, and a list each for blitz (up to 10
+minutes, counting 60 moves' increments), rapid (under 60) and classical
+(the rest, and games without a clock). Everyone starts at 1500; the
+engine's levels are fixed at 800 for level 1 up to 2200 for level 8 (as on
+the open-chess server). They're kept in `ratings.json` in the device's
+folder. Games against a UCI engine aren't rated (its strength isn't known),
+nor games of fewer than two moves. Online, the site's own ratings are
+shown: each player's rating and the game's change once the site has rated
+it.
 
 When a board doesn't behave, run with `--debug` (or `OPEN_CHESS_DEBUG=1`):
 the log adds every Bluetooth message to and from the board and what the

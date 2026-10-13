@@ -395,6 +395,18 @@ async fn the_computer_plays_at_a_level() {
         .await
         .unwrap();
     assert_eq!(r.status(), 400);
+    // The client's call (the device's "the site's computer"), and the game
+    // among those in progress (the device's "resume").
+    let req = ChallengeRequest {
+        color: Some("black".into()),
+        limit_secs: Some(600),
+        increment_secs: Some(5),
+        ..Default::default()
+    };
+    let second = me.challenge_ai(3, &req).await.unwrap();
+    let playing = me.playing().await.unwrap().now_playing;
+    let g = playing.iter().find(|g| g.game_id == second).expect("listed as in progress");
+    assert_eq!((g.color, g.opponent.username.as_str()), (Side::Black, "ai-level-3"));
     env.teardown().await;
 }
 

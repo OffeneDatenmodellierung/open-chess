@@ -175,11 +175,14 @@ pub fn serve(
     listener.set_nonblocking(true)?;
     let local = listener.local_addr()?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    // Served until the board stops feeding it (the game ends).
+    let mut done = feed.clone();
     let app = Router::new().route("/api/v1.0", get(upgrade)).with_state(Shared { feed, setups, log });
     std::thread::Builder::new().name("livechess".into()).spawn(move || {
         rt.block_on(async move {
             if let Ok(l) = tokio::net::TcpListener::from_std(listener) {
-                let _ = axum::serve(l, app).await;
+                let stopped = async move { while done.changed().await.is_ok() {} };
+                let _ = axum::serve(l, app).with_graceful_shutdown(stopped).await;
             }
         });
     })?;

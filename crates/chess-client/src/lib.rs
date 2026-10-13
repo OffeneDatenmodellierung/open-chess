@@ -271,7 +271,28 @@ impl Client {
     // ─── challenges ───
 
     pub async fn challenge(&self, username: &str, c: &ChallengeRequest) -> Result<Challenge> {
-        let mut form: Vec<(&str, String)> = vec![("rated", c.rated.to_string())];
+        let form = Self::challenge_form(c, vec![("rated", c.rated.to_string())]);
+        let path = format!("/api/challenge/{}", urlencoding::encode(username));
+        Self::json(self.req(reqwest::Method::POST, &path).form(&form)).await
+    }
+
+    /// Play the site's computer at `level` (1–8): the game starts at once
+    /// and comes on the event stream. Lichess and the open-chess server
+    /// both answer this; `rated` and `accept_by_token` don't apply. Returns
+    /// the game's id.
+    pub async fn challenge_ai(&self, level: u8, c: &ChallengeRequest) -> Result<String> {
+        let form = Self::challenge_form(c, vec![("level", level.to_string())]);
+        let v: Value = Self::json(self.req(reqwest::Method::POST, "/api/challenge/ai").form(&form)).await?;
+        v.get("id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| Error::Api { status: 200, message: "no game id in the answer".into() })
+    }
+
+    fn challenge_form(
+        c: &ChallengeRequest,
+        mut form: Vec<(&'static str, String)>,
+    ) -> Vec<(&'static str, String)> {
         if let Some(l) = c.limit_secs {
             form.push(("clock.limit", l.to_string()));
         }
@@ -288,8 +309,7 @@ impl Client {
         if let Some(t) = &c.accept_by_token {
             form.push(("acceptByToken", t.clone()));
         }
-        let path = format!("/api/challenge/{}", urlencoding::encode(username));
-        Self::json(self.req(reqwest::Method::POST, &path).form(&form)).await
+        form
     }
 
     pub async fn challenges(&self) -> Result<ChallengeList> {

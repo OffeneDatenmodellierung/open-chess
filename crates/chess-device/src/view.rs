@@ -17,6 +17,26 @@ use serde_json::{Value, json};
 use crate::board::Board;
 use crate::controller::{Controller, TimeControl};
 
+fn colour(side: Side) -> &'static str {
+    if side == Side::White { "White" } else { "Black" }
+}
+
+/// How a game ended, in words: "by checkmate", "(stalemate)".
+fn how(status: Status, winner: Option<Side>) -> String {
+    let loser = winner.map_or("", |w| colour(w.opposite()));
+    match status {
+        Status::Mate => "by checkmate".into(),
+        Status::Resign => format!("({loser} resigned)"),
+        Status::Outoftime => format!("on time ({loser}'s flag fell)"),
+        Status::Timeout => format!("({loser} left)"),
+        Status::Stalemate => "(stalemate)".into(),
+        Status::Draw => "(agreed, or by rule)".into(),
+        Status::InsufficientMaterialClaim => "(insufficient material)".into(),
+        Status::Aborted => "(aborted)".into(),
+        s => format!("({})", s.name()),
+    }
+}
+
 /// The account the person at the board is.
 pub const PLAYER_ID: &str = "board";
 const ENGINE_ID: &str = "engine";
@@ -55,6 +75,12 @@ pub struct View {
     pub paused: bool,
     /// What the clock's menu shows, while it's open.
     pub menu: Option<String>,
+    /// The players' names when they're people on the board (two players,
+    /// or someone named playing the engine): White's, Black's.
+    pub names: Option<[String; 2]>,
+    /// Once the game is over: each player's rating and what the game did
+    /// to it (White's, Black's).
+    pub ratings: Option<[crate::ratings::PlayerResult; 2]>,
     pub at: Instant,
 }
 
@@ -97,6 +123,8 @@ impl View {
             running: c.running(),
             paused: c.paused(),
             menu: c.menu().map(str::to_owned),
+            names: None,
+            ratings: None,
             at: now,
         }
     }
@@ -137,6 +165,8 @@ impl View {
             running: live.and_then(crate::online::Live::running),
             paused: false,
             menu: None,
+            names: None,
+            ratings: None,
             at: now,
         }
     }
@@ -165,6 +195,8 @@ impl View {
             running: None,
             paused: false,
             menu: None,
+            names: None,
+            ratings: None,
             at: now,
         }
     }
@@ -191,6 +223,8 @@ impl View {
             running: None,
             paused: false,
             menu: None,
+            names: None,
+            ratings: None,
             at: Instant::now(),
         }
     }
@@ -200,6 +234,31 @@ impl View {
         chess_core::Game::from_moves(self.initial_fen.as_deref(), &self.moves.join(" "))
             .map(|g| g.sans().to_vec())
             .unwrap_or_default()
+    }
+
+    /// The opening's name and ECO code, for a game from the start.
+    pub fn opening_name(&self) -> Option<String> {
+        if self.initial_fen.is_some() || self.moves.is_empty() {
+            return None;
+        }
+        chess_analysis::opening(&self.moves).map(|o| format!("{} ({})", o.name, o.eco))
+    }
+
+    /// Each move: its number ("12." or "12…"), its SAN and what it means in
+    /// words ("Knight from f3 takes the pawn on e5, giving check"), oldest
+    /// first.
+    pub fn moves_in_words(&self) -> Vec<(String, String, String)> {
+        let Ok(mut g) = chess_core::Game::new(self.initial_fen.as_deref()) else { return Vec::new() };
+        let mut out = Vec::new();
+        for uci in &self.moves {
+            let fen = g.fen();
+            let full = fen.split(' ').nth(5).unwrap_or("1");
+            let number = if g.turn() == Side::White { format!("{full}.") } else { format!("{full}…") };
+            let words = chess_analysis::explain_san(g.board(), uci);
+            let Ok(played) = g.play_uci(uci) else { break };
+            out.push((number, played.san, words.map(|w| w.text).unwrap_or_default()));
+        }
+        out
     }
 
     /// The moves, numbered, the latest last.
@@ -227,20 +286,28 @@ impl View {
                 format!("make {} on the board", self.sans().last().cloned().unwrap_or_default())
             }
             Status::Started if self.thinking => "the engine is thinking".to_owned(),
-            Status::Started if self.turn == self.player => "your move".to_owned(),
-            Status::Started => {
-                format!("{} to move", if self.turn == Side::White { "White" } else { "Black" })
+            Status::Started if self.names.is_some() => {
+                format!("{} to move ({})", self.name_of(self.turn), colour(self.turn))
             }
+            Status::Started if self.turn == self.player => "your move".to_owned(),
+            Status::Started => format!("{} to move", colour(self.turn)),
             s => format!(
-                "game over: {} ({})",
+                "game over: {} {}",
                 match self.winner {
-                    Some(Side::White) => "1-0",
-                    Some(Side::Black) => "0-1",
-                    None => "1/2-1/2",
+                    Some(w) => format!("{} wins", colour(w)),
+                    None => "a draw".to_owned(),
                 },
-                s.name()
+                how(s, self.winner)
             ),
         }
+    }
+
+    /// Who plays `side`: a name, "you", or the engine.
+    pub fn name_of(&self, side: Side) -> String {
+        if let Some(n) = &self.names {
+            return n[side.index()].clone();
+        }
+        if side == self.player { "you".to_owned() } else { self.opponent() }
     }
 
     /// The opponent's name.
