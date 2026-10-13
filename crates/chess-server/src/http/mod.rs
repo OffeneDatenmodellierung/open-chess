@@ -37,6 +37,8 @@ pub async fn index(State(ctx): State<Ctx>, headers: axum::http::HeaderMap) -> Re
         "api": "Lichess-compatible: Board, Bot, Challenge, OAuth (PKCE), event and game streams, game export",
         "url": ctx.cfg.public_url(),
         "version": env!("CARGO_PKG_VERSION"),
+        // Whether the OAuth page signs people in (through the host site).
+        "login": ctx.cfg.esports_login,
         "app": ctx.cfg.app_dir.as_deref().is_some_and(|d| !d.is_empty()).then(|| format!("{}/app/", ctx.cfg.public_url())),
     }))
     .into_response()

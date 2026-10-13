@@ -69,6 +69,8 @@ type Cache = Arc<Mutex<HashMap<String, (Option<Identity>, Instant)>>>;
 pub struct Auth {
     db: Db,
     cache: Cache,
+    /// The host site's sign-in (its session cookie) is accepted.
+    login: bool,
 }
 
 pub fn bearer(h: &HeaderMap) -> Option<&str> {
@@ -89,8 +91,9 @@ pub fn cookie(h: &HeaderMap, name: &str) -> Option<String> {
 }
 
 impl Auth {
-    pub fn new(db: Db) -> Auth {
-        Auth { db, cache: Arc::default() }
+    /// `login`: accept the host site's session cookie ([`Auth::session`]).
+    pub fn new(db: Db, login: bool) -> Auth {
+        Auth { db, cache: Arc::default(), login }
     }
 
     /// The identity behind a token, if it is valid now.
@@ -154,6 +157,9 @@ impl Auth {
     /// The player signed in to the site with this session cookie (works
     /// when the chess server shares the site's origin, e.g. under /chess).
     pub async fn session(&self, h: &HeaderMap) -> Result<Option<i64>> {
+        if !self.login {
+            return Ok(None);
+        }
         let Some(token) = cookie(h, SESSION_COOKIE) else {
             return Ok(None);
         };

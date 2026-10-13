@@ -73,7 +73,9 @@ and both clocks. It runs a few plies behind live games
 
 The app (`/app/` on the server) plays online on either: **Online › Lichess**
 signs in to lichess.org with OAuth and plays through its Board API; **Online ›
-<your site>** does the same against your server. Its training help (engine
+<your site>** does the same against your server (or takes an API token,
+when the server has no browser sign-in: `ESPORTS_LOGIN` in
+[api.md](api.md#accounts-tokens-and-oauth)). Its training help (engine
 lines, move explanations) is switched off during online games on Lichess,
 where using it would be cheating; on your own server it can be used and is
 declared (`/api/board/game/{id}/assist`), and fair-play screening takes
@@ -84,16 +86,18 @@ account of it.
 [lichess.org/dgt](https://lichess.org/dgt) plays your Lichess games on a DGT
 board. It is a browser page that talks to DGT's LiveChess program on your
 computer (a websocket at `ws://localhost:1982/api/v1.0`) and to Lichess's
-Board API. Two ways open-chess fits in, both in progress (see
+Board API. open-chess fits in two ways, both working today (details in
 [boards.md](boards.md)):
 
-* **A board on open-chess instead of LiveChess.** open-chess's board runtime
-  will answer on the same local websocket, so the Lichess page works with
-  boards LiveChess doesn't handle (a DGT Pi, a Centaur). Browsers only allow
-  that plain websocket to `localhost`, so it runs on the machine with the
-  browser, or on the device itself with a screen.
-* **A board straight to a server.** The board runtime plays through the
-  Board API itself, on lichess.org or on your server, with no browser at all.
+* **A board on open-chess instead of LiveChess:**
+  `open-chess-device --board … --livechess` answers on that same local
+  websocket, so the Lichess page works with every board open-chess drives,
+  including ones LiveChess doesn't (a DGT Pi, a Centaur, Chessnut boards).
+  Browsers only allow that plain websocket to `localhost`, so run it on the
+  computer with the browser (or give `--livechess` another address).
+* **A board straight to a server:** `open-chess-device --online` plays your
+  games through the Board API itself, on lichess.org or on your server, with
+  no browser at all.
 
 ## Differences from Lichess
 

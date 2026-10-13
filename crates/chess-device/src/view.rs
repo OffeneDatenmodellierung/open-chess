@@ -439,6 +439,8 @@ impl View {
             "awaitingBoard": self.awaiting_board,
             "paused": self.paused,
             "status": self.status,
+            // What the clock's menu shows, while it's open.
+            "menu": self.menu,
         })
     }
 }

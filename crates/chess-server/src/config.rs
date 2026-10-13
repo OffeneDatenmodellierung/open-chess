@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use clap::Args;
 
 #[derive(Debug, Clone, Args)]
+#[allow(clippy::struct_excessive_bools)] // settings switches
 pub struct Config {
     /// Postgres URL: the site's Neon database. A pooled (`-pooler`) host is
     /// fine; notifications use the direct host automatically.
@@ -39,6 +40,21 @@ pub struct Config {
     /// first" links on the OAuth page.
     #[arg(long, env = "ESPORTS_PUBLIC_URL", default_value = "http://localhost:8080")]
     pub site_url: String,
+
+    /// Sign in through the host site (esports-lab): the OAuth page accepts
+    /// the site's session cookie and links to its sign-in. Off by default,
+    /// so a server without that site offers no browser sign-in; API
+    /// tokens (the site's, and `open-chess bot create`) work either way.
+    #[arg(
+        long,
+        env = "ESPORTS_LOGIN",
+        default_value_t = false,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        action = clap::ArgAction::Set,
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub esports_login: bool,
 
     /// What players know the site as: on the OAuth page, in PGN event
     /// names and in `GET /` (which the training app shows).

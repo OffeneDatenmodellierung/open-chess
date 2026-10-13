@@ -129,6 +129,21 @@ pub async fn authorize(
                 .into_response());
         }
     };
+    if !ctx.cfg.esports_login {
+        return Ok((
+            StatusCode::FORBIDDEN,
+            page(
+                "No sign-in here",
+                &format!(
+                    "<p><code>{}</code> asked to sign in, but this chess server doesn't offer browser \
+                     sign-in. Use an API token instead (a Lichess client takes it as a personal \
+                     token).</p>",
+                    html_escape(&req.client_id)
+                ),
+            ),
+        )
+            .into_response());
+    }
     let Some(player) = ctx.auth.session(&h).await? else {
         let site = html_escape(&ctx.cfg.site_url);
         let name = html_escape(&ctx.cfg.site_name);

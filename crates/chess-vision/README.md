@@ -70,4 +70,4 @@ wasm-bindgen --target web --no-typescript --out-dir web/chess/pkg \
   target/wasm32-unknown-unknown/release/open_chess_vision.wasm
 ```
 
-(The CI `chess-pwa` job does this.)
+(CI's `app` job does this, through `scripts/build-chess-app.sh`.)

@@ -68,6 +68,12 @@ struct Args {
     epochs: usize,
     #[arg(long, default_value_t = 16)]
     batch: usize,
+    /// Photos per pass, when a whole batch doesn't fit in memory (Metal's
+    /// "Insufficient Memory" once the encoder unfreezes): gradients are
+    /// added over the passes, so training is the same, only slower.
+    /// 0: the whole batch at once.
+    #[arg(long, default_value_t = 0)]
+    micro_batch: usize,
     #[arg(long, default_value_t = 1.4e-4)]
     lr_decoder: f64,
     #[arg(long, default_value_t = 1.4e-5)]
@@ -206,6 +212,7 @@ fn main() -> Result<()> {
     let settings = train::Settings {
         epochs: a.epochs,
         batch: a.batch,
+        micro_batch: a.micro_batch,
         lr_decoder: a.lr_decoder,
         lr_encoder: a.lr_encoder,
         weight_decay: a.weight_decay,

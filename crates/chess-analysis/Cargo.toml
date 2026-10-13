@@ -1,15 +1,16 @@
 [package]
 name = "open-chess-analysis"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Pure-Rust chess search and training analysis: evaluation, multi-line search, win/draw/loss odds, plain-English move explanations, tactical motifs and opening names. No I/O, builds for wasm32"
 license = "MIT OR Apache-2.0"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-chess-core = { package = "open-chess-core", path = "../chess-core" }
+chess-core = { workspace = true }
 cozy-chess = "0.3.4"
 serde = { version = "1.0.229", features = ["derive"] }
 

@@ -16,8 +16,9 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
 
 1. In `wrangler.jsonc`, set the `routes` host (the chess server's own
    host, e.g. `chess.example.com`; its zone must be in this Cloudflare
-   account), `CHESS_PUBLIC_URL` to match, `ESPORTS_PUBLIC_URL` and
-   `CHESS_INSTANCES`.
+   account), `CHESS_PUBLIC_URL` to match, `ESPORTS_PUBLIC_URL`,
+   `ESPORTS_LOGIN` (`"true"` to let people sign in to apps through that
+   site), `CHESS_SITE_NAME` and `CHESS_INSTANCES`.
 2. Set the secrets:
 
    ```sh
@@ -67,7 +68,12 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
 ## Notes
 
 * `https://chess.example.com/` answers with a short JSON description of
-  the server; everything else is under `/api`, as on Lichess.
+  the server (browsers go to the app at `/app/`); the API is under `/api`,
+  as on Lichess, with `/oauth` and `/game/export/{id}` beside it
+  ([docs/api.md](../../docs/api.md)).
+* The image is built from the repository's `Dockerfile`, which compiles
+  nothing: it downloads the GitHub release for the checkout's version
+  (`Cargo.toml`), so deploy a commit that has a release (a `v*` tag).
 * The API containers sleep after 30 minutes without requests, and the next
   request wakes one in a few seconds. Open game streams count as requests.
 * The fair-play worker screens the queue and sleeps 20 minutes after the

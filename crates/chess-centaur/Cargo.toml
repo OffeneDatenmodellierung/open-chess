@@ -1,16 +1,17 @@
 [package]
 name = "open-chess-centaur"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "The DGT Centaur's board controller (serial protocol, LEDs, buttons) and following a game from occupancy alone"
 license = "GPL-3.0-or-later"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-chess-core = { package = "open-chess-core", path = "../chess-core" }
-chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt" }
+chess-core = { workspace = true }
+chess-dgt = { workspace = true }
 embedded-graphics = "0.8.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]

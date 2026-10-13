@@ -1,12 +1,13 @@
 [package]
 name = "open-chess-core"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Chess rules: legal moves, SAN, draw rules, Fischer clocks, PGN and Glicko-2, on the MIT cozy-chess move generator"
 license = "MIT OR Apache-2.0"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 cozy-chess = "0.3.4"

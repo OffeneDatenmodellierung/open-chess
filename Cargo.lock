@@ -3340,6 +3340,7 @@ name = "open-chess-vision"
 version = "0.1.0"
 dependencies = [
  "candle-core",
+ "candle-metal-kernels",
  "candle-nn",
  "cozy-chess",
  "getrandom 0.3.4",

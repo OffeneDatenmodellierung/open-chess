@@ -19,6 +19,8 @@
     "CHESS_PUBLIC_URL": "https://chess.example.com",
     // The site, for "sign in first" links.
     "ESPORTS_PUBLIC_URL": "https://example.com",
+    // "true": people sign in to apps (OAuth) through the site above.
+    "ESPORTS_LOGIN": "false",
     "CHESS_SITE_NAME": "open-chess",
     // "false" stops the cron waking the fair-play worker.
     "ANALYSE_ENABLED": "true",
@@ -28,7 +30,8 @@
   "containers": [
     {
       "class_name": "Chess",
-      // One image for both roles, built from the repository root.
+      // One image for both roles, from the repository root: the Dockerfile
+      // fetches the release binaries for Cargo.toml's version.
       "image": "../../Dockerfile",
       "image_build_context": "../..",
       // 1/4 vCPU, 1 GiB: plenty for the API; add instances for more players.

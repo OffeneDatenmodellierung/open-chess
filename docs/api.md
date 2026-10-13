@@ -10,22 +10,44 @@ endpoints open-chess adds. For using it with Lichess tools see
 Requests authenticate with `Authorization: Bearer <token>`. Scopes are
 Lichess's (below). Streams are NDJSON (one JSON object per line, a blank line
 every few seconds to keep the connection open); read them with `curl -N`, or
-`fetch()` and a line reader in a browser.
+`fetch()` and a line reader in a browser. As on Lichess, any origin may call
+the API from a browser (`Access-Control-Allow-Origin: *`; preflights allow
+`GET, POST, DELETE` with `Authorization` and `Content-Type`): tokens, not
+cookies, carry who you are.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" https://chess.example.com/api/account
+curl -N -H "Authorization: Bearer $TOKEN" https://chess.example.com/api/stream/event
+curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.increment=3 \
+  https://chess.example.com/api/challenge/anna
+```
 
 ## Endpoints
 
 | Area | Endpoints |
 |---|---|
 | OAuth | `GET/POST /oauth` (consent page), `POST /api/token`, `DELETE /api/token`, `POST /api/token/test` |
-| Account | `GET /api/account`, `/api/account/email`, `/api/account/playing`, `/api/user/{username}` |
-| Bots | `POST /api/bot/account/upgrade`, `GET /api/bot/online` |
+| Account | `GET /api/account`, `/api/account/email`, `/api/account/playing` (`nb`), `/api/user/{username}` |
+| Bots | `POST /api/bot/account/upgrade`, `GET /api/bot/online` (`nb`) |
 | Streams | `GET /api/stream/event`, `/api/board/game/stream/{id}`, `/api/bot/game/stream/{id}`, `/api/stream/game/{id}` (see [Live games](#live-games)) |
-| Challenges | `POST /api/challenge/{username}` (with `keepAliveStream`, `rules` and `acceptByToken`), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline`, `…/cancel` |
-| Playing | `/api/board/game/{id}/…` and `/api/bot/game/{id}/…`: `move/{uci}` (`offeringDraw`), `resign`, `abort`, `draw/{yes\|no}`, `takeback/{yes\|no}`, `claim-victory`, `claim-draw`, `chat` (GET and POST) |
+| Challenges | `POST /api/challenge/{username}` (with `keepAliveStream`, `rules` and `acceptByToken`), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline` (`reason`), `…/cancel` |
+| Playing | `/api/board/game/{id}/…` and `/api/bot/game/{id}/…`: `move/{uci}` (`offeringDraw`), `resign`, `abort`, `draw/{yes\|no}`, `takeback/{yes\|no}`, `claim-victory`, `claim-draw`, `chat` (GET, and POST with `room` and `text`, up to 140 characters) |
 | Games | `GET /game/export/{id}` and `/api/games/export/{id}` (PGN, or JSON with `Accept: application/json`; `pgnInJson`, `clocks`, `moves`) |
-| Fair play (ours) | `GET /api/fairplay/queue`, `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` (scope `chess:fairplay`) |
+| Fair play (ours) | `GET /api/fairplay/queue` (`limit`, default 50, up to 500; `all=true` for reviewed games too), `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` (scope `chess:fairplay`) |
 | Training app (ours) | see [below](#training-app-endpoints) |
-| Server | `GET /` (what this is: `name`, `site`, `url`, `version`, `app`; browsers are sent to the app), `/app/` (the Chess lab app), `/healthz`, `/metrics` (Prometheus, on the metrics port) |
+| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there) |
+| Operations (the metrics port, `CHESS_METRICS_BIND`) | `GET /metrics` (Prometheus), `/healthz` (the process is up), `/readyz` (it can reach Postgres) |
+
+**`GET /`** answers what the server is, for the app and for tools:
+
+```json
+{"name": "open-chess", "site": "open-chess", "api": "Lichess-compatible: …",
+ "url": "https://chess.example.com", "version": "0.1.0",
+ "login": false, "app": "https://chess.example.com/app/"}
+```
+
+`login` is whether the OAuth page signs people in (`ESPORTS_LOGIN`, below);
+`app` is `null` without the app.
 
 **Conformance.** `crates/chess-conformance` drives a running server through a
 full game, challenges and streams, and validates every response against the
@@ -40,12 +62,14 @@ cargo run -p open-chess-conformance -- --base http://127.0.0.1:8090 \
 An unmodified [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot)
 connects, accepts challenges, chats and plays.
 
-**Not implemented** (answered with Lichess's errors): variants other than
-standard and from-position, correspondence games, seeks and the lobby,
-tournaments, `POST /api/challenge/ai`, studies, puzzles, and the streams of
-several games at once (`/api/stream/games-by-users`, `/api/stream/games/{id}`)
-and TV. Rated games from a position, and rated unlimited games, are refused
-as on Lichess.
+**Not implemented:** variants other than standard and from-position,
+correspondence games, seeks and the lobby, tournaments, the Lichess AI
+(`POST /api/challenge/ai` is taken as a challenge to a player named `ai`),
+studies, puzzles, the streams of several games at once
+(`/api/stream/games-by-users`, `/api/stream/games/{id}`) and TV. Paths that
+don't exist get an empty 404; unsupported options on paths that do (a
+variant, a correspondence clock) get Lichess's JSON errors. Rated games from
+a position, and rated unlimited games, are refused as on Lichess.
 
 **Differences worth knowing**
 * `acceptByToken` (start a game without either player clicking: the
@@ -102,11 +126,24 @@ name. Bearer tokens are the site's API tokens, with Lichess's scope names:
 A revoked token stops working within 15 seconds (tokens are cached that long).
 
 **OAuth** works as on Lichess: no client registration, PKCE S256, one-year
-tokens. The consent page recognises whoever is signed in to the site through
-its session cookie: on a host of its own (`https://chess.example.com`), set
-the site's session cookie domain to the shared parent (`example.com`); under
-the site's origin (`CHESS_PUBLIC_URL=https://<site>/chess`) nothing extra is
-needed. Tokens it issues are site tokens named `OAuth: <client_id>`.
+tokens. It needs a site to sign in to, so it's off unless
+`ESPORTS_LOGIN=true`: then the consent page (`GET /oauth`) recognises whoever
+is signed in to the host site through its session cookie and links to the
+site (`ESPORTS_PUBLIC_URL`) for anyone who isn't. On a host of its own
+(`https://chess.example.com`), set the site's session cookie domain to the
+shared parent (`example.com`); under the site's origin
+(`CHESS_PUBLIC_URL=https://<site>/chess`) nothing extra is needed. Tokens it
+issues are site tokens named `OAuth: <client_id>`. With `ESPORTS_LOGIN` off
+(the default) the consent page answers 403 "No sign-in here", `GET /` says
+`"login": false`, and the Chess lab app asks for a token instead; API tokens
+(the site's, and bots') work either way.
+
+The flow, for an app at `https://app.example/`:
+
+1. Send the browser to `GET /oauth?response_type=code&client_id=my-app&redirect_uri=https://app.example/&code_challenge_method=S256&code_challenge=<S256 of a random verifier>&scope=board:play&state=<random>`.
+2. The player approves; the browser comes back to `redirect_uri?code=…&state=…`.
+3. `POST /api/token` (form: `grant_type=authorization_code`, `code`, `code_verifier`, `redirect_uri`, `client_id`) answers `{"token_type":"Bearer","access_token":"…","expires_in":…}`.
+4. `DELETE /api/token` with the token revokes it; `POST /api/token/test` (a comma-separated list of tokens as the body) says which are valid.
 
 **Bots.** `open-chess bot create --name stockfish-1800` makes a bot: a site
 player, a bot account and a token (printed once). Bots play only through the
@@ -122,11 +159,11 @@ came from, so existing app installs keep working.
 | Endpoint | |
 |---|---|
 | `POST /api/board/game/{id}/assist` | The app's engine help went on (`on=true`) or off during your game. Ground truth for training fair-play screening; screening never relies on it. |
-| `GET /api/esl/position?fen=` | The position dictionary: the deepest stored evaluation of a position (best move, score, depth, how many screened games and confirmed photos reached it, win/draw/loss odds), `queued` when a confirmed photo's position is waiting for the worker, and `hint`: the deepest analysis a training app sent in (not checked). Refused while you have a game in progress here. |
+| `GET /api/esl/position?fen=` | The position dictionary: `key` (the position's key), `known`, the deepest stored evaluation (`best`, `scoreCp`, `depth`, `engine`, win/draw/loss odds), `seen` (screened games that reached it), `photos` (confirmed photos of it), `queued` when a confirmed photo's position is waiting for the worker, and `hint`: the deepest analysis a training app sent in (not checked). Refused (403) while you have a game in progress here. |
 | `POST /api/esl/position` `{fen, best?, scoreCp, depth, engine?, moves?: [{uci, scoreCp}]}` | Send in the app's own analysis (scores from the side to move's view). Kept per player and position, the deepest wins; shown as a hint, never mixed with the worker's evaluations. Refused while you're playing here. |
-| `GET /api/esl/position/moves?fen=` | Every legal move with the best value known for it (`scoreCp` from the mover's view, `depth`, White's `wdl` after it, `source`): the worker's scoring of this position's moves (`engine`), else the stored evaluation of the position it leads to (`after`), else an app's hint (`hint`); `null` when unknown. |
-| `GET /api/esl/tablebase?fen=` | Exact endgame results (up to seven pieces) from a Lichess-compatible tablebase server (`CHESS_TABLEBASE_URL`), cached in the database. |
-| `POST /api/esl/recognise` | `{"image": "data:image/jpeg;base64,…"}` → the board read from a photo: `placement` (FEN piece placement, White's side), `unsureSquares`, `confidence`, and from the board reader (`source: "model"`) each square's class probabilities in `squares`. A photo the reader isn't sure of is also shown to the vision model (`CHESS_VISION_ENDPOINT`), whose reading comes back in `llm` (or as the answer, `source: "llm"`), and is kept for review (`photoId`). Off unless `CHESS_VISION_LOCAL_MODEL` or `CHESS_VISION_ENDPOINT` is set. |
+| `GET /api/esl/position/moves?fen=` | `{key, moves}`: every legal move (`uci`, `san`) with the best value known for it (`scoreCp` from the mover's view, `depth`, White's `wdl` after it, `source`): the worker's scoring of this position's moves (`engine`), else the stored evaluation of the position it leads to (`after`), else an app's hint (`hint`); `null` when unknown. Refused while you're playing here. |
+| `GET /api/esl/tablebase?fen=` | Exact endgame results (up to seven pieces) from a Lichess-compatible tablebase server (`CHESS_TABLEBASE_URL`), in that server's JSON, cached in the database (`"cached": true` when it came from there). Refused while you're playing here; 400 above seven pieces; 503 when `CHESS_TABLEBASE_URL` is empty. |
+| `POST /api/esl/recognise` | `{"image": "data:image/jpeg;base64,…"}` (up to 8 MB) → the board read from a photo: `placement` (FEN piece placement, White's side), `plausible` (a legal-looking position), `whiteAtBottom`, `sideToMove` (when it can tell), `unsureSquares`, `confidence`, `model` (which reader), and from the board reader (`source: "model"`) each square's class probabilities in `squares`. A photo the reader isn't sure of is also shown to the vision model (`CHESS_VISION_ENDPOINT`), whose reading comes back in `llm` (or as the answer, `source: "llm"`). With `CHESS_VISION_REVIEW` on, an unsure photo is kept for review (`photoId`, `review`) while fewer than `CHESS_VISION_REVIEW_MAX` are waiting. Off unless `CHESS_VISION_LOCAL_MODEL` or `CHESS_VISION_ENDPOINT` is set. |
 | `POST /api/esl/photos/{id}/confirm` | `{"placement": "…"}` from the player who sent photo `id`: the position it showed. Kept as a player-confirmed label; a reviewer's label always wins. |
 
 ## Fair-play review

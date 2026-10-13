@@ -1228,10 +1228,10 @@ function renderOnline() {
     .join("")}</div></div>`;
   if (!o.api) {
     box.innerHTML = `${serverPick}
-      <p>Sign in to ${esc(server.name)} to play rated or casual games. Moves are sent through ${esc(server.name)}'s Board API.</p>
-      ${o.serverKey === "site" ? `<p class="hint">Signing in here also turns on photo reading and the position dictionary.</p>` : ""}
-      <div class="row"><button type="button" class="primary" id="signIn">Sign in to ${esc(server.name)}</button></div>
-      <details class="token"><summary>Use an access token instead</summary>
+      <p>${server.noLogin ? "Connect" : "Sign in"} to ${esc(server.name)} to play rated or casual games. Moves are sent through ${esc(server.name)}'s Board API.</p>
+      ${o.serverKey === "site" ? `<p class="hint">Connecting here also turns on photo reading and the position dictionary.</p>` : ""}
+      ${server.noLogin ? `<p class="hint">${esc(server.name)} has no browser sign-in: use an access token.</p>` : `<div class="row"><button type="button" class="primary" id="signIn">Sign in to ${esc(server.name)}</button></div>`}
+      <details class="token"${server.noLogin ? " open" : ""}><summary>Use an access token${server.noLogin ? "" : " instead"}</summary>
         <p>Create a personal token with the <b>board:play</b> and <b>challenge:write</b> scopes, then paste it here.</p>
         <label class="field"><span>Token</span><input id="tokenInput" spellcheck="false" autocomplete="off"></label>
         <button type="button" id="saveToken">Save token</button>

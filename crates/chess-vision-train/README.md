@@ -69,3 +69,49 @@ licence first.
 518–644 the server. `--limit N` and `--no-augment` are for trying things out:
 with augmentation off, a few photos should be learnt exactly, which is a quick
 check that a change hasn't broken training.
+
+## Options
+
+| Option | Default | |
+|---|---|---|
+| `--datasets NAME…` | | Datasets from the manifest |
+| `--manifest FILE` | this crate's `datasets.toml` | The datasets and their licences |
+| `--data-root DIR` | | Where each dataset's `path` is |
+| `--internal` | | Allow noncommercial data (the model is internal-only) |
+| `--allow-share-alike` | | Allow share-alike data (CC BY-SA) |
+| `--dinov2 FILE` | random (only for trying things out) | DINOv2 weights for the encoder |
+| `--encoder small\|base\|large\|tiny` | `small` | ViT-S/B/L/14; `tiny` for tests |
+| `--registers` | | DINOv2 with registers (`reg4` weights) |
+| `--image-size N` | `392` | A multiple of 14 |
+| `--decoder-layers N` / `--decoder-dim N` | `4` / `256` | |
+| `--epochs N` | `45` | |
+| `--batch N` | `16` | Photos per optimiser step |
+| `--micro-batch N` | `0` (the whole batch) | Photos per forward and backward pass: a batch is split into passes of this many and their gradients added, so training is the same in less memory, only slower |
+| `--lr-decoder` / `--lr-encoder` | `1.4e-4` / `1.4e-5` | |
+| `--weight-decay` | `0.05` | |
+| `--warmup-epochs` / `--unfreeze-epoch` | `3` / `5` | |
+| `--limit N` | `0` (all) | At most this many photos per dataset and split |
+| `--device cpu\|metal\|cuda\|cuda:N\|auto` | `auto` | |
+| `--out DIR` | | Where the model, `report.json` and the photo cache go |
+| `--name` / `--version` | `esl-board-reader` / today | The model card's |
+| `--seed N` | `0` | |
+| `--no-augment` | | Train on the photos as they are |
+
+## Speed and memory
+
+Each epoch prints where its time went, and on a Mac the most GPU memory
+seen:
+
+```
+epoch   7 loss 0.7211 | chessred 1.4% (14.92 wrong/board)
+          time: photos 0.3s, forward 210.4s, backward 402.7s, step 9.1s, validate 61.0s, peak 18.2 GB
+```
+
+`photos` is time spent waiting for the next batch (prepared on the other
+cores while the GPU works): more than a few seconds means the CPU is the
+bottleneck. Memory jumps when the encoder unfreezes (`--unfreeze-epoch`):
+from then on every layer's activations are kept for the backward pass. If
+Metal reports "Insufficient Memory", `--micro-batch 8` (or 4) trains the
+same in a half (or a quarter) of the activation memory. Attention runs as
+one fused softmax that keeps a single copy of each attention matrix for
+the backward pass.

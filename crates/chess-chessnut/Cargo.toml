@@ -1,16 +1,17 @@
 [package]
 name = "open-chess-chessnut"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Chessnut's boards (Air, Air+, Pro, Go) over Bluetooth LE: their protocol and following a game on them"
 license = "GPL-3.0-or-later"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-chess-core = { package = "open-chess-core", path = "../chess-core" }
-chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt" }
+chess-core = { workspace = true }
+chess-dgt = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"

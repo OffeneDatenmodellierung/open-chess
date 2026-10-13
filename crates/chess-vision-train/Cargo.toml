@@ -1,11 +1,13 @@
 [package]
 name = "open-chess-vision-train"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Trains the open-chess board reader (chess-vision) with candle: DINOv2 encoder, square queries, licence-gated datasets (ChessReD and our own confirmed photos), on the CPU, CUDA or Metal"
 license = "MIT OR Apache-2.0"
-authors = ["Mark Olliver"]
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 publish = false
 
 [[bin]]
@@ -17,8 +19,8 @@ cuda = ["chess-vision/cuda"]
 metal = ["chess-vision/metal"]
 
 [dependencies]
-chess-vision = { package = "open-chess-vision", path = "../chess-vision", features = ["decode"] }
-chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
+chess-vision = { workspace = true, features = ["decode"] }
+chess-analysis = { workspace = true }
 anyhow = "1.0.104"
 candle-core = { version = "0.11.0", default-features = false }
 candle-nn = { version = "0.11.0", default-features = false }

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use candle_core::backprop::GradStore;
 use candle_core::{D, DType, Device, Tensor, Var};
 use candle_nn::{AdamW, Optimizer, ParamsAdamW, VarBuilder, VarMap};
 use chess_vision::network::Network;
@@ -23,6 +24,10 @@ use crate::data::{Sample, Split};
 pub struct Settings {
     pub epochs: usize,
     pub batch: usize,
+    /// Photos per forward and backward pass: a batch is split into passes
+    /// of this many and their gradients added, so a smaller pass trains the
+    /// same as the whole batch in less memory. 0: the whole batch at once.
+    pub micro_batch: usize,
     pub lr_decoder: f64,
     pub lr_encoder: f64,
     pub weight_decay: f64,
@@ -83,14 +88,21 @@ fn hex(b: &[u8]) -> String {
     })
 }
 
-/// A batch as network input `(n, 3, s, s)` and labels `(n·64)`.
-fn batch(
+/// A batch prepared on the CPU: the network input `(n, 3, s, s)` and the
+/// labels `(n·64)`, ready to go to the device.
+struct Prepared {
+    x: Vec<f32>,
+    y: Vec<u32>,
+    n: usize,
+}
+
+/// Decode, augment and scale a batch's photos (on every core).
+fn prepare(
     samples: &[&Sample],
     cfg: &ModelConfig,
     train: Option<(u64, usize)>,
     cache: &Path,
-    device: &Device,
-) -> Result<(Tensor, Tensor)> {
+) -> Result<Prepared> {
     let fill = preprocess::pad_colour(cfg);
     let size = cfg.image_size as u32;
     let inputs: Vec<Vec<f32>> = samples
@@ -115,12 +127,27 @@ fn batch(
             Ok(preprocess::prepare(&px, cfg)?)
         })
         .collect::<Result<_>>()?;
-    let n = inputs.len();
-    let s = cfg.image_size;
-    let x = Tensor::from_vec(inputs.concat(), (n, 3, s, s), &Device::Cpu)?.to_device(device)?;
     let y: Vec<u32> = samples.iter().flat_map(|s| s.labels.iter().map(|&l| u32::from(l))).collect();
-    let y = Tensor::from_vec(y, n * 64, &Device::Cpu)?.to_device(device)?;
+    Ok(Prepared { n: inputs.len(), x: inputs.concat(), y })
+}
+
+/// A prepared batch on the device.
+fn upload(p: Prepared, cfg: &ModelConfig, device: &Device) -> Result<(Tensor, Tensor)> {
+    let s = cfg.image_size;
+    let x = Tensor::from_vec(p.x, (p.n, 3, s, s), &Device::Cpu)?.to_device(device)?;
+    let y = Tensor::from_vec(p.y, p.n * 64, &Device::Cpu)?.to_device(device)?;
     Ok((x, y))
+}
+
+/// A batch as network input `(n, 3, s, s)` and labels `(n·64)`.
+fn batch(
+    samples: &[&Sample],
+    cfg: &ModelConfig,
+    train: Option<(u64, usize)>,
+    cache: &Path,
+    device: &Device,
+) -> Result<(Tensor, Tensor)> {
+    upload(prepare(samples, cfg, train, cache)?, cfg, device)
 }
 
 fn hash_str(s: &str) -> u64 {
@@ -144,7 +171,8 @@ pub fn evaluate(
     device: &Device,
 ) -> Result<HashMap<String, Score>> {
     let mut by: HashMap<String, (usize, usize, usize)> = HashMap::new();
-    for chunk in samples.chunks(s.batch) {
+    let pass = if s.micro_batch == 0 { s.batch } else { s.micro_batch };
+    for chunk in samples.chunks(pass.max(1)) {
         let (x, y) = batch(chunk, cfg, None, &s.cache_dir, device)?;
         let pred =
             net.logits(&x.to_dtype(DType::F32)?)?.argmax(D::Minus1)?.flatten_all()?.to_vec1::<u32>()?;
@@ -172,15 +200,20 @@ pub fn evaluate(
         .collect())
 }
 
-/// Clip the gradients to a total norm of `max`.
-fn clip(grads: &mut candle_core::backprop::GradStore, vars: &[Var], max: f64) -> Result<f64> {
-    let mut total = 0.0f64;
+/// Clip the gradients to a total norm of `max`. The norm is added up on
+/// the device and read back once (a read per parameter stalls the GPU some
+/// two hundred times a step).
+fn clip(grads: &mut GradStore, vars: &[Var], max: f64) -> Result<f64> {
+    let mut squares = Vec::new();
     for v in vars {
         if let Some(g) = grads.get(v.as_tensor()) {
-            total += f64::from(g.sqr()?.sum_all()?.to_dtype(DType::F32)?.to_scalar::<f32>()?);
+            squares.push(g.sqr()?.sum_all()?.to_dtype(DType::F32)?);
         }
     }
-    let norm = total.sqrt();
+    if squares.is_empty() {
+        return Ok(0.0);
+    }
+    let norm = f64::from(Tensor::stack(&squares, 0)?.sum_all()?.to_scalar::<f32>()?).sqrt();
     if norm > max && norm.is_finite() {
         let scale = max / norm;
         for v in vars {
@@ -193,12 +226,58 @@ fn clip(grads: &mut candle_core::backprop::GradStore, vars: &[Var], max: f64) ->
     Ok(norm)
 }
 
+/// Where an epoch's time went (seconds), and the most device memory seen.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct Timing {
+    /// Waiting for photos (prepared ahead on other cores while the device
+    /// works: more than a little means the CPU is the bottleneck).
+    pub data: f64,
+    pub forward: f64,
+    pub backward: f64,
+    /// Clipping and the optimiser's step.
+    pub step: f64,
+    pub validate: f64,
+    /// Peak device memory in bytes (Metal only).
+    pub peak_bytes: Option<u64>,
+}
+
+impl Timing {
+    fn line(&self) -> String {
+        let mem = self.peak_bytes.map_or_else(String::new, |b| format!(", peak {:.1} GB", b as f64 / 1e9));
+        format!(
+            "time: photos {:.1}s, forward {:.1}s, backward {:.1}s, step {:.1}s, validate {:.1}s{mem}",
+            self.data, self.forward, self.backward, self.step, self.validate
+        )
+    }
+}
+
+/// Device memory in use now (Metal only).
+#[allow(unused_variables)]
+fn device_bytes(device: &Device) -> Option<u64> {
+    #[cfg(feature = "metal")]
+    if let Device::Metal(m) = device {
+        return Some(m.metal_device().current_allocated_size() as u64);
+    }
+    None
+}
+
+/// Wait for the device to finish (so the time is the work's, and Metal can
+/// release buffers), noting its memory first.
+fn settle(device: &Device, peak: &mut Option<u64>) -> Result<()> {
+    if let Some(b) = device_bytes(device) {
+        *peak = Some(peak.unwrap_or(0).max(b));
+    }
+    device.synchronize()?;
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub struct EpochLog {
     pub epoch: usize,
     pub loss: f64,
     pub frozen: bool,
     pub secs: f64,
+    pub time: Timing,
     pub val: HashMap<String, Score>,
 }
 
@@ -243,29 +322,90 @@ pub fn run(
     for epoch in 0..s.epochs {
         let frozen = epoch < s.unfreeze_epoch;
         let t0 = Instant::now();
+        let mut time = Timing::default();
         for i in (1..order.len()).rev() {
             order.swap(i, rng.below(i + 1));
         }
         let mut losses = Vec::new();
-        for chunk in order.chunks(s.batch) {
-            let picked: Vec<&Sample> = chunk.iter().map(|&i| train[i]).collect();
-            let (x, y) = batch(&picked, cfg, s.augment.then_some((s.seed, epoch)), &s.cache_dir, device)?;
-            let tokens = net.encode(&x)?;
-            let tokens = if frozen { tokens.detach() } else { tokens };
-            let logits = net.decode(&tokens)?.reshape(((), 13))?;
-            let loss = candle_nn::loss::cross_entropy(&logits.to_dtype(DType::F32)?, &y)?;
-            let mut grads = loss.backward()?;
-            clip(&mut grads, if frozen { &dec } else { &all }, s.clip)?;
-            opt_dec.set_learning_rate(s.lr_decoder * schedule(step, 0, warm, total));
-            opt_dec.step(&grads)?;
-            if !frozen {
-                opt_enc.set_learning_rate(s.lr_encoder * schedule(step, unfreeze, warm, total));
-                opt_enc.step(&grads)?;
+        let aug = s.augment.then_some((s.seed, epoch));
+        // The epoch's batches, each as its passes.
+        let batches: Vec<Vec<Vec<&Sample>>> = order
+            .chunks(s.batch)
+            .map(|chunk| {
+                let picked: Vec<&Sample> = chunk.iter().map(|&i| train[i]).collect();
+                let pass = if s.micro_batch == 0 { picked.len() } else { s.micro_batch.min(picked.len()) };
+                picked.chunks(pass.max(1)).map(<[&Sample]>::to_vec).collect()
+            })
+            .collect();
+        std::thread::scope(|scope| -> Result<()> {
+            // Photos for the next batches are prepared while the device
+            // works on this one.
+            let (tx, rx) = std::sync::mpsc::sync_channel::<Result<Vec<Prepared>>>(2);
+            let batches = &batches;
+            scope.spawn(move || {
+                for passes in batches {
+                    let ready = passes.iter().map(|p| prepare(p, cfg, aug, &s.cache_dir)).collect();
+                    if tx.send(ready).is_err() {
+                        return;
+                    }
+                }
+            });
+            for passes in batches {
+                let waited = Instant::now();
+                let prepared = rx.recv().map_err(|_| anyhow::anyhow!("the photo loader stopped"))??;
+                time.data += waited.elapsed().as_secs_f64();
+                let in_batch: usize = passes.iter().map(Vec::len).sum();
+                let mut grads = GradStore::default();
+                let mut batch_loss = 0.0;
+                for p in prepared {
+                    let t = Instant::now();
+                    let n = p.n;
+                    let (x, y) = upload(p, cfg, device)?;
+                    let tokens = net.encode(&x)?;
+                    let tokens = if frozen { tokens.detach() } else { tokens };
+                    let logits = net.decode(&tokens)?.reshape(((), 13))?;
+                    let loss = candle_nn::loss::cross_entropy(&logits.to_dtype(DType::F32)?, &y)?;
+                    // Each pass's share of the batch's mean loss.
+                    let loss = (loss * (n as f64 / in_batch as f64))?;
+                    settle(device, &mut time.peak_bytes)?;
+                    time.forward += t.elapsed().as_secs_f64();
+
+                    let t = Instant::now();
+                    let mut part = loss.backward()?;
+                    batch_loss += f64::from(loss.to_scalar::<f32>()?);
+                    drop((loss, logits, tokens, x, y));
+                    // Only the parameters' gradients are needed; the rest
+                    // (the input's, constants') go now.
+                    let mut kept = GradStore::default();
+                    for v in &all {
+                        if let Some(g) = part.remove(v.as_tensor()) {
+                            kept.insert(v.as_tensor(), g);
+                        }
+                    }
+                    drop(part);
+                    grads.extend(kept)?;
+                    settle(device, &mut time.peak_bytes)?;
+                    time.backward += t.elapsed().as_secs_f64();
+                }
+                let t = Instant::now();
+                clip(&mut grads, if frozen { &dec } else { &all }, s.clip)?;
+                opt_dec.set_learning_rate(s.lr_decoder * schedule(step, 0, warm, total));
+                opt_dec.step(&grads)?;
+                if !frozen {
+                    opt_enc.set_learning_rate(s.lr_encoder * schedule(step, unfreeze, warm, total));
+                    opt_enc.step(&grads)?;
+                }
+                drop(grads);
+                settle(device, &mut time.peak_bytes)?;
+                time.step += t.elapsed().as_secs_f64();
+                losses.push(batch_loss);
+                step += 1;
             }
-            losses.push(f64::from(loss.to_scalar::<f32>()?));
-            step += 1;
-        }
+            Ok(())
+        })?;
+        let t = Instant::now();
         let val_scores = evaluate(net, &val, cfg, s, device)?;
+        time.validate = t.elapsed().as_secs_f64();
         let mean_exact = if val_scores.is_empty() {
             0.0
         } else {
@@ -281,11 +421,12 @@ pub fn run(
             if frozen { "frozen " } else { "" },
             shown.join(", ")
         );
+        println!("          {}", time.line());
         if mean_exact >= best {
             best = mean_exact;
             vm.save(best_path)?;
         }
-        log.push(EpochLog { epoch, loss, frozen, secs: t0.elapsed().as_secs_f64(), val: val_scores });
+        log.push(EpochLog { epoch, loss, frozen, secs: t0.elapsed().as_secs_f64(), time, val: val_scores });
     }
     vm.load(best_path)?;
     Ok(log)

@@ -122,7 +122,8 @@ event streams and 40 game streams per replica.
 
 ## Configuration
 
-Everything is environment.
+Everything is environment (each variable is also a command-line flag:
+`CHESS_PUBLIC_URL` is `--public-url`; `open-chess serve --help` lists them).
 
 | Variable | Default | |
 |---|---|---|
@@ -131,8 +132,13 @@ Everything is environment.
 | `CHESS_SITE_SCHEMA` / `CHESS_SCHEMA` | `esports` / `chess` | |
 | `CHESS_PUBLIC_URL` | `http://localhost:8090` | Where clients reach the API; a path in it (e.g. `/chess`) is where the API is mounted |
 | `ESPORTS_PUBLIC_URL` | `http://localhost:8080` | The site (sign-in link on the consent page) |
+| `ESPORTS_LOGIN` | `false` | Browser sign-in through the site: the OAuth consent page accepts its session cookie. Off, there's no OAuth sign-in (API tokens work either way) and `GET /` says `"login": false` |
+| `CHESS_SITE_NAME` | `open-chess` | What players know the site as: the consent page, PGN event names, `GET /` (the app shows it) |
 | `CHESS_BIND` / `CHESS_METRICS_BIND` | `0.0.0.0:8090` / `0.0.0.0:9465` | API; `/metrics`, `/healthz`, `/readyz` |
 | `CHESS_POOL_SIZE` | 8 | |
+| `CHESS_SWEEP_MS` | 500 | How often each replica's sweeper looks for flags, unstarted games and lapsed challenges |
+| `CHESS_APP_DIR` | — (the image sets `/usr/share/open-chess/app`) | The Chess lab app's files, served at `/app/` |
+| `CHESS_TABLEBASE_URL` | `https://tablebase.lichess.ovh` | A Lichess-compatible tablebase server for `/api/esl/tablebase`; empty turns it off |
 | `CHESS_LAG_COMP_MS` | 100 | Given back per move for the round trip |
 | `CHESS_CHALLENGE_TTL_SECS` | 20 | Real-time challenges lapse without `keepAliveStream` |
 | `CHESS_FIRST_MOVE_SECS` | 30 | |
@@ -150,19 +156,26 @@ Everything is environment.
 | `CHESS_VISION_LOCAL_MODEL` | — | Our board reader (`crates/chess-vision`): a `.safetensors` file from `chess-vision-train`, run on this server's CPU before any vision model is asked |
 | `CHESS_VISION_MIN_CONFIDENCE` | `0.5` | The reader's answer is used without review when no square is unsure and the chance all 64 are right is at least this |
 | `CHESS_VISION_REVIEW` / `_REVIEW_MAX` | `true` / `5000` | Keep photos that weren't read for sure for the Review page (at most this many waiting); `open-chess photos export --out DIR` writes the confirmed ones as a training set |
+| `RUST_LOG` | `info` | Log filter (`debug`, `open_chess_server=debug` …) |
 
 ## Running
 
 ```sh
-open-chess serve             # the API (runs migrations first)
+open-chess serve             # the API (runs migrations first); also what `open-chess` alone does
 open-chess analyse           # the fair-play worker (and, when idle, the dictionary's photo positions)
+open-chess analyse --once    # screen what's waiting, then exit
 open-chess migrate           # schema only
-open-chess bot create --name stockfish-1800
+open-chess bot create --name stockfish-1800 [--days 365]   # prints the bot's token once
 open-chess bot list
+open-chess photos export --out DIR [--reviewed-only]      # confirmed photos, for chess-vision-train
+open-chess healthcheck       # exit 0 if this machine's server answers /healthz (the image's HEALTHCHECK)
 ```
 
-The image is `Dockerfile`: one image for both roles (Stockfish
-included), and `--target slim` for a distroless, API-only image. To deploy:
+Get it from a [release](../../docs/releases.md): the binary for Linux, or
+the image `ghcr.io/offenedatenmodellierung/open-chess` (built by the
+`Dockerfile` from the release's binaries): one image for both roles
+(Stockfish included), and `:slim`, distroless with the API and the app but
+no Stockfish. To deploy:
 
 * **Kubernetes:** `deploy/k8s/chess.yaml` (an example).
 * **Cloudflare:** `deploy/cloudflare` (Containers behind a Worker; an example).
@@ -172,8 +185,9 @@ included), and `--target slim` for a distroless, API-only image. To deploy:
 The server keeps no accounts of its own yet: it reads players, API tokens
 and sessions from a host site's schema (`CHESS_SITE_SCHEMA`), which needs
 `players`, `api_tokens` and `sessions` tables. esports-lab, the
-(private) application this server was extracted from, is the reference host. A standalone mode with
-its own accounts is planned.
+(private) application this server was extracted from, is the reference
+host, and its deployment sets `ESPORTS_LOGIN=true` so people sign in to
+apps through it. A standalone mode with its own accounts is planned.
 
 There, the site's `native` chess backend is a Lichess client pointed at
 this server. The site's watcher mints

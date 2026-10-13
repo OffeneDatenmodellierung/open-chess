@@ -1,16 +1,17 @@
 [package]
 name = "open-chess-train"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.97"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Distributed training for the open-chess engine: SPRT tests, SPSA tuning and self-play data, with results from many machines merged deterministically"
 license = "MIT OR Apache-2.0"
-authors = ["Mark Olliver"]
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-chess-core = { package = "open-chess-core", path = "../chess-core" }
-chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
+chess-core = { workspace = true }
+chess-analysis = { workspace = true }
 cozy-chess = "0.3.4"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
