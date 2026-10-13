@@ -11,30 +11,38 @@ each checked by `SHA256SUMS`:
 
 | File | For |
 |---|---|
-| `open-chess-device-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` | The board runtime on a Linux PC |
-| `open-chess-device-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz` | 64-bit Raspberry Pi OS: the DGT Pi, a Centaur with a Pi Zero 2 W, any Pi 3/4/5 |
-| `open-chess-device-vX.Y.Z-arm-unknown-linux-gnueabihf.tar.gz` | ARMv6, 32-bit: the Centaur's original Pi Zero W |
-| `open-chess-device-vX.Y.Z-aarch64-apple-darwin.tar.gz` | macOS on Apple silicon |
-| `open-chess-device-vX.Y.Z-x86_64-apple-darwin.tar.gz` | macOS on Intel |
-| `open-chess-device-vX.Y.Z-x86_64-pc-windows-msvc.zip` | Windows |
-| `open-chess-server-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`, `…-aarch64-…` | The server (`open-chess`), Linux |
+| `open-chess-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` | A Linux PC |
+| `open-chess-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz` | 64-bit Raspberry Pi OS: the DGT Pi, a Centaur with a Pi Zero 2 W, any Pi 3/4/5; Linux on arm64 |
+| `open-chess-vX.Y.Z-arm-unknown-linux-gnueabihf.tar.gz` | ARMv6, 32-bit: the Centaur's original Pi Zero W (the board runtime only) |
+| `open-chess-vX.Y.Z-aarch64-apple-darwin.tar.gz` | macOS on Apple silicon |
+| `open-chess-vX.Y.Z-x86_64-apple-darwin.tar.gz` | macOS on Intel |
+| `open-chess-vX.Y.Z-x86_64-pc-windows-msvc.zip` | Windows |
+| `open-chess-server-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz`, `…-aarch64-…` | The server alone (no board runtime), Linux: what the image runs |
 | `chess-app-vX.Y.Z.tar.gz` | The Chess lab app: static files for any web server, or `--app` / `CHESS_APP_DIR` |
+
+Each `open-chess-…` archive has one program, `open-chess`: the server
+(`open-chess serve`, `analyse`, `migrate` …) and the board runtime
+(`open-chess device …`), and a link to it named `open-chess-device`, which
+runs the board runtime straight away (as earlier releases' program did).
+With the board runtime in it, the program is GPL-3.0-or-later (the board
+drivers are); the server alone is MIT or Apache-2.0.
 
 The Linux binaries need glibc 2.35 or newer (Debian 12, Ubuntu 22.04,
 Raspberry Pi OS bookworm, or later).
 
 ```sh
 v=0.1.0 t=aarch64-unknown-linux-gnu
-curl -fsSLO https://github.com/OffeneDatenmodellierung/open-chess/releases/download/v$v/open-chess-device-v$v-$t.tar.gz
-tar xzf open-chess-device-v$v-$t.tar.gz
-sudo install open-chess-device-v$v-$t/open-chess-device /usr/local/bin/
+curl -fsSLO https://github.com/OffeneDatenmodellierung/open-chess/releases/download/v$v/open-chess-v$v-$t.tar.gz
+tar xzf open-chess-v$v-$t.tar.gz
+sudo install open-chess-v$v-$t/open-chess /usr/local/bin/
+sudo ln -sf open-chess /usr/local/bin/open-chess-device   # for the systemd units
 ```
 
 **macOS.** Releases are signed with a Developer ID and notarised by Apple
 when the project's signing secrets are set (below); then the binary just
 runs. An unsigned one downloaded in a browser is quarantined, and macOS
 says it "cannot be verified": allow it once with
-`xattr -d com.apple.quarantine open-chess-device`, or under System Settings
+`xattr -d com.apple.quarantine open-chess`, or under System Settings
 › Privacy & Security. (Downloads with `curl` aren't quarantined.) The first
 Bluetooth scan asks for Bluetooth permission for your terminal app.
 
@@ -69,8 +77,10 @@ open-chess-core = "0.1"     # rules, SAN, PGN, clocks
 open-chess-client = "0.1"   # a Lichess Board/Bot API client
 ```
 
-`cargo install open-chess-device` and `cargo install open-chess-server`
-build the programs.
+`cargo install open-chess` builds the program (both parts; one part with
+`--no-default-features --features server` or `--features device`).
+`cargo install open-chess-device` still builds the board runtime on its
+own, as `open-chess-device`.
 
 ## Cutting a release
 

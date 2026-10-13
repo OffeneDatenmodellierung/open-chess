@@ -19,6 +19,7 @@ members = [
     "crates/chess-ble",
     "crates/chess-chessnut",
     "crates/chess-device",
+    "crates/open-chess",
 ]
 
 [workspace.package]

@@ -40,6 +40,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked
       # Feature-gated code the workspace build leaves out.
       - run: cargo clippy -p open-chess-dgt --all-targets --features serial --locked
+      # The program's builds with one part each.
+      - run: cargo clippy -p open-chess --all-targets --no-default-features --features server --locked
+      - run: cargo clippy -p open-chess --all-targets --no-default-features --features device --locked
       # Online play brings TLS, whose crypto is partly C: cross compilers.
       - name: C cross compilers for the Pi targets
         run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
@@ -50,12 +53,13 @@ jobs:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
       - run: cargo clippy -p open-chess-device -p open-chess-centaur --target arm-unknown-linux-gnueabihf --locked
+      - run: cargo clippy -p open-chess --no-default-features --features device --target arm-unknown-linux-gnueabihf --locked
         env:
           CC_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-gcc
           AR_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-ar
 
-  # The device runtime on macOS and Windows (Bluetooth through btleplug,
-  # COM ports on Windows).
+  # The program on macOS and Windows: the board runtime (Bluetooth through
+  # btleplug, COM ports on Windows) and the server.
   desktop:
     needs: lint
     strategy:
@@ -78,7 +82,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          cargo clippy -p open-chess-device --all-targets --locked --message-format=short 2>&1 | tee clippy.txt
+          cargo clippy -p open-chess -p open-chess-device -p open-chess-server --all-targets --locked --message-format=short 2>&1 | tee clippy.txt
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then grep -E "(error|warning)" clippy.txt | head -30 | sed 's/^/::error::/'; fi
           exit "$status"
@@ -96,7 +100,9 @@ jobs:
         shell: bash
         run: |
           set +e
-          cargo test -p open-chess-device --locked 2>&1 | tee test.txt
+          cargo test -p open-chess -p open-chess-device --locked 2>&1 | tee test.txt
+          status=${PIPESTATUS[0]}
+          [ "$status" -ne 0 ] || cargo test -p open-chess-server --lib --locked 2>&1 | tee -a test.txt
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then grep -E "(panicked|FAILED|left:|right:|error)" test.txt | head -30 | sed 's/^/::error::/'; fi
           exit "$status"
@@ -131,6 +137,7 @@ jobs:
       - name: cargo check, image crates alone
         run: |
           cargo check --locked -p open-chess-server
+          cargo check --locked -p open-chess --no-default-features --features server
           cargo check --locked -p open-chess-train
       - name: cargo test
         env:
@@ -199,7 +206,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the server
         run: |
-          cargo build --release --locked -p open-chess-server --bin open-chess
+          cargo build --release --locked -p open-chess --no-default-features --features server
           install -D -m 0755 target/release/open-chess dist/linux-amd64/open-chess
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:

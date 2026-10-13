@@ -2,12 +2,13 @@ name: Release
 
 # Push a tag `vX.Y.Z` matching [workspace.package] version in Cargo.toml:
 #
-#   1. binaries: the server (`open-chess`) for Linux x86-64 and arm64; the
-#      device runtime (`open-chess-device`) for Linux x86-64, arm64 (64-bit
-#      Raspberry Pi OS: the DGT Pi, a Centaur with a Zero 2 W) and ARMv6
-#      (the Centaur's original Pi Zero), macOS (Apple silicon and Intel,
-#      signed and notarised when the Apple secrets are set) and Windows;
-#      and the Chess lab app;
+#   1. binaries: one program, `open-chess` (the server and the board
+#      runtime, Cargo features of the `open-chess` crate), for Linux
+#      x86-64 and arm64 (64-bit Raspberry Pi OS too: the DGT Pi, a Centaur
+#      with a Zero 2 W), macOS (Apple silicon and Intel, signed and
+#      notarised when the Apple secrets are set) and Windows; the board
+#      runtime alone for ARMv6 (the Centaur's original Pi Zero); a server
+#      alone for Linux (the image); and the Chess lab app;
 #   2. a GitHub release with them and SHA256SUMS;
 #   3. the image, multi-arch, on ghcr.io, from those binaries;
 #   4. the crates, on crates.io (when CARGO_REGISTRY_TOKEN is set).
@@ -60,9 +61,12 @@ jobs:
         include:
           # Ubuntu 22.04: glibc 2.35, so the binaries run on Debian bookworm
           # and Raspberry Pi OS bookworm too.
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, server: true }
-          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm, server: true }
-          - { target: arm-unknown-linux-gnueabihf, os: ubuntu-22.04, cross: true }
+          # `image`: also a server-only build, for the image.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, image: true }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm, image: true }
+          # The board runtime alone: the server's crypto and photo reader
+          # are dead weight on a Pi Zero (and slow to build for it).
+          - { target: arm-unknown-linux-gnueabihf, os: ubuntu-22.04, cross: true, features: device }
           - { target: aarch64-apple-darwin, os: macos-latest }
           - { target: x86_64-apple-darwin, os: macos-latest }
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
@@ -88,10 +92,18 @@ jobs:
         shell: bash
         run: |
           set -eu
-          packages="-p open-chess-device --bin open-chess-device"
-          if [ "${{ matrix.server }}" = true ]; then packages="$packages -p open-chess-server --bin open-chess"; fi
           if [ "${{ matrix.cross }}" = true ]; then cargo=cross; else cargo=cargo; fi
-          $cargo build --profile dist --locked --target "$TARGET" $packages
+          build() { $cargo build --profile dist --locked --target "$TARGET" -p open-chess "$@"; }
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=.exe
+          mkdir -p out
+          # The server alone first (for the image), then the program.
+          if [ "${{ matrix.image }}" = true ]; then
+            build --no-default-features --features server
+            mkdir -p out/server && cp "target/$TARGET/dist/open-chess" out/server/
+          fi
+          features="${{ matrix.features }}"
+          if [ -n "$features" ]; then build --no-default-features --features "$features"; else build; fi
+          cp "target/$TARGET/dist/open-chess$ext" out/
 
       # Signed and notarised when the secrets are set (docs/releases.md).
       - name: Sign and notarise (macOS)
@@ -106,7 +118,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -eu
-          bin="target/$TARGET/dist/open-chess-device"
+          bin="out/open-chess"
           if [ -z "$APPLE_CERTIFICATE" ]; then
             echo "::notice::no Apple certificate: the macOS binary is unsigned"
             exit 0
@@ -138,27 +150,30 @@ jobs:
         shell: bash
         run: |
           set -eu
-          out=dist && mkdir -p "$out"
-          pack() { # name, binary
+          dist=dist && mkdir -p "$dist"
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=.exe
+          pack() { # archive name, binary, gpl (true when the board runtime is in it)
             dir="$1-v$VERSION-$TARGET"
             mkdir -p "$dir"
-            cp "target/$TARGET/dist/$2" "$dir/"
+            cp "$2" "$dir/"
             cp LICENSE-MIT LICENSE-APACHE README.md "$dir/"
-            if [ "$1" = open-chess-device ]; then
+            if [ "$3" = true ]; then
               cp docs/boards.md "$dir/"
-              # GPL: the device runtime links the GPL board drivers.
+              # GPL: the board runtime links the GPL board drivers.
               curl -fsSL https://www.gnu.org/licenses/gpl-3.0.txt -o "$dir/LICENSE-GPL-3.0"
+              # Run as open-chess-device it's the board runtime straight
+              # away (what the systemd units and older installs run).
+              [ "$RUNNER_OS" = Windows ] || ln -s open-chess "$dir/open-chess-device"
             fi
             if [ "$RUNNER_OS" = Windows ]; then
-              7z a -bd "$out/$dir.zip" "$dir" >/dev/null
+              7z a -bd "$dist/$dir.zip" "$dir" >/dev/null
             else
-              tar -czf "$out/$dir.tar.gz" "$dir"
+              tar -czf "$dist/$dir.tar.gz" "$dir"
             fi
           }
-          ext=""; [ "$RUNNER_OS" = Windows ] && ext=.exe
-          pack open-chess-device "open-chess-device$ext"
-          if [ "${{ matrix.server }}" = true ]; then pack open-chess-server open-chess; fi
-          ls -l "$out"
+          pack open-chess "out/open-chess$ext" true
+          if [ "${{ matrix.image }}" = true ]; then pack open-chess-server out/server/open-chess false; fi
+          ls -l "$dist"
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: bin-${{ matrix.target }}

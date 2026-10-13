@@ -36,13 +36,20 @@ has the binaries, the image and the crates
 
 | | |
 |---|---|
-| The board runtime | `open-chess-device-vX.Y.Z-<target>.tar.gz` (`.zip` on Windows): Linux x86-64 and arm64 (64-bit Raspberry Pi OS), ARMv6 (the Centaur's Pi Zero), macOS (Apple silicon and Intel) and Windows |
-| The server | `open-chess-server-vX.Y.Z-<target>.tar.gz`: Linux x86-64 and arm64; or the image below |
+| The program | `open-chess-vX.Y.Z-<target>.tar.gz` (`.zip` on Windows): the server and the board runtime in one, for Linux x86-64 and arm64 (64-bit Raspberry Pi OS), macOS (Apple silicon and Intel) and Windows; the board runtime alone for ARMv6 (the Centaur's Pi Zero) |
+| The server alone | `open-chess-server-vX.Y.Z-<target>.tar.gz`: Linux x86-64 and arm64 (what the image runs); or the image below |
 | The Chess lab app | `chess-app-vX.Y.Z.tar.gz`: static files to serve |
 | The image | `docker pull ghcr.io/offenedatenmodellierung/open-chess` (with Stockfish, for both roles) or `:slim` (the API and the app only) |
 | The crates | `open-chess-core`, `open-chess-client`, `open-chess-analysis` … on [crates.io](https://crates.io/search?q=open-chess) |
 
-Or from source: `cargo install --git https://github.com/OffeneDatenmodellierung/open-chess open-chess-device`.
+Or from source: `cargo install --git https://github.com/OffeneDatenmodellierung/open-chess open-chess`
+(`--no-default-features --features server` or `--features device` for one
+part: [crates/open-chess](crates/open-chess/README.md)).
+
+`open-chess serve` runs the server, `open-chess device` the board runtime
+(also installed as `open-chess-device`, a link to the same program), and
+`open-chess` alone serves when `DATABASE_URL` is set, otherwise opens the
+board screen.
 
 ## Quick start
 
@@ -123,7 +130,7 @@ CHESS_TEST_DATABASE_URL=postgres://dev:dev@127.0.0.1/chessdev?sslmode=disable \
 # The app, with the engine compiled to WebAssembly:
 scripts/build-chess-app.sh dist/chess
 # The image from your own build instead of a release:
-cargo build --release -p open-chess-server --bin open-chess
+cargo build --release -p open-chess --no-default-features --features server
 install -D target/release/open-chess dist/linux-amd64/open-chess
 scripts/build-chess-app.sh dist/app
 docker build --build-arg BINARIES=local -t open-chess .
