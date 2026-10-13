@@ -22,7 +22,7 @@ pub async fn email(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
     let id = who.need(&["email:read"])?;
     let c = ctx.db.conn().await?;
     let email: Option<String> = c
-        .query_opt(&ctx.db.sql("SELECT email FROM site.players WHERE id = $1"), &[&id.player])
+        .query_opt(&ctx.db.sql("SELECT email FROM chess.players WHERE id = $1"), &[&id.player])
         .await?
         .and_then(|r| r.get(0));
     Ok(Json(json!({"email": email.unwrap_or_default()})).into_response())
@@ -98,4 +98,49 @@ pub async fn bots_online(State(ctx): State<Ctx>, Query(q): Query<Nb>) -> ApiResu
     }
     drop(tx);
     Ok(ndjson(rx))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Autocomplete {
+    term: Option<String>,
+    object: Option<bool>,
+    nb: Option<i64>,
+}
+
+/// Lichess's `GET /api/player/autocomplete`: players whose name starts
+/// with (then contains) `term`, for a type-ahead list. With `object=true`,
+/// `{"result": [{id, name, online}]}`; otherwise a JSON array of names. The
+/// computer's accounts (`ai-level-N`) aren't offered: it's played with
+/// `POST /api/challenge/ai`.
+pub async fn autocomplete(State(ctx): State<Ctx>, Query(q): Query<Autocomplete>) -> ApiResult<Response> {
+    let term = q.term.unwrap_or_default().trim().to_lowercase();
+    if term.is_empty() {
+        return Ok(
+            Json(if q.object.unwrap_or(false) { json!({ "result": [] }) } else { json!([]) }).into_response()
+        );
+    }
+    let like = format!("%{}%", term.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+    let c = ctx.db.conn().await?;
+    let rows = c
+        .query(
+            &ctx.db.sql(
+                "SELECT username, seen_at > now() - interval '10 minutes' AS online
+                   FROM chess.accounts
+                  WHERE lower(username) LIKE $1 AND username !~ '^ai-level-[0-9]$'
+                  ORDER BY (lower(username) LIKE $2) DESC, lower(username)
+                  LIMIT $3",
+            ),
+            &[&like, &format!("{}%", &like[1..]), &q.nb.unwrap_or(12).clamp(1, 50)],
+        )
+        .await?;
+    let names: Vec<(String, bool)> = rows
+        .iter()
+        .map(|r| (r.get("username"), r.get::<_, Option<bool>>("online").unwrap_or(false)))
+        .collect();
+    Ok(Json(if q.object.unwrap_or(false) {
+        json!({ "result": names.iter().map(|(n, on)| json!({ "id": n.to_lowercase(), "name": n, "online": on })).collect::<Vec<_>>() })
+    } else {
+        json!(names.iter().map(|(n, _)| n).collect::<Vec<_>>())
+    })
+    .into_response())
 }

@@ -34,6 +34,7 @@ pub mod play;
 pub mod ratings;
 pub mod serial;
 pub mod settings;
+pub mod theme;
 pub mod tui;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub mod usb;

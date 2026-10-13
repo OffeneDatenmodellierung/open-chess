@@ -54,6 +54,10 @@ ends it says who won and how, and each player's rating before it and what
 the game did to it. Set the pieces up again for another game of the same
 kind, or press `n` to choose the next game on the same board.
 
+The screen is in the site's colours (royal navy and orange);
+`--theme terminal` (or `OPEN_CHESS_THEME=terminal`) keeps the terminal's
+own.
+
 `b` goes back to the list of boards, `r` scans again, `q` quits. The mouse
 wheel scrolls the moves (over the top half) or the log (below); Tab picks
 which one ↑/↓ scroll; PgUp/PgDn scroll the log and Home goes back to the

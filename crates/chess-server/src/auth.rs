@@ -1,10 +1,13 @@
-//! Who is calling: the site's own API tokens (bearer) and session cookies.
+//! Who is calling: this server's API tokens (bearer) and session cookies.
 //!
-//! Tokens live in the site's `api_tokens` table, hashed with SHA-256 like
-//! the site does, with Lichess's scope names (`board:play`, `bot:play`,
-//! `challenge:read`, `challenge:write`, `email:read`) plus
-//! `chess:fairplay` for reviewers. People make and revoke them on the
-//! site's Account page, or through this server's OAuth flow. A short cache
+//! Players, tokens and sessions are the server's own (`chess.players`,
+//! `chess.api_tokens`, `chess.sessions`). Tokens are hashed with SHA-256,
+//! with Lichess's scope names (`board:play`, `bot:play`, `challenge:read`,
+//! `challenge:write`, `email:read`) plus `chess:fairplay` for reviewers.
+//! People make and revoke them on the Account page ([`crate::http::web`]),
+//! through the OAuth flow, or (for a host site's players) through the
+//! site's server ([`crate::http::web::esports_token`]). New tokens start
+//! `ocp_`; tokens imported from a host site keep its `esl_`. A short cache
 //! keeps a busy game from hitting the database for every move; a revoked
 //! token stops working within [`CACHE_TTL`].
 
@@ -18,8 +21,12 @@ use sha2::{Digest, Sha256};
 
 use crate::db::Db;
 
-pub const TOKEN_PREFIX: &str = "esl_";
-pub const SESSION_COOKIE: &str = "esl_session";
+/// New tokens' prefix.
+pub const TOKEN_PREFIX: &str = "ocp_";
+/// Tokens imported from a host site (esports-lab) keep its prefix.
+pub const SITE_TOKEN_PREFIX: &str = "esl_";
+/// Signed in to this server (its own sign-in, or with the host site).
+pub const SESSION_COOKIE: &str = "oc_session";
 pub const CACHE_TTL: Duration = Duration::from_secs(15);
 const NEGATIVE_TTL: Duration = Duration::from_secs(5);
 
@@ -69,8 +76,6 @@ type Cache = Arc<Mutex<HashMap<String, (Option<Identity>, Instant)>>>;
 pub struct Auth {
     db: Db,
     cache: Cache,
-    /// The host site's sign-in (its session cookie) is accepted.
-    login: bool,
 }
 
 pub fn bearer(h: &HeaderMap) -> Option<&str> {
@@ -91,14 +96,13 @@ pub fn cookie(h: &HeaderMap, name: &str) -> Option<String> {
 }
 
 impl Auth {
-    /// `login`: accept the host site's session cookie ([`Auth::session`]).
-    pub fn new(db: Db, login: bool) -> Auth {
-        Auth { db, cache: Arc::default(), login }
+    pub fn new(db: Db) -> Auth {
+        Auth { db, cache: Arc::default() }
     }
 
     /// The identity behind a token, if it is valid now.
     pub async fn token(&self, token: &str) -> Result<Option<Identity>> {
-        if !token.starts_with(TOKEN_PREFIX) {
+        if !(token.starts_with(TOKEN_PREFIX) || token.starts_with(SITE_TOKEN_PREFIX)) {
             return Ok(None);
         }
         let key = hash_key(token);
@@ -114,10 +118,10 @@ impl Auth {
         let r = c
             .query_opt(
                 &self.db.sql(
-                    "UPDATE site.api_tokens t
+                    "UPDATE chess.api_tokens t
                         SET last_used_at = CASE WHEN t.last_used_at IS NULL OR t.last_used_at < now() - interval '1 minute'
                                                 THEN now() ELSE t.last_used_at END
-                       FROM site.players p
+                       FROM chess.players p
                       WHERE t.token_hash = $1 AND p.id = t.player_id AND t.revoked_at IS NULL
                         AND t.expires_at > now() AND p.disabled_at IS NULL
                      RETURNING t.id, t.player_id, t.scopes, p.role, p.roles,
@@ -154,19 +158,15 @@ impl Auth {
         }
     }
 
-    /// The player signed in to the site with this session cookie (works
-    /// when the chess server shares the site's origin, e.g. under /chess).
+    /// The player signed in with this session cookie.
     pub async fn session(&self, h: &HeaderMap) -> Result<Option<i64>> {
-        if !self.login {
-            return Ok(None);
-        }
         let Some(token) = cookie(h, SESSION_COOKIE) else {
             return Ok(None);
         };
         let c = self.db.conn().await?;
         Ok(c.query_opt(
             &self.db.sql(
-                "SELECT s.player_id FROM site.sessions s JOIN site.players p ON p.id = s.player_id
+                "SELECT s.player_id FROM chess.sessions s JOIN chess.players p ON p.id = s.player_id
                   WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND p.disabled_at IS NULL",
             ),
             &[&hash_key(&token)],
@@ -194,7 +194,7 @@ mod tests {
     fn reads_bearer_and_cookie() {
         let mut h = HeaderMap::new();
         h.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer esl_abc"));
-        h.insert(header::COOKIE, HeaderValue::from_static("a=1; esl_session=xyz; b=2"));
+        h.insert(header::COOKIE, HeaderValue::from_static("a=1; oc_session=xyz; b=2"));
         assert_eq!(bearer(&h), Some("esl_abc"));
         assert_eq!(cookie(&h, SESSION_COOKIE).as_deref(), Some("xyz"));
         assert_eq!(cookie(&h, "none"), None);

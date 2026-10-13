@@ -27,6 +27,8 @@ const PASS_THROUGH = [
   "CHESS_PUBLIC_URL",
   "ESPORTS_PUBLIC_URL",
   "ESPORTS_LOGIN",
+  "ESPORTS_SECRET",
+  "CHESS_SIGNUP",
   // The Chess lab's look (CSS): `wrangler secret put CHESS_APP_THEME < theme.css`.
   "CHESS_APP_THEME",
   "CHESS_SITE_NAME",

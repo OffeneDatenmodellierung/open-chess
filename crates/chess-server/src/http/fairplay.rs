@@ -141,7 +141,7 @@ pub async fn player(State(ctx): State<Ctx>, who: Who, Path(username): Path<Strin
         .query(
             &ctx.db.sql(
                 "SELECT v.game_id, v.verdict, v.note, p.name, (extract(epoch from v.at) * 1000)::bigint
-                   FROM chess.fairplay_reviews v LEFT JOIN site.players p ON p.id = v.reviewer_id
+                   FROM chess.fairplay_reviews v LEFT JOIN chess.players p ON p.id = v.reviewer_id
                   WHERE v.player_id = $1 ORDER BY v.at DESC LIMIT 50",
             ),
             &[&a.player_id],

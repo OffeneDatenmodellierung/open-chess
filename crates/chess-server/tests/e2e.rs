@@ -45,7 +45,16 @@ CREATE TABLE {s}.api_tokens (
     last_used_at timestamptz, revoked_at timestamptz, revoked_by text);
 ";
 
+/// The secret shared with the (pretend) host site.
+const SECRET: &str = "a-secret-shared-with-the-site-0123456789";
+
 async fn setup(tweak: impl FnOnce(&mut Config)) -> Option<Env> {
+    setup_with("", tweak).await
+}
+
+/// `pre` runs before the server first migrates (`{site}` and `{chess}` are
+/// the schemas), to set up what an older deployment had.
+async fn setup_with(pre: &str, tweak: impl FnOnce(&mut Config)) -> Option<Env> {
     let Ok(url) = std::env::var("CHESS_TEST_DATABASE_URL") else {
         eprintln!("CHESS_TEST_DATABASE_URL not set: skipped");
         return None;
@@ -56,6 +65,9 @@ async fn setup(tweak: impl FnOnce(&mut Config)) -> Option<Env> {
     let site = format!("t_site_{tag}");
     let chess = format!("t_chess_{tag}");
     pg.batch_execute(&format!("CREATE SCHEMA {site}; {}", SITE_SQL.replace("{s}", &site))).await.unwrap();
+    if !pre.is_empty() {
+        pg.batch_execute(&pre.replace("{site}", &site).replace("{chess}", &chess)).await.unwrap();
+    }
     let mut cfg = Config {
         database_url: url,
         listen_database_url: None,
@@ -65,6 +77,8 @@ async fn setup(tweak: impl FnOnce(&mut Config)) -> Option<Env> {
         public_url: "http://chess.test".into(),
         site_url: "http://site.test".into(),
         esports_login: true,
+        esports_secret: Some(SECRET.into()),
+        signup: true,
         site_name: "open-chess".into(),
         bind: "127.0.0.1:0".into(),
         metrics_bind: "127.0.0.1:0".into(),
@@ -107,25 +121,25 @@ async fn setup(tweak: impl FnOnce(&mut Config)) -> Option<Env> {
 }
 
 impl Env {
-    /// A site player with an API token carrying `scopes`.
+    /// A player with an API token carrying `scopes`.
     async fn player(&self, name: &str, scopes: &[&str]) -> (i64, String) {
         let id: i64 = self
             .pg
             .query_one(
-                &format!("INSERT INTO {}.players (name) VALUES ($1) RETURNING id", self.site),
+                &format!("INSERT INTO {}.players (name) VALUES ($1) RETURNING id", self.chess),
                 &[&name],
             )
             .await
             .unwrap()
             .get(0);
-        let token = format!("esl_{}", random_token(36));
+        let token = format!("ocp_{}", random_token(36));
         let scopes: Vec<String> = scopes.iter().map(|s| (*s).to_owned()).collect();
         self.pg
             .execute(
                 &format!(
                     "INSERT INTO {}.api_tokens (player_id, name, token_hash, prefix, scopes, expires_at)
-                     VALUES ($1, 'test', $2, 'esl_xx', $3, now() + interval '1 day')",
-                    self.site
+                     VALUES ($1, 'test', $2, 'ocp_xx', $3, now() + interval '1 day')",
+                    self.chess
                 ),
                 &[&id, &hash_key(&token), &scopes],
             )
@@ -387,6 +401,26 @@ async fn two_accounts_play_on_one_board() {
     let (w, b) = (g.players.white.rating_diff.unwrap(), g.players.black.rating_diff.unwrap());
     assert!(w < 0 && b > 0, "{w} {b}");
     assert_eq!(g.players.black.user.name, "Bob");
+    // The type-ahead list finds them by the start of their name.
+    let http = reqwest::Client::new();
+    let found: serde_json::Value = http
+        .get(format!("{}/api/player/autocomplete?term=bo&object=true", env.base[0]))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(found["result"][0]["name"].as_str(), Some("Bob"), "{found}");
+    let names: Vec<String> = http
+        .get(format!("{}/api/player/autocomplete?term=nn", env.base[0]))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(names, ["Ann"]);
     env.teardown().await;
 }
 
@@ -522,7 +556,7 @@ async fn oauth_pkce_issues_site_tokens() {
     let session = random_token(32);
     env.pg
         .execute(
-            &format!("INSERT INTO {}.sessions (token_hash, player_id, expires_at) VALUES ($1, $2, now() + interval '1 day')", env.site),
+            &format!("INSERT INTO {}.sessions (token_hash, player_id, expires_at) VALUES ($1, $2, now() + interval '1 day')", env.chess),
             &[&hash_key(&session), &pid],
         )
         .await
@@ -540,11 +574,12 @@ async fn oauth_pkce_issues_site_tokens() {
         ("scope", "board:play challenge:write bot:play"),
         ("state", "s1"),
     ];
-    // Not signed in: asked to sign in first.
-    let page =
-        http.get(format!("{}/oauth", env.base[0])).query(&q).send().await.unwrap().text().await.unwrap();
-    assert!(page.contains("Sign in"));
-    let cookie = format!("esl_session={session}");
+    // Not signed in: sent to sign in first, and back here after.
+    let r = http.get(format!("{}/oauth", env.base[0])).query(&q).send().await.unwrap();
+    assert!(r.status().is_redirection());
+    let to = r.headers()["location"].to_str().unwrap().to_owned();
+    assert!(to.starts_with("/login?return=%2Foauth%3F"), "{to}");
+    let cookie = format!("oc_session={session}");
     let page = http
         .get(format!("{}/oauth", env.base[0]))
         .query(&q)
@@ -620,12 +655,15 @@ async fn oauth_pkce_issues_site_tokens() {
         .json()
         .await
         .unwrap();
-    assert!(t.access_token.starts_with("esl_"));
+    assert!(t.access_token.starts_with("ocp_"));
     let c = env.client(0, &t.access_token);
     assert_eq!(c.account().await.unwrap().username, "Dana");
     let scopes: Vec<String> = env
         .pg
-        .query_one(&format!("SELECT scopes FROM {}.api_tokens WHERE name = 'OAuth: test-app'", env.site), &[])
+        .query_one(
+            &format!("SELECT scopes FROM {}.api_tokens WHERE name = 'OAuth: test-app'", env.chess),
+            &[],
+        )
         .await
         .unwrap()
         .get(0);
@@ -637,19 +675,119 @@ async fn oauth_pkce_issues_site_tokens() {
     env.teardown().await;
 }
 
-#[tokio::test]
-async fn without_esports_login_there_is_no_browser_sign_in() {
-    let Some(env) = setup(|c| c.esports_login = false).await else { return };
-    let (pid, token) = env.player("Eli", &["board:play"]).await;
-    let session = random_token(32);
-    env.pg
-        .execute(
-            &format!("INSERT INTO {}.sessions (token_hash, player_id, expires_at) VALUES ($1, $2, now() + interval '1 day')", env.site),
-            &[&hash_key(&session), &pid],
-        )
+/// Server-sent events from a response: (event, id, data) per event.
+fn sse(r: reqwest::Response) -> tokio::sync::mpsc::Receiver<(String, Option<String>, serde_json::Value)> {
+    use futures_util::StreamExt;
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
+    tokio::spawn(async move {
+        let mut body = r.bytes_stream();
+        let mut buf = String::new();
+        while let Some(Ok(chunk)) = body.next().await {
+            buf.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(end) = buf.find("\n\n") {
+                let block: String = buf.drain(..end + 2).collect();
+                let (mut event, mut id, mut data) = (String::from("message"), None, String::new());
+                for l in block.lines() {
+                    if let Some(v) = l.strip_prefix("event:") {
+                        event = v.trim().to_owned();
+                    } else if let Some(v) = l.strip_prefix("id:") {
+                        id = Some(v.trim().to_owned());
+                    } else if let Some(v) = l.strip_prefix("data:") {
+                        data.push_str(v.trim_start());
+                    }
+                }
+                if data.is_empty() {
+                    continue;
+                }
+                if tx.send((event, id, serde_json::from_str(&data).unwrap())).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    rx
+}
+
+async fn next_sse(
+    rx: &mut tokio::sync::mpsc::Receiver<(String, Option<String>, serde_json::Value)>,
+) -> (String, Option<String>, serde_json::Value) {
+    tokio::time::timeout(Duration::from_secs(10), rx.recv())
         .await
-        .unwrap();
+        .expect("feed timed out")
+        .expect("feed ended")
+}
+
+/// The live feed: a game's start, moves and end (with the rating
+/// changes), and the finished games again for a client that comes back.
+#[tokio::test]
+async fn the_feed_follows_games_and_catches_up() {
+    let Some(env) = setup(|c| c.public_delay_plies = 0).await else { return };
+    let (_, ann_token) = env.player("Ann", HUMAN).await;
+    let (_, bob_token) = env.player("Bob", HUMAN).await;
+    let (ann, bob) = (env.client(0, &ann_token), env.client(1, &bob_token));
     let http = reqwest::Client::new();
+    let mut feed = sse(http.get(format!("{}/api/feed", env.base[1])).send().await.unwrap());
+    let mut ends = sse(http.get(format!("{}/api/feed?only=end", env.base[0])).send().await.unwrap());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let req = ChallengeRequest {
+        rated: true,
+        limit_secs: Some(600),
+        increment_secs: Some(5),
+        color: Some("white".into()),
+        accept_by_token: Some(bob_token.clone()),
+        ..Default::default()
+    };
+    let them = bob.account().await.unwrap();
+    let id = ann.challenge(&them.id, &req).await.unwrap().id;
+    let (kind, _, v) = next_sse(&mut feed).await;
+    assert_eq!((kind.as_str(), v["id"].as_str()), ("start", Some(id.as_str())));
+    assert_eq!(v["players"]["white"]["user"]["name"], "Ann");
+    for (who, m) in [(&ann, "f2f3"), (&bob, "e7e5"), (&ann, "g2g4"), (&bob, "d8h4")] {
+        who.make_move(Api::Board, &id, m, false).await.unwrap();
+    }
+    let (sid, end) = loop {
+        let (kind, sid, v) = next_sse(&mut feed).await;
+        if kind == "end" {
+            break (sid, v);
+        }
+        assert_eq!(kind, "move");
+    };
+    assert_eq!(end["status"], "mate");
+    assert_eq!(end["winner"], "black");
+    assert!(end["players"]["black"]["ratingDiff"].as_i64().unwrap() > 0, "{end}");
+    assert_eq!(end["moves"], "f3 e5 g4 Qh4#");
+    let (kind, _, only) = next_sse(&mut ends).await;
+    assert_eq!((kind.as_str(), only["id"].as_str()), ("end", Some(id.as_str())), "only the end");
+    // Coming back from just before it: the finished game again.
+    let finished: i64 = sid.unwrap().parse().unwrap();
+    let mut again = sse(http
+        .get(format!("{}/api/feed", env.base[0]))
+        .header("last-event-id", (finished - 1).to_string())
+        .send()
+        .await
+        .unwrap());
+    let (kind, _, v) = next_sse(&mut again).await;
+    assert_eq!((kind.as_str(), v["id"].as_str()), ("end", Some(id.as_str())));
+    let mut later =
+        sse(http.get(format!("{}/api/feed?since={}", env.base[0], finished + 1)).send().await.unwrap());
+    assert!(tokio::time::timeout(Duration::from_millis(500), later.recv()).await.is_err(), "nothing newer");
+    env.teardown().await;
+}
+
+/// The value of a Set-Cookie header's cookie.
+fn set_cookie(r: &reqwest::Response, name: &str) -> Option<String> {
+    r.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()).find_map(|v| {
+        let (kv, _) = v.split_once(';').unwrap_or((v, ""));
+        let (k, val) = kv.split_once('=')?;
+        (k == name && !val.is_empty()).then(|| val.to_owned())
+    })
+}
+
+/// The server's own accounts: sign up, sign in, make a token and use it.
+#[tokio::test]
+async fn own_accounts_sign_up_sign_in_and_make_tokens() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
     let about: serde_json::Value = http
         .get(&env.base[0])
         .header("accept", "application/json")
@@ -659,26 +797,287 @@ async fn without_esports_login_there_is_no_browser_sign_in() {
         .json()
         .await
         .unwrap();
-    assert_eq!(about["login"], false);
-    let q = [
-        ("response_type", "code"),
-        ("client_id", "test-app"),
-        ("redirect_uri", "http://app.test/callback"),
-        ("code_challenge_method", "S256"),
-        ("code_challenge", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"),
-        ("scope", "board:play"),
-    ];
-    let r = http
-        .get(format!("{}/oauth", env.base[0]))
-        .query(&q)
-        .header("cookie", format!("esl_session={session}"))
+    assert_eq!(
+        (about["login"].as_bool(), about["signup"].as_bool(), about["esports"].as_bool()),
+        (Some(true), Some(true), Some(true))
+    );
+    let short = http
+        .post(format!("{}/signup", env.base[0]))
+        .form(&[("name", "Gwen"), ("password", "short"), ("return", "/account")])
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 403, "the site's session isn't accepted");
-    assert!(r.text().await.unwrap().contains("No sign-in here"));
-    // Tokens still work.
-    assert_eq!(env.client(0, &token).account().await.unwrap().username, "Eli");
+    assert_eq!(short.status(), 400);
+    let r = http
+        .post(format!("{}/signup", env.base[0]))
+        .form(&[
+            ("name", "Gwen"),
+            ("email", "gwen@example.org"),
+            ("password", "a long enough password"),
+            ("return", "/account"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_redirection(), "{}", r.status());
+    assert_eq!(r.headers()["location"], "/account");
+    let session = set_cookie(&r, "oc_session").expect("signed in");
+    let duplicate = http
+        .post(format!("{}/signup", env.base[1]))
+        .form(&[("name", "gwen"), ("password", "a long enough password")])
+        .send()
+        .await
+        .unwrap();
+    assert!(duplicate.text().await.unwrap().contains("taken"));
+    // The account page makes a token, shown once.
+    let page = http
+        .get(format!("{}/account", env.base[0]))
+        .header("cookie", format!("oc_session={session}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(page.contains("Signed in as <b>Gwen</b>"), "{page}");
+    let csrf = page.split("name=\"csrf\" value=\"").nth(1).unwrap().split('"').next().unwrap().to_owned();
+    let page = http
+        .post(format!("{}/account/tokens", env.base[1]))
+        .header("cookie", format!("oc_session={session}"))
+        .form(&[
+            ("csrf", csrf.as_str()),
+            ("label", "my board"),
+            ("scope:board:play", "on"),
+            ("scope:bot:play", "on"),
+            ("days", "30"),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let token = page.split("<code class=token>").nth(1).unwrap().split('<').next().unwrap().to_owned();
+    assert!(token.starts_with("ocp_"));
+    let me = env.client(0, &token);
+    assert_eq!(me.account().await.unwrap().username, "Gwen");
+    let scopes: Vec<String> = env
+        .pg
+        .query_one(&format!("SELECT scopes FROM {}.api_tokens WHERE name = 'my board'", env.chess), &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(scopes, ["board:play"], "bot:play is for staff");
+    // Signing in by email, wrongly then rightly.
+    let bad = http
+        .post(format!("{}/login", env.base[0]))
+        .form(&[("name", "gwen@example.org"), ("password", "not the password")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 401);
+    let good = http
+        .post(format!("{}/login", env.base[0]))
+        .form(&[
+            ("name", "GWEN@example.org"),
+            ("password", "a long enough password"),
+            ("return", "/oauth?x=1"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(good.headers()["location"], "/oauth?x=1");
+    assert!(set_cookie(&good, "oc_session").is_some());
+    // Somewhere else isn't a place to be sent back to.
+    let elsewhere = http
+        .post(format!("{}/login", env.base[0]))
+        .form(&[("name", "Gwen"), ("password", "a long enough password"), ("return", "//evil.test/")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(elsewhere.headers()["location"], "/account");
+    env.teardown().await;
+}
+
+/// "Sign in with the site": the site's signed answer signs in (and links)
+/// its player; its server gets tokens for its players with the secret.
+#[tokio::test]
+async fn the_host_site_signs_players_in_and_gets_their_tokens() {
+    use open_chess_server::http::web::sign;
+    let Some(env) = setup(|_| {}).await else { return };
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    // Off to the site, with a nonce to come back with.
+    let r = http.get(format!("{}/auth/esports?return=/account", env.base[0])).send().await.unwrap();
+    let to = r.headers()["location"].to_str().unwrap().to_owned();
+    assert!(
+        to.starts_with(
+            "http://site.test/chess/sso?return=http%3A%2F%2Fchess.test%2Fauth%2Fesports%2Fback&nonce="
+        ),
+        "{to}"
+    );
+    let nonce = to.split("nonce=").nth(1).unwrap().to_owned();
+    let sso = set_cookie(&r, "oc_sso").unwrap();
+    let exp = chrono::Utc::now().timestamp() + 60;
+    let answer = |nonce: &str, secret: &str| {
+        sign(
+            secret,
+            &serde_json::json!({"sub": "77", "name": "Hal Jones", "email": "hal@site.test", "role": "player", "roles": ["manager"], "nonce": nonce, "exp": exp}),
+        )
+    };
+    // A forged or replayed answer is refused.
+    let forged = http
+        .get(format!("{}/auth/esports/back", env.base[1]))
+        .query(&[("a", answer(&nonce, &"x".repeat(40)))])
+        .header("cookie", format!("oc_sso={sso}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forged.status(), 403);
+    let wrong_nonce = http
+        .get(format!("{}/auth/esports/back", env.base[1]))
+        .query(&[("a", answer("other", SECRET))])
+        .header("cookie", format!("oc_sso={sso}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong_nonce.status(), 403);
+    let back = http
+        .get(format!("{}/auth/esports/back", env.base[1]))
+        .query(&[("a", answer(&nonce, SECRET))])
+        .header("cookie", format!("oc_sso={sso}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(back.headers()["location"], "/account");
+    let session = set_cookie(&back, "oc_session").unwrap();
+    let page = http
+        .get(format!("{}/account", env.base[0]))
+        .header("cookie", format!("oc_session={session}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(page.contains("Signed in as <b>Hal-Jones</b> (linked"), "{page}");
+    // The site's server asks for a token: the same player, linked.
+    let ask = |secret: &str| {
+        http.post(format!("{}/api/esports/token", env.base[0])).bearer_auth(secret).form(&[
+            ("sub", "77"),
+            ("name", "Hal Jones"),
+            ("roles", "manager"),
+            ("scopes", "board:play chess:fairplay"),
+        ])
+    };
+    assert_eq!(ask("wrong").send().await.unwrap().status(), 401);
+    let t: serde_json::Value = ask(SECRET).send().await.unwrap().json().await.unwrap();
+    assert_eq!(t["username"], "Hal-Jones");
+    assert_eq!(t["scopes"], serde_json::json!(["board:play", "chess:fairplay"]), "a manager on the site");
+    let me = env.client(1, t["token"].as_str().unwrap());
+    assert_eq!(me.account().await.unwrap().username, "Hal-Jones");
+    // A game's tokens last hours, and go together when the site says.
+    let before = chrono::Utc::now().timestamp_millis();
+    let game: serde_json::Value = http
+        .post(format!("{}/api/esports/token", env.base[0]))
+        .bearer_auth(SECRET)
+        .form(&[("sub", "77"), ("name", "Hal Jones"), ("label", "chess match 5"), ("hours", "2")])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let left = game["expires"].as_i64().unwrap() - before;
+    assert!((7_100_000..=7_300_000).contains(&left), "{left}");
+    let r: serde_json::Value = http
+        .post(format!("{}/api/esports/revoke", env.base[1]))
+        .bearer_auth(SECRET)
+        .form(&[("label", "chess match 5")])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["revoked"], 1);
+    assert!(env.client(0, game["token"].as_str().unwrap()).account().await.is_err());
+    assert_eq!(me.account().await.unwrap().username, "Hal-Jones", "other tokens stay");
+    let linked: serde_json::Value = http
+        .get(format!("{}/api/esports/players", env.base[1]))
+        .bearer_auth(SECRET)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(linked["players"], serde_json::json!([{"sub": "77", "username": "Hal-Jones"}]));
+    // A new site player gets a chess account on first use.
+    let t: serde_json::Value = http
+        .post(format!("{}/api/esports/token", env.base[0]))
+        .bearer_auth(SECRET)
+        .form(&[("sub", "78"), ("name", "Ivy")])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!((t["username"].as_str(), t["scopes"].as_array().map(Vec::len)), (Some("Ivy"), Some(3)));
+    env.teardown().await;
+}
+
+/// A deployment that used the host site's players: they, their chess
+/// tokens and our references to them come across once.
+#[tokio::test]
+async fn the_site_players_are_imported_once() {
+    let pre = "
+        INSERT INTO {site}.players (id, name, email, roles) VALUES (7, 'Jo', 'jo@site.test', '{manager}'), (8, 'Kim', NULL, '{}'), (9, 'Lee', NULL, '{}');
+        INSERT INTO {site}.api_tokens (player_id, name, token_hash, prefix, scopes, expires_at)
+          VALUES (8, 'chess', encode(sha256('esl_kims-token'), 'hex'), 'esl_ki', '{board:play,esports:read}', now() + interval '1 day'),
+                 (9, 'site only', encode(sha256('esl_lees-token'), 'hex'), 'esl_le', '{esports:read}', now() + interval '1 day');
+        CREATE SCHEMA {chess};
+        CREATE TABLE {chess}.legacy (player_id bigint REFERENCES {site}.players ON DELETE CASCADE);
+        INSERT INTO {chess}.legacy VALUES (7);";
+    let Some(env) = setup_with(pre, |_| {}).await else { return };
+    let rows = env
+        .pg
+        .query(&format!("SELECT id, name, esports_id, roles FROM {}.players ORDER BY id", env.chess), &[])
+        .await
+        .unwrap();
+    let got: Vec<(i64, String, Option<String>, Vec<String>)> =
+        rows.iter().map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))).collect();
+    assert_eq!(
+        got,
+        [
+            (7, "Jo".into(), Some("7".into()), vec!["manager".to_owned()]),
+            (8, "Kim".into(), Some("8".into()), vec![])
+        ],
+        "Jo (named in our table) and Kim (a chess token), not Lee"
+    );
+    // Kim's token works here, with only its chess scope.
+    let kim = env.client(0, "esl_kims-token");
+    assert_eq!(kim.account().await.unwrap().username, "Kim");
+    assert!(env.client(0, "esl_lees-token").account().await.is_err());
+    // Our table now points at our players.
+    let points: String = env
+        .pg
+        .query_one(
+            &format!("SELECT confrelid::regclass::text FROM pg_constraint WHERE conrelid = '{}.legacy'::regclass AND contype = 'f'", env.chess),
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(points, format!("{}.players", env.chess));
+    // New players don't collide with imported ids; a second start imports nothing again.
+    let (id, _) = env.player("New", &["board:play"]).await;
+    assert!(id > 8, "{id}");
+    let db = open_chess_server::db::Db::connect(&env.cfg).unwrap();
+    db.migrate().await.unwrap();
+    let n: i64 =
+        env.pg.query_one(&format!("SELECT count(*) FROM {}.players", env.chess), &[]).await.unwrap().get(0);
+    assert_eq!(n, 3);
     env.teardown().await;
 }
 
@@ -721,7 +1120,7 @@ async fn fair_play_screening_and_review() {
     let (_, b) = env.player("Ben", HUMAN).await;
     let (mid, m) = env.player("Mod", &["chess:fairplay"]).await;
     env.pg
-        .execute(&format!("UPDATE {}.players SET roles = '{{manager}}' WHERE id = $1", env.site), &[&mid])
+        .execute(&format!("UPDATE {}.players SET roles = '{{manager}}' WHERE id = $1", env.chess), &[&mid])
         .await
         .unwrap();
     env.client(0, &b).account().await.unwrap();
@@ -951,6 +1350,65 @@ async fn unsure_photos_are_kept_for_review_and_confirmed() {
         Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
     );
     assert_eq!(row.get::<_, Option<String>>(1).as_deref(), Some("player"));
+
+    // The review API: a site manager's token lists, shows and labels it;
+    // a player's can't.
+    let http = reqwest::Client::new();
+    let t: serde_json::Value = http
+        .post(format!("{}/api/esports/token", env.base[0]))
+        .bearer_auth(SECRET)
+        .form(&[("sub", "900"), ("name", "Reviewer"), ("roles", "manager"), ("scopes", "chess:fairplay")])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let manager = t["token"].as_str().unwrap().to_owned();
+    let list: serde_json::Value = http
+        .get(format!("{}/api/esl/photos", env.base[1]))
+        .bearer_auth(&manager)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        list["photos"].as_array().unwrap().iter().any(|p| p["id"] == id && p["label_source"] == "player"),
+        "{list}"
+    );
+    let img = http
+        .get(format!("{}/api/esl/photos/{id}/image", env.base[1]))
+        .bearer_auth(&manager)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(img.status(), 200);
+    assert!(!img.bytes().await.unwrap().is_empty());
+    let refused =
+        http.get(format!("{}/api/esl/photos", env.base[1])).bearer_auth(&token).send().await.unwrap();
+    assert_eq!(refused.status(), 403);
+    let r = http
+        .post(format!("{}/api/esl/photos/{id}/label", env.base[0]))
+        .bearer_auth(&manager)
+        .json(&serde_json::json!({"placement": "4k3/8/8/8/8/8/8/4K3 w - - 0 1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let row = env
+        .pg
+        .query_one(
+            &format!("SELECT label, label_source FROM {}.board_photos WHERE id = $1", env.chess),
+            &[&id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (row.get::<_, Option<String>>(0).as_deref(), row.get::<_, Option<String>>(1).as_deref()),
+        (Some("4k3/8/8/8/8/8/8/4K3"), Some("reviewer"))
+    );
 
     // A reviewer's label isn't overwritten by the player.
     env.pg

@@ -192,6 +192,11 @@ async fn serve(cfg: Config) -> Result<()> {
 
     let listener = tokio::net::TcpListener::bind(&cfg.bind).await.context("binding CHESS_BIND")?;
     info!(bind = cfg.bind, public = cfg.public_url(), "chess server listening");
+    if cfg.esports_login && cfg.esports().is_none() {
+        tracing::warn!(
+            "ESPORTS_LOGIN is on but ESPORTS_SECRET isn't set (32+ characters): signing in with the site is off"
+        );
+    }
     axum::serve(listener, app::router(&ctx)?).with_graceful_shutdown(wait(stop)).await?;
     Ok(())
 }
@@ -204,7 +209,7 @@ async fn bot_create(cfg: Config, name: &str, days: i64) -> Result<()> {
     let tx = c.transaction().await?;
     let player: i64 = tx
         .query_one(
-            &db.sql("INSERT INTO site.players (name, key_hash) VALUES ($1, $2) RETURNING id"),
+            &db.sql("INSERT INTO chess.players (name, key_hash) VALUES ($1, $2) RETURNING id"),
             &[&name, &auth::hash_key(&auth::random_token(28))],
         )
         .await?
@@ -222,7 +227,7 @@ async fn bot_create(cfg: Config, name: &str, days: i64) -> Result<()> {
     let expires = chrono::Utc::now() + chrono::Duration::days(days.clamp(1, 365));
     tx.execute(
         &db.sql(
-            "INSERT INTO site.api_tokens (player_id, name, token_hash, prefix, scopes, expires_at)
+            "INSERT INTO chess.api_tokens (player_id, name, token_hash, prefix, scopes, expires_at)
              VALUES ($1, 'chess bot', $2, $3, $4, $5)",
         ),
         &[&player, &auth::hash_key(&token), &prefix, &scopes, &expires],

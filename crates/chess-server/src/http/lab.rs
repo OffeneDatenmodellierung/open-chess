@@ -593,3 +593,128 @@ pub async fn confirm_photo(
     }
     Ok(ok())
 }
+
+// ─── photo review (reviewers: `chess:fairplay`, managers and admins) ───
+
+fn reviewer(who: &Who) -> ApiResult<i64> {
+    let id = who.need(&["chess:fairplay"])?;
+    if !(id.admin || id.manager) {
+        return Err(ApiError::forbidden("photo review is for managers and admins"));
+    }
+    Ok(id.player)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PhotoList {
+    #[serde(default)]
+    all: bool,
+}
+
+/// `GET /api/esl/photos`: board photos the reader wasn't sure of, waiting
+/// for a person (`?all=true`: every photo), newest first, without the
+/// image bytes.
+pub async fn photos(State(ctx): State<Ctx>, who: Who, Query(q): Query<PhotoList>) -> ApiResult<Response> {
+    reviewer(&who)?;
+    let c = ctx.db.conn().await?;
+    let rows = c
+        .query(
+            &ctx.db.sql(
+                "SELECT id, created_at, reason, reading, suggestion, suggestion_failed, label, label_source, unreadable, labelled_at
+                   FROM chess.board_photos
+                  WHERE $1 OR ((label IS NULL OR label_source = 'player') AND NOT unreadable)
+                  ORDER BY id DESC LIMIT 200",
+            ),
+            &[&q.all],
+        )
+        .await?;
+    let list: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.get::<_, i64>(0),
+                "at": r.get::<_, chrono::DateTime<chrono::Utc>>(1),
+                "reason": r.get::<_, String>(2),
+                "reading": r.get::<_, Option<serde_json::Value>>(3),
+                "suggestion": r.get::<_, Option<serde_json::Value>>(4),
+                "suggestion_failed": r.get::<_, Option<String>>(5),
+                "label": r.get::<_, Option<String>>(6),
+                "label_source": r.get::<_, Option<String>>(7),
+                "unreadable": r.get::<_, bool>(8),
+                "labelled_at": r.get::<_, Option<chrono::DateTime<chrono::Utc>>>(9),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "photos": list })).into_response())
+}
+
+/// `GET /api/esl/photos/{id}/image`: a photo's bytes.
+pub async fn photo_image(State(ctx): State<Ctx>, who: Who, Path(id): Path<i64>) -> ApiResult<Response> {
+    reviewer(&who)?;
+    let c = ctx.db.conn().await?;
+    let r = c
+        .query_opt(&ctx.db.sql("SELECT image, mime FROM chess.board_photos WHERE id = $1"), &[&id])
+        .await?
+        .ok_or_else(|| ApiError::not_found("photo"))?;
+    let (bytes, mime): (Vec<u8>, String) = (r.get(0), r.get(1));
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, mime),
+            (axum::http::header::CACHE_CONTROL, "private, max-age=3600".into()),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PhotoLabel {
+    /// FEN piece placement from White's side (the first field is used).
+    #[serde(default)]
+    placement: Option<String>,
+    /// Not a board, or not one anybody could read.
+    #[serde(default)]
+    unreadable: bool,
+}
+
+/// `POST /api/esl/photos/{id}/label` (JSON `{placement}` or
+/// `{unreadable: true}`): a reviewer's label, which replaces a player's.
+/// The position joins the dictionary (each side to move: a photo doesn't
+/// say).
+pub async fn label_photo(
+    State(ctx): State<Ctx>,
+    who: Who,
+    Path(id): Path<i64>,
+    Json(b): Json<PhotoLabel>,
+) -> ApiResult<Response> {
+    let player = reviewer(&who)?;
+    let grid = match (&b.placement, b.unreadable) {
+        (_, true) => None,
+        (Some(p), false) => Some(
+            chess_analysis::photo::parse_placement(p.split_whitespace().next().unwrap_or(""))
+                .ok_or_else(|| ApiError::bad("that isn't a board: eight ranks of eight squares"))?,
+        ),
+        (None, false) => return Err(ApiError::bad("say what the board shows, or mark it unreadable")),
+    };
+    let placement = grid.as_ref().map(chess_analysis::photo::placement);
+    let c = ctx.db.conn().await?;
+    let n = c
+        .execute(
+            &ctx.db.sql(
+                "UPDATE chess.board_photos SET label = $2, unreadable = $3, labelled_by = $4, labelled_at = now(),
+                        label_source = CASE WHEN $3 THEN NULL ELSE 'reviewer' END
+                  WHERE id = $1",
+            ),
+            &[&id, &placement, &b.unreadable, &player],
+        )
+        .await?;
+    if n == 0 {
+        return Err(ApiError::not_found("photo"));
+    }
+    if let Some(grid) = &grid {
+        let games = chess_analysis::dictionary::photo_positions(grid, None);
+        if let Err(e) = queue_photo_positions(&ctx.db, &*c, &games).await {
+            tracing::warn!("queueing a photo's position: {e:#}");
+        }
+    }
+    Ok(ok())
+}

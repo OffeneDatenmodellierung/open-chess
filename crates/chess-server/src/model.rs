@@ -90,7 +90,7 @@ pub async fn ensure_account(db: &Db, c: &impl GenericClient, player: i64) -> Res
         return Ok(a);
     }
     let name: String = c
-        .query_one(&db.sql("SELECT name FROM site.players WHERE id = $1"), &[&player])
+        .query_one(&db.sql("SELECT name FROM chess.players WHERE id = $1"), &[&player])
         .await
         .context("no such player")?
         .get(0);

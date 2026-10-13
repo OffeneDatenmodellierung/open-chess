@@ -53,7 +53,7 @@ fn pgn_text(row: &GameRow, game: &Game, cfg: &Config, clocks: bool) -> String {
     })
 }
 
-fn json(row: &GameRow, game: &Game, q: &HashMap<String, String>, cfg: &Config) -> p::GameJson {
+pub(crate) fn json(row: &GameRow, game: &Game, q: &HashMap<String, String>, cfg: &Config) -> p::GameJson {
     let player = |s: Side| {
         let a = row.player(s);
         let (rating, prov, diff) = row.rating(s);

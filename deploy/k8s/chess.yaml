@@ -5,7 +5,7 @@
 #
 # Image: ghcr.io/offenedatenmodellierung/open-chess (one image: `serve`
 # and `analyse`; the `slim` tag is enough for the API alone). Pin a
-# release's version. Secret `open-chess`: DATABASE_URL, ESPORTS_PUBLIC_URL
+# release's version. Secret `open-chess`: DATABASE_URL, ESPORTS_SECRET, ESPORTS_PUBLIC_URL
 # (the site, for sign-in links) and CHESS_FAIRPLAY_MODEL (the private
 # screening model); the other settings are below.
 apiVersion: apps/v1
@@ -49,6 +49,8 @@ spec:
             - { name: CHESS_PUBLIC_URL, value: "https://example.com/chess" }
             # People sign in to apps (OAuth) through the site.
             - { name: ESPORTS_LOGIN, value: "true" }
+            - name: ESPORTS_SECRET
+              valueFrom: { secretKeyRef: { name: open-chess, key: ESPORTS_SECRET } }
             - { name: CHESS_SITE_SCHEMA, value: site }
             - { name: CHESS_SCHEMA, value: chess }
             - { name: CHESS_POOL_SIZE, value: "8" }

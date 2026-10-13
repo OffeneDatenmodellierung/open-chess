@@ -73,8 +73,8 @@ and both clocks. It runs a few plies behind live games
 
 The app (`/app/` on the server) plays online on either: **Online › Lichess**
 signs in to lichess.org with OAuth and plays through its Board API; **Online ›
-<your site>** does the same against your server (or takes an API token,
-when the server has no browser sign-in: `ESPORTS_LOGIN` in
+<your site>** does the same against your server (signing in, or making an
+account, on its own pages; or takes an API token: see
 [api.md](api.md#accounts-tokens-and-oauth)). Its training help (engine
 lines, move explanations) is switched off during online games on Lichess,
 where using it would be cheating; on your own server it can be used and is

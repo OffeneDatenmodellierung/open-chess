@@ -9,7 +9,7 @@
 
 use chess_core::Side;
 use ratatui::crossterm::event::KeyCode;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::choice::{GameChoice, Site, Start};
@@ -528,6 +528,7 @@ impl Form {
     pub fn lines(&self) -> Vec<Line<'static>> {
         let rows = self.rows();
         let focus = self.focus.min(rows.len() - 1);
+        let t = crate::theme::get();
         let mut out: Vec<Line> = rows
             .iter()
             .enumerate()
@@ -535,12 +536,15 @@ impl Form {
                 let here = i == focus;
                 let arrows = if here && !r.text() { "◀ ▶ " } else { "" };
                 let cursor = if here && r.text() { "▏" } else { "" };
-                let style =
-                    if here { Style::default().add_modifier(Modifier::REVERSED) } else { Style::default() };
+                let style = if here {
+                    Style::default().bg(t.action).fg(t.paper).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
                 Line::from(vec![
-                    Span::styled(format!("{:>10}: ", self.label(r)), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("{:>10}: ", self.label(r)), t.muted()),
                     Span::styled(format!("{}{cursor}", self.value(r)), style),
-                    Span::styled(format!(" {arrows}"), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!(" {arrows}"), t.muted()),
                 ])
             })
             .collect();
@@ -558,9 +562,9 @@ impl Form {
             Kind::Server => "Token: the server's account page (board:play, challenge:write).".into(),
         };
         out.push(Line::from(""));
-        out.push(Line::styled(hint, Style::default().fg(Color::DarkGray)));
+        out.push(Line::styled(hint, t.muted()));
         if let Some(e) = &self.error {
-            out.push(Line::styled(e.clone(), Style::default().fg(Color::Red)));
+            out.push(Line::styled(e.clone(), Style::default().fg(t.danger)));
         }
         out
     }
