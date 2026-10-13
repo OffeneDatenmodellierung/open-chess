@@ -11,6 +11,11 @@ publish = false
 [dependencies]
 chess-core = { package = "open-chess-core", path = "../chess-core" }
 chess-dgt = { package = "open-chess-dgt", path = "../chess-dgt" }
+embedded-graphics = "0.8.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+spidev = "0.7.1"
+gpiocdev = "0.8.0"
 
 [lints.rust]
 unsafe_code = "forbid"

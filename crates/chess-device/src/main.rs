@@ -31,7 +31,8 @@ use anyhow::{Context, Result, bail};
 use chess_analysis::book::Book;
 use chess_core::Side;
 use chess_dgtpi::driver::Clock;
-use clap::Parser;
+use clap::parser::ValueSource;
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
 use open_chess_device::controller::{Controller, Setup, TimeControl};
 use open_chess_device::discover::{self, BleKind, Found};
 use open_chess_device::links::{AnyLink, CentaurLink, ChessnutLink, DgtLink, PegasusLink};
@@ -40,10 +41,11 @@ use open_chess_device::online::{Challenge, Connection};
 use open_chess_device::opponent::{EngineSpec, Opponent};
 use open_chess_device::play::{self, Mode, Options};
 use open_chess_device::view::{EngineInfo, View};
-use open_chess_device::{ble, tui};
+use open_chess_device::{ble, picoini, tui};
 use tokio::sync::watch;
 
 #[derive(Debug, Clone, Parser)]
+#[allow(clippy::struct_excessive_bools)] // command-line switches
 #[command(name = "open-chess-device", version, about = "Play chess on an electronic board")]
 struct Args {
     /// A DGT board's port: /dev/ttyACM0 (USB, Linux), /dev/cu.usbmodem… (macOS),
@@ -76,6 +78,16 @@ struct Args {
     /// Show the terminal screen (the default when no board is named).
     #[arg(long)]
     tui: bool,
+
+    /// On a Centaur, leave its e-paper screen alone.
+    #[arg(long)]
+    no_screen: bool,
+
+    /// Take settings from PicoChess's picochess.ini (the board's port, the
+    /// DGT Pi's clock, engine, level, book, time control, web port, clock
+    /// side); options given here win.
+    #[arg(long)]
+    picochess_ini: Option<std::path::PathBuf>,
 
     /// open-chess's engine at this level, 1 (beginner) to 8 (the clock's
     /// buttons change it during play).
@@ -153,13 +165,62 @@ struct Args {
 }
 
 fn main() -> ExitCode {
-    match run(Args::parse()) {
+    let matches = Args::command().get_matches();
+    let args = match Args::from_arg_matches(&matches) {
+        Ok(a) => a,
+        Err(e) => e.exit(),
+    };
+    let args = match &args.picochess_ini {
+        Some(path) => match picoini::read(path) {
+            Ok(ini) => with_ini(args.clone(), &matches, &ini),
+            Err(e) => {
+                eprintln!("open-chess-device: reading {}: {e}", path.display());
+                return ExitCode::FAILURE;
+            }
+        },
+        None => args,
+    };
+    match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("open-chess-device: {e:#}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// Fill in what PicoChess's settings say, where the command line didn't.
+fn with_ini(mut args: Args, m: &ArgMatches, ini: &picoini::Settings) -> Args {
+    let given =
+        |id: &str| matches!(m.value_source(id), Some(ValueSource::CommandLine | ValueSource::EnvVariable));
+    if !given("board") && !args.centaur && args.ble.is_none() && args.usb.is_none() {
+        args.board = ini.dgt_port.clone().or(args.board);
+    }
+    if ini.dgtpi && !given("clock") {
+        args.clock = "dgtpi".into();
+    }
+    if !given("uci") && ini.engine.is_some() {
+        args.uci.clone_from(&ini.engine);
+        if !given("uci_options") {
+            args.uci_options.clone_from(&ini.uci_options);
+        }
+    }
+    if !given("book") && ini.book.is_some() {
+        args.book.clone_from(&ini.book);
+    }
+    if !given("time") && ini.time.is_some() {
+        args.time = ini.time;
+    }
+    if !given("listen") && ini.listen.is_some() {
+        args.listen.clone_from(&ini.listen);
+    }
+    if !given("white_clock")
+        && let Some(side) = &ini.clockside
+    {
+        args.white_clock.clone_from(side);
+    }
+    log::line(Source::Device, format!("PicoChess settings read; not used here: {}", ini.ignored.join(", ")));
+    args
 }
 
 fn engine_spec(args: &Args) -> Result<EngineSpec> {
@@ -291,6 +352,10 @@ fn play_on(
 ) -> Result<()> {
     log::line(Source::Device, format!("connecting to {}", found.describe()));
     let mut link = open(found, args)?;
+    #[cfg(target_os = "linux")]
+    if matches!(found, Found::Centaur { .. }) && !args.no_screen {
+        open_chess_device::epaper::start(view.subscribe());
+    }
     log::line(Source::Device, format!("connected to {} (you play {})", found.describe(), args.play));
     let mode = mode(args, seed)?;
     let o = Options {

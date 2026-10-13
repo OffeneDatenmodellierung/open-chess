@@ -163,7 +163,7 @@ impl Wire for BleWire {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl Wire for crate::usb::Hid {
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
         crate::usb::Hid::write(self, data)
@@ -187,15 +187,16 @@ impl ChessnutLink {
         Ok(ChessnutLink::over(Box::new(BleWire(t)), now))
     }
 
-    /// Over USB (Linux: the board's `hidraw` node).
-    #[cfg(target_os = "linux")]
+    /// Over USB (Linux: the board's `hidraw` node; macOS and Windows: its
+    /// HID path).
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     pub fn usb(path: &str, now: Instant) -> io::Result<ChessnutLink> {
         Ok(ChessnutLink::over(Box::new(crate::usb::Hid::open(path)?), now))
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     pub fn usb(_path: &str, _now: Instant) -> io::Result<ChessnutLink> {
-        Err(io::Error::other("Chessnut boards on USB need Linux for now; use Bluetooth"))
+        Err(io::Error::other("Chessnut boards on USB need Linux, macOS or Windows"))
     }
 
     pub fn over(wire: Box<dyn Wire>, now: Instant) -> ChessnutLink {

@@ -19,16 +19,18 @@ pub mod board;
 pub mod controller;
 pub mod dgtpi;
 pub mod discover;
+pub mod epaper;
 pub mod links;
 pub mod livechess;
 pub mod log;
 pub mod online;
 pub mod opponent;
 pub mod pico;
+pub mod picoini;
 pub mod play;
 pub mod serial;
 pub mod tui;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub mod usb;
 pub mod view;
 pub mod web;

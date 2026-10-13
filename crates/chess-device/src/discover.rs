@@ -1,9 +1,6 @@
 //! Finding boards: serial and USB ports, Chessnut boards on USB, and
 //! Bluetooth LE boards nearby.
 
-use std::path::Path;
-use std::time::Duration;
-
 /// A Bluetooth LE board's kind, from its advertised name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BleKind {
@@ -59,7 +56,25 @@ impl Found {
     }
 }
 
+/// COM ports where a DGT board may be (Windows).
+#[cfg(windows)]
+pub fn serial_ports() -> Vec<Found> {
+    serialport::available_ports()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| {
+            let label = match p.port_type {
+                serialport::SerialPortType::UsbPort(u) => u.product.unwrap_or_else(|| "USB".into()),
+                serialport::SerialPortType::BluetoothPort => "Bluetooth".into(),
+                _ => "serial".into(),
+            };
+            Found::Serial { path: p.port_name, label }
+        })
+        .collect()
+}
+
 /// Serial-style ports where a DGT board may be.
+#[cfg(not(windows))]
 pub fn serial_ports() -> Vec<Found> {
     let mut out = Vec::new();
     let Ok(dir) = std::fs::read_dir("/dev") else { return out };
@@ -86,11 +101,12 @@ pub fn serial_ports() -> Vec<Found> {
 
 /// Whether this looks like a DGT Centaur (a Pi with DGTCentaurMods or
 /// open-chess installed for it, or told so by `OPEN_CHESS_CENTAUR`).
+#[cfg(not(windows))]
 fn centaur_here() -> bool {
-    Path::new("/dev/serial0").exists()
+    std::path::Path::new("/dev/serial0").exists()
         && (std::env::var_os("OPEN_CHESS_CENTAUR").is_some()
-            || Path::new("/opt/DGTCentaurMods").exists()
-            || Path::new("/etc/open-chess/centaur").exists())
+            || std::path::Path::new("/opt/DGTCentaurMods").exists()
+            || std::path::Path::new("/etc/open-chess/centaur").exists())
 }
 
 /// Chessnut's USB vendor id, and the product ids its boards use (the
@@ -106,8 +122,15 @@ pub fn is_chessnut_hid(hid_id: &str) -> bool {
     v == CHESSNUT_VID && CHESSNUT_PIDS.contains(&(p & 0xff00))
 }
 
+/// Chessnut boards on USB (macOS and Windows: through hidapi).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub fn chessnut_usb() -> Vec<Found> {
+    crate::usb::chessnut_boards()
+}
+
 /// Chessnut boards on USB (Linux: their `hidraw` nodes, the interface on
 /// Chessnut's vendor usage page 0xFF00).
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn chessnut_usb() -> Vec<Found> {
     let mut out = Vec::new();
     let Ok(dir) = std::fs::read_dir("/sys/class/hidraw") else { return out };
@@ -165,7 +188,6 @@ pub fn ble_scan(secs: u64) -> Result<Vec<Found>, String> {
         let random = info.lines().next().is_some_and(|l| l.contains("(random)"));
         found.push(Found::Ble { address, name, kind, random });
     }
-    std::thread::sleep(Duration::from_millis(10));
     Ok(found)
 }
 
