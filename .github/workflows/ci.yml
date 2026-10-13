@@ -40,10 +40,19 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked
       # Feature-gated code the workspace build leaves out.
       - run: cargo clippy -p open-chess-dgt --all-targets --features serial --locked
+      # Online play brings TLS, whose crypto is partly C: cross compilers.
+      - name: C cross compilers for the Pi targets
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
       # The device runtime as it builds for a DGT Pi or Centaur: 64-bit
       # Raspberry Pi OS, and 32-bit ARMv6 for the Centaur's original Pi Zero.
       - run: cargo clippy -p open-chess-device -p open-chess-dgtpi -p open-chess-centaur -p open-chess-ble --target aarch64-unknown-linux-gnu --locked
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
       - run: cargo clippy -p open-chess-device -p open-chess-centaur --target arm-unknown-linux-gnueabihf --locked
+        env:
+          CC_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-gcc
+          AR_arm_unknown_linux_gnueabihf: arm-linux-gnueabihf-ar
 
   # Everything, the server's end-to-end tests included (two replicas on a
   # real Postgres, fair play with Stockfish).

@@ -98,6 +98,45 @@ impl View {
         }
     }
 
+    /// An online game on the board (or none yet, under `waiting_id`).
+    pub fn online(
+        online: &crate::online::OnlinePlay,
+        board: &impl Board,
+        waiting_id: &str,
+        created_ms: i64,
+        now: Instant,
+    ) -> View {
+        let g = board.game();
+        let live = online.game();
+        View {
+            game_id: live.map_or_else(|| waiting_id.to_owned(), |l| l.id.clone()),
+            created_ms,
+            initial_fen: g.initial_fen().map(str::to_owned),
+            moves: g.uci_moves(),
+            fen: g.fen(),
+            turn: g.turn(),
+            status: live.map_or(Status::Created, |l| l.status),
+            winner: live.and_then(|l| l.winner),
+            player: live.map_or(Side::White, |l| l.side),
+            level: 0,
+            engine: EngineInfo {
+                name: Some(live.map_or_else(|| "waiting for a game".into(), |l| l.opponent.clone())),
+            },
+            thinking: false,
+            awaiting_board: board.awaiting_board(),
+            time: live.and_then(|l| {
+                l.limit_ms.map(|limit| TimeControl {
+                    minutes: u32::try_from(limit / 60_000).unwrap_or(0),
+                    increment_secs: u32::try_from(l.increment_ms / 1000).unwrap_or(0),
+                })
+            }),
+            clocks: live.and_then(|l| l.clocks_at(now)),
+            running: live.and_then(crate::online::Live::running),
+            paused: false,
+            at: now,
+        }
+    }
+
     /// The same to a viewer, apart from the clocks counting down.
     pub fn same(&self, other: &View) -> bool {
         let strip = |v: &View| View { clocks: v.clocks.map(|_| [0, 0]), at: self.at, ..v.clone() };

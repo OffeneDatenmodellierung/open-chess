@@ -157,6 +157,29 @@ add `--random-address`.
 
 None of these has been tried on a real board yet.
 
+**Online play from the board.** `--online` plays games on lichess.org (or
+an open-chess server: `--online https://chess.example.org`) instead of the
+engine, through the Board API, with no browser. Create an API token with
+the `board:play` scope (and `challenge:write` to challenge from the device)
+at lichess.org/account/oauth/token:
+
+```sh
+export OPEN_CHESS_TOKEN=lip_…
+open-chess-device --board /dev/ttyACM0 --online
+open-chess-device --board /dev/ttyACM0 --online --challenge a_friend --time 10+5 --play black
+```
+
+Start a game on the site or in the app (a seek, or accept a challenge) and
+the board plays it: your moves on the board are sent, your opponent's show
+on the clock (and light up on boards with lights) and wait to be made on
+the board, and the clock shows the game's times. The clock's first button
+shows the opponent's last move again. A takeback on the board can't take a
+move back online: the board says "set back" until the game's position is
+set up again. It works with every board above (`--centaur`, `--ble` …),
+and `--listen` shows the game in the app too. The Board API allows rapid,
+classical and correspondence games (and blitz on lichess.org for some
+accounts), not bullet.
+
 ## Coming next
 
 In order; each lands in open-chess as it's ready.
@@ -165,8 +188,7 @@ In order; each lands in open-chess as it's ready.
    Polyglot books, time controls on the clock and its buttons. PicoChess's
    full clock menu comes with PicoChess compatibility (4).
 2. **The Chess lab app as the board's screen.** Done (above).
-3. **Online play from the board** on lichess.org or an open-chess server,
-   through the Board API, no browser needed.
+3. **Online play from the board.** Done (above).
 4. **PicoChess compatibility.** The device answers PicoChess's web API (the
    `/event` websocket and `/channel` commands), so PicoChess's own web page,
    its relay and its MCP server work against it, and the `picochess.ini`
