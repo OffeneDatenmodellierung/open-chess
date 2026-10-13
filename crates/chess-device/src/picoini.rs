@@ -32,8 +32,12 @@ fn truthy(v: &str) -> bool {
 
 /// A path in the ini, relative to the ini's folder (PicoChess's home).
 fn resolve(dir: &Path, p: &str) -> String {
-    let path = Path::new(p);
-    if path.is_absolute() { p.to_owned() } else { dir.join(path).to_string_lossy().into_owned() }
+    if p.starts_with('/') || Path::new(p).is_absolute() {
+        return p.to_owned();
+    }
+    let d = dir.to_string_lossy();
+    let sep = if d.contains('\\') && !d.contains('/') { '\\' } else { '/' };
+    format!("{}{sep}{p}", d.trim_end_matches(['/', '\\']))
 }
 
 /// Read the text of a `picochess.ini` found in `dir`.

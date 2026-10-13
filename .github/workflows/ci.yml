@@ -82,7 +82,14 @@ jobs:
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then grep -E "(error|warning)" clippy.txt | head -30 | sed 's/^/::error::/'; fi
           exit "$status"
-      - run: cargo test -p open-chess-device --locked
+      - name: cargo test
+        shell: bash
+        run: |
+          set +e
+          cargo test -p open-chess-device --locked 2>&1 | tee test.txt
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then grep -E "(panicked|FAILED|left:|right:|error)" test.txt | head -30 | sed 's/^/::error::/'; fi
+          exit "$status"
 
   # Everything, the server's end-to-end tests included (two replicas on a
   # real Postgres, fair play with Stockfish).
