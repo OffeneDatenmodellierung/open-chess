@@ -26,6 +26,7 @@
 pub mod config;
 pub mod network;
 pub mod preprocess;
+mod softmax;
 pub mod tracker;
 #[cfg(feature = "wasm")]
 pub mod wasm;

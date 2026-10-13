@@ -20,7 +20,7 @@ decode = ["dep:image"]
 wasm = ["dep:wasm-bindgen", "dep:getrandom"]
 # GPUs on the server: NVIDIA (needs the CUDA toolkit to build) and Apple.
 cuda = ["candle-core/cuda", "candle-nn/cuda"]
-metal = ["candle-core/metal", "candle-nn/metal"]
+metal = ["candle-core/metal", "candle-nn/metal", "dep:candle-metal-kernels"]
 
 [dependencies]
 chess-analysis = { package = "open-chess-analysis", path = "../chess-analysis" }
@@ -28,6 +28,8 @@ chess-core = { package = "open-chess-core", path = "../chess-core" }
 cozy-chess = "0.3.4"
 candle-core = { version = "0.11.0", default-features = false }
 candle-nn = { version = "0.11.0", default-features = false }
+# The fused softmax's Metal kernel (for training: see src/softmax.rs).
+candle-metal-kernels = { version = "0.11.0", optional = true }
 safetensors = "0.8.0"
 half = "2.7.1"
 serde = { version = "1.0.229", features = ["derive"] }

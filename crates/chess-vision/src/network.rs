@@ -67,10 +67,13 @@ impl Norm {
 /// Scaled dot-product attention over `(batch, heads, tokens, head_dim)`.
 fn attend(q: &Tensor, k: &Tensor, v: &Tensor, head_dim: usize, mode: Mode) -> Result<Tensor> {
     let scale = 1.0 / (head_dim as f64).sqrt();
-    let w = (q.matmul(&k.t()?)? * scale)?;
+    // Scaling the queries (small) rather than the scores (tokens² per head).
+    let w = (q * scale)?.matmul(&k.t()?)?;
     let w = match mode {
         Mode::Infer => ops::softmax_last_dim(&w)?,
-        Mode::Train => ops::softmax(&w, D::Minus1)?,
+        // CUDA has no kernel for the fused, differentiable one.
+        Mode::Train if w.device().is_cuda() => ops::softmax(&w, D::Minus1)?,
+        Mode::Train => crate::softmax::softmax_last_dim(&w)?,
     };
     w.matmul(v)
 }
