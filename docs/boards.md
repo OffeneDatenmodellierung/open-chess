@@ -46,8 +46,21 @@ With `--time 5+3` (minutes + increment) the game is played to a clock: the
 DGT3000 shows both sides' time (`--white-clock right` if White sits on the
 right), clocks start with the first move, the engine plays to the clock, and
 a flag ends the game. The DGT3000's buttons, left to right: show the
-engine's last move again, level down, switch sides (the engine takes over
-the side to move), level up, pause or resume the clock.
+engine's last move again, level down, play (pause or resume a running
+clock; otherwise switch sides, the engine taking over the side to move),
+level up, and the menu.
+
+**The clock's menu**, as PicoChess has it: the right-hand button opens it,
+minus and plus go through the choices, the right-hand button picks, back
+goes up a level (and out at the top), play leaves it, and so does a move on
+the board. In it: the time control (untimed, PicoChess's sudden-death and
+Fischer times, and whatever `--time` set; before the first move it applies
+at once, otherwise from the next game), the engine's level, the side you
+play, the opening book (every `.bin` in `--books`, by default the folder
+of `--book`, or none) and the engine (open-chess's own, `--uci`, and every
+program in `--engines`; with `--picochess-ini`, the folder of its engine),
+and the version. On a Centaur the menu shows on the e-paper screen, in the
+app and on the terminal screen.
 
 **The Chess lab app as the board's screen.** With `--listen`, the device
 serves the app and a Lichess-style API; open its address on a phone or
@@ -123,9 +136,9 @@ rook is put down, en passant when the captured pawn is lifted, if that's
 last. Lifting a piece and putting it back does nothing; setting an earlier
 position back takes moves back; the starting position starts a new game.
 Promotions are to a queen. The engine's move lights its two squares and
-beeps. The buttons: back shows the engine's move again (on the clock, so
-for now only in the app), down and up change the level, tick switches sides,
-play pauses the clock. Its e-paper screen shows the game: the players and
+beeps. The buttons are the DGT3000's: back shows the engine's move again
+(in the app), down and up change the level, tick is play (pause, or switch
+sides), and play opens the clock's menu. Its e-paper screen shows the game: the players and
 clocks, the board (from your side) with the last move marked, what's
 going on ("make e5 on the board") and the latest moves, with quick
 partial refreshes and a full one now and then to clear ghosting
@@ -250,12 +263,11 @@ device doesn't use are listed in the log.
 In order; each lands in open-chess as it's ready.
 
 1. **Play the engine on the board.** Done (above): levels, UCI engines,
-   Polyglot books, time controls on the clock and its buttons. PicoChess's
-   full clock menu comes with PicoChess compatibility (4).
+   Polyglot books, time controls on the clock, its buttons and its menu.
 2. **The Chess lab app as the board's screen.** Done (above).
 3. **Online play from the board.** Done (above).
-4. **PicoChess compatibility.** The web API and `picochess.ini` are done
-   (above). Still to come: PicoChess's full clock menu.
+4. **PicoChess compatibility.** Done (above): the web API,
+   `picochess.ini` and the clock's menu.
 5. **Lichess's DGT connector.** Done (above).
 6. **A terminal screen and Mac/Windows.** Done (above).
 7. **Chessnut boards over USB.** Done (above).

@@ -22,6 +22,7 @@
 //! and gets the Chess lab app showing the game, with the device's settings.
 
 use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -37,10 +38,11 @@ use open_chess_device::controller::{Controller, Setup, TimeControl};
 use open_chess_device::discover::{self, BleKind, Found};
 use open_chess_device::links::{AnyLink, CentaurLink, ChessnutLink, DgtLink, PegasusLink};
 use open_chess_device::log::{self, Source};
+use open_chess_device::menu::Choices;
 use open_chess_device::online::{Challenge, Connection};
 use open_chess_device::opponent::{EngineSpec, Opponent};
 use open_chess_device::play::{self, Mode, Options};
-use open_chess_device::view::{EngineInfo, View};
+use open_chess_device::view::View;
 use open_chess_device::{ble, picoini, tui};
 use tokio::sync::watch;
 
@@ -109,6 +111,16 @@ struct Args {
     /// A Polyglot opening book (.bin) for the engine's opening moves.
     #[arg(long)]
     book: Option<String>,
+
+    /// Books the clock's menu offers: every .bin here (default: the
+    /// folder of --book).
+    #[arg(long)]
+    books: Option<std::path::PathBuf>,
+
+    /// UCI engines the clock's menu offers besides open-chess's own: every
+    /// program here (with --picochess-ini: the folder of its engine).
+    #[arg(long)]
+    engines: Option<std::path::PathBuf>,
 
     /// The side you play.
     #[arg(long, default_value = "white", value_parser = ["white", "black"])]
@@ -201,6 +213,10 @@ fn with_ini(mut args: Args, m: &ArgMatches, ini: &picoini::Settings) -> Args {
     }
     if !given("uci") && ini.engine.is_some() {
         args.uci.clone_from(&ini.engine);
+        if !given("engines") {
+            args.engines =
+                ini.engine.as_deref().and_then(|e| std::path::Path::new(e).parent()).map(Into::into);
+        }
         if !given("uci_options") {
             args.uci_options.clone_from(&ini.uci_options);
         }
@@ -238,10 +254,100 @@ fn engine_spec(args: &Args) -> Result<EngineSpec> {
 
 fn load_book(args: &Args) -> Result<Option<Book>> {
     let Some(p) = &args.book else { return Ok(None) };
-    let bytes = std::fs::read(p).with_context(|| format!("reading the book {p}"))?;
-    let book = Book::from_bytes(&bytes).with_context(|| p.clone())?;
-    log::line(Source::Engine, format!("book: {p}, {} entries", book.len()));
-    Ok(Some(book))
+    Ok(Some(play::load_book(Path::new(p))?))
+}
+
+fn stem(p: &Path) -> String {
+    p.file_stem().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// The books for the menu (sorted), and which one --book is.
+fn book_list(args: &Args) -> (Vec<PathBuf>, Option<usize>) {
+    let book = args.book.as_deref().map(Path::new);
+    let dir = args.books.clone().or_else(|| {
+        book.and_then(Path::parent)
+            .map(|d| if d.as_os_str().is_empty() { PathBuf::from(".") } else { d.to_path_buf() })
+    });
+    let mut books: Vec<PathBuf> = dir
+        .and_then(|d| std::fs::read_dir(d).ok())
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("bin")))
+        .collect();
+    books.sort();
+    let at = book.map(|b| {
+        books.iter().position(|p| same_file(p, b)).unwrap_or_else(|| {
+            books.push(b.to_path_buf());
+            books.len() - 1
+        })
+    });
+    (books, at)
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
+}
+
+/// A program to run: executable on Unix, an .exe on Windows.
+fn runnable(p: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        p.extension().is_none()
+            && p.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe"))
+    }
+}
+
+/// The engines for the menu (open-chess's first), and which one plays.
+fn engine_list(args: &Args) -> Result<(Vec<play::EngineChoice>, usize)> {
+    let mut engines = vec![play::EngineChoice { name: "open-chess".into(), spec: EngineSpec::Builtin }];
+    let chosen = engine_spec(args)?;
+    let mut found: Vec<PathBuf> = args
+        .engines
+        .as_ref()
+        .and_then(|d| std::fs::read_dir(d).ok())
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| runnable(p))
+        .collect();
+    found.sort();
+    let EngineSpec::Uci { path: uci, move_time, options } = &chosen else {
+        engines.extend(found.iter().map(|p| play::EngineChoice {
+            name: stem(p),
+            spec: EngineSpec::Uci {
+                path: p.display().to_string(),
+                move_time: Duration::from_secs_f64(args.move_time.max(0.1)),
+                options: Vec::new(),
+            },
+        }));
+        return Ok((engines, 0));
+    };
+    let mut at = 0;
+    for p in &found {
+        let this = same_file(p, Path::new(uci));
+        engines.push(play::EngineChoice {
+            name: stem(p),
+            spec: EngineSpec::Uci {
+                path: p.display().to_string(),
+                move_time: *move_time,
+                options: if this { options.clone() } else { Vec::new() },
+            },
+        });
+        if this {
+            at = engines.len() - 1;
+        }
+    }
+    if at == 0 {
+        engines.push(play::EngineChoice { name: stem(Path::new(uci)), spec: chosen.clone() });
+        at = engines.len() - 1;
+    }
+    Ok((engines, at))
 }
 
 /// Who the board plays, for one connection.
@@ -266,14 +372,16 @@ fn mode(args: &Args, seed: u64) -> Result<Mode> {
         log::line(Source::Online, format!("playing online at {base}"));
         return Ok(Mode::Online { connection: Connection::spawn(base, token, challenge)? });
     }
-    let engine = EngineInfo {
-        name: args.uci.as_ref().map(|p| {
-            std::path::Path::new(p)
-                .file_name()
-                .map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned())
-        }),
+    let (engines, engine_at) = engine_list(args)?;
+    let (books, book_at) = book_list(args);
+    let opponent = Opponent::start(engines[engine_at].spec.clone())?;
+    let engine = engines[engine_at].info();
+    let choices = Choices {
+        books: books.iter().map(|p| stem(p)).collect(),
+        book: book_at,
+        engines: engines.iter().map(|e| e.name.clone()).collect(),
+        engine: engine_at,
     };
-    let opponent = Opponent::start(engine_spec(args)?)?;
     let controller = Controller::new(Setup {
         player: if args.play == "black" { Side::Black } else { Side::White },
         level: args.level,
@@ -281,8 +389,14 @@ fn mode(args: &Args, seed: u64) -> Result<Mode> {
         time: args.time,
         white_on_left: args.white_clock == "left",
         seed,
+        choices,
     });
-    Ok(Mode::Engine { controller: Box::new(controller), opponent, engine })
+    Ok(Mode::Engine {
+        controller: Box::new(controller),
+        opponent,
+        engine,
+        lists: play::Lists { books, engines },
+    })
 }
 
 /// The DGT Pi's own clock, or a simulated one; `None` for a clock on the

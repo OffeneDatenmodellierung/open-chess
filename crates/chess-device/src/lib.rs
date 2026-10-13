@@ -23,6 +23,7 @@ pub mod epaper;
 pub mod links;
 pub mod livechess;
 pub mod log;
+pub mod menu;
 pub mod online;
 pub mod opponent;
 pub mod pico;

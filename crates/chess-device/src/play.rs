@@ -4,21 +4,23 @@
 //! takes settings from the web.
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use anyhow::Context;
+use chess_analysis::book::Book;
 use chess_dgt::{ClockButton, Command, Event, Observation};
 use tokio::sync::watch;
 
 use crate::board::Board;
-use crate::controller::{Controller, describe};
+use crate::controller::{Controller, Switch, describe};
 use crate::links::{Input, Link};
 use crate::livechess::{self, LiveChess};
 use crate::log::{self, Source};
 use crate::online::{Connection, FromServer, OnlinePlay};
-use crate::opponent::Opponent;
+use crate::opponent::{EngineSpec, Opponent};
 use crate::view::{EngineInfo, View, game_id};
 use crate::web::{self, Change, Request, Web};
 
@@ -44,9 +46,37 @@ impl Options {
     }
 }
 
+/// An engine the clock's menu offers.
+#[derive(Debug, Clone)]
+pub struct EngineChoice {
+    pub name: String,
+    pub spec: EngineSpec,
+}
+
+impl EngineChoice {
+    pub fn info(&self) -> EngineInfo {
+        EngineInfo { name: matches!(self.spec, EngineSpec::Uci { .. }).then(|| self.name.clone()) }
+    }
+}
+
+/// The books and engines behind the menu's choices ([`crate::menu::Choices`]).
+#[derive(Debug, Clone, Default)]
+pub struct Lists {
+    pub books: Vec<PathBuf>,
+    pub engines: Vec<EngineChoice>,
+}
+
+/// Read a Polyglot book.
+pub fn load_book(path: &Path) -> anyhow::Result<Book> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading the book {}", path.display()))?;
+    let book = Book::from_bytes(&bytes).with_context(|| path.display().to_string())?;
+    log::line(Source::Engine, format!("book: {}, {} entries", path.display(), book.len()));
+    Ok(book)
+}
+
 /// Who the board plays.
 pub enum Mode {
-    Engine { controller: Box<Controller>, opponent: Opponent, engine: EngineInfo },
+    Engine { controller: Box<Controller>, opponent: Opponent, engine: EngineInfo, lists: Lists },
     Online { connection: Connection },
     LiveChess { addr: String },
 }
@@ -94,8 +124,8 @@ fn note(e: &Event, board: &impl Board) {
 /// Play `mode` on a board until the board fails, publishing on `view`.
 pub fn drive<L: Link>(link: &mut L, mode: Mode, o: &Options, view: &watch::Sender<View>) -> io::Result<()> {
     match mode {
-        Mode::Engine { controller, opponent, engine } => {
-            play_engine(link, *controller, &opponent, &engine, o, view)
+        Mode::Engine { controller, opponent, engine, lists } => {
+            play_engine(link, *controller, opponent, engine, &lists, o, view)
         }
         Mode::Online { connection } => play_online(link, &connection, o, view),
         Mode::LiveChess { addr } => play_livechess(link, &addr, o, view),
@@ -105,13 +135,14 @@ pub fn drive<L: Link>(link: &mut L, mode: Mode, o: &Options, view: &watch::Sende
 fn play_engine<L: Link>(
     link: &mut L,
     mut controller: Controller,
-    opponent: &Opponent,
-    engine: &EngineInfo,
+    mut opponent: Opponent,
+    mut engine: EngineInfo,
+    lists: &Lists,
     o: &Options,
     view: &watch::Sender<View>,
 ) -> io::Result<()> {
     let mut game = (controller.games(), game_id(o.seed, 0), now_ms());
-    publish(view, View::new(&controller, link, engine, game.1.clone(), game.2, Instant::now()));
+    publish(view, View::new(&controller, link, &engine, game.1.clone(), game.2, Instant::now()));
     let requests = serve_web(o, view)?;
     loop {
         if o.stopped() {
@@ -148,17 +179,59 @@ fn play_engine<L: Link>(
         let mut replies = Vec::new();
         while let Ok(r) = requests.try_recv() {
             log::line(Source::Web, format!("{:?}", r.change));
-            let result = apply(r.change, &mut controller, link, opponent);
+            let result = apply(r.change, &mut controller, link, &opponent);
             replies.push((r.reply, result));
+        }
+        if let Some(switch) = controller.take_switch() {
+            switch_to(switch, lists, &mut controller, link, &mut opponent, &mut engine);
         }
         controller.tick(link, Instant::now());
         if controller.games() != game.0 {
             game = (controller.games(), game_id(o.seed, controller.games()), now_ms());
         }
-        publish(view, View::new(&controller, link, engine, game.1.clone(), game.2, Instant::now()));
+        publish(view, View::new(&controller, link, &engine, game.1.clone(), game.2, Instant::now()));
         // Answered once the change is in what the clients read.
         for (tx, result) in replies {
             let _ = tx.send(result);
+        }
+    }
+}
+
+/// Load the book or start the engine picked in the clock's menu.
+fn switch_to(
+    switch: Switch,
+    lists: &Lists,
+    controller: &mut Controller,
+    board: &mut impl Board,
+    opponent: &mut Opponent,
+    engine: &mut EngineInfo,
+) {
+    match switch {
+        Switch::Book(None) => controller.set_book(None, None, board),
+        Switch::Book(Some(i)) => match lists.books.get(i).map(|p| load_book(p)) {
+            Some(Ok(book)) => controller.set_book(Some(book), Some(i), board),
+            Some(Err(e)) => {
+                log::line(Source::Engine, format!("{e:#}"));
+                board.send(Command::ClockText { text: "bad book".into(), beep: 1 });
+            }
+            None => {}
+        },
+        Switch::Engine(i) => {
+            let Some(choice) = lists.engines.get(i) else { return };
+            log::line(Source::Engine, format!("starting {}", choice.name));
+            match Opponent::start(choice.spec.clone()) {
+                Ok(started) => {
+                    *opponent = started;
+                    *engine = choice.info();
+                    if let Some(t) = controller.engine_changed(i, board, Instant::now()) {
+                        opponent.ask(t);
+                    }
+                }
+                Err(e) => {
+                    log::line(Source::Engine, format!("{}: {e:#}", choice.name));
+                    board.send(Command::ClockText { text: "no engine".into(), beep: 1 });
+                }
+            }
         }
     }
 }
