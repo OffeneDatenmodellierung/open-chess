@@ -4,11 +4,13 @@ pub mod account;
 pub mod app_files;
 pub mod challenges;
 pub mod fairplay;
+pub mod feed;
 pub mod games;
 pub mod lab;
 pub mod oauth;
 pub mod play;
 pub mod streams;
+pub mod web;
 
 use std::convert::Infallible;
 
@@ -37,8 +39,12 @@ pub async fn index(State(ctx): State<Ctx>, headers: axum::http::HeaderMap) -> Re
         "api": "Lichess-compatible: Board, Bot, Challenge, OAuth (PKCE), event and game streams, game export",
         "url": ctx.cfg.public_url(),
         "version": env!("CARGO_PKG_VERSION"),
-        // Whether the OAuth page signs people in (through the host site).
-        "login": ctx.cfg.esports_login,
+        // Browser sign-in (the OAuth page, the Account page): always, with
+        // this server's own accounts; "signup" whether anyone may make one;
+        // "esports" whether the host site's players sign in with it.
+        "login": true,
+        "signup": ctx.cfg.signup,
+        "esports": ctx.cfg.esports().is_some(),
         "app": ctx.cfg.app_dir.as_deref().is_some_and(|d| !d.is_empty()).then(|| format!("{}/app/", ctx.cfg.public_url())),
     }))
     .into_response()

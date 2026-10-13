@@ -17,15 +17,16 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
 1. In `wrangler.jsonc`, set the `routes` host (the chess server's own
    host, e.g. `chess.example.com`; its zone must be in this Cloudflare
    account), `CHESS_PUBLIC_URL` to match, `ESPORTS_PUBLIC_URL`,
-   `ESPORTS_LOGIN` (`"true"` to let people sign in to apps through that
-   site), `CHESS_SITE_NAME` and `CHESS_INSTANCES`. To give the Chess lab
+   `ESPORTS_LOGIN` (`"true"` to let that site's players sign in with it),
+   `CHESS_SITE_NAME` and `CHESS_INSTANCES`. To give the Chess lab
    your colours, `npx wrangler secret put CHESS_APP_THEME < theme.css`
    ([docs/api.md](../../docs/api.md#the-chess-labs-look)).
 2. Set the secrets:
 
    ```sh
    npm install
-   npx wrangler secret put DATABASE_URL     # the site's Postgres URL (pooled is fine)
+   npx wrangler secret put DATABASE_URL     # the server's Postgres URL (pooled is fine)
+   npx wrangler secret put ESPORTS_SECRET   # with ESPORTS_LOGIN: shared with the site (32+ characters)
    # optional: CHESS_LISTEN_DATABASE_URL if the direct host can't be derived,
    #           CHESS_* settings from crates/chess-server/README.md
    ```
@@ -33,8 +34,7 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
 3. Deploy:
    * `npx wrangler deploy` with Docker running (from this directory).
 4. Point your site at it (its Lichess backend's base URL becomes
-   `https://chess.example.com`), and set the site's session cookie domain to
-   the shared parent (`example.com`) so the consent page sees site sign-ins.
+   `https://chess.example.com`, with the same `ESPORTS_SECRET`).
    The fair-play screening model is a secret too:
    `npx wrangler secret put CHESS_FAIRPLAY_MODEL` (the JSON itself).
 

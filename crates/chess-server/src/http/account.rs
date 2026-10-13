@@ -22,7 +22,7 @@ pub async fn email(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
     let id = who.need(&["email:read"])?;
     let c = ctx.db.conn().await?;
     let email: Option<String> = c
-        .query_opt(&ctx.db.sql("SELECT email FROM site.players WHERE id = $1"), &[&id.player])
+        .query_opt(&ctx.db.sql("SELECT email FROM chess.players WHERE id = $1"), &[&id.player])
         .await?
         .and_then(|r| r.get(0));
     Ok(Json(json!({"email": email.unwrap_or_default()})).into_response())

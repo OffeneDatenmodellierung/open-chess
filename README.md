@@ -66,9 +66,10 @@ docker run -p 8090:8090 -e DATABASE_URL=postgres://… \
   -e CHESS_PUBLIC_URL=https://chess.example.com ghcr.io/offenedatenmodellierung/open-chess
 ```
 
-Players, API tokens and sessions live in a host site's database schema
-(`CHESS_SITE_SCHEMA`); browser sign-in through that site is off unless
-`ESPORTS_LOGIN=true`. The settings, scaling and fair play are in the
+It keeps its own accounts (`/signup`, `/login`, tokens on `/account`); a
+host site's players can sign in with the site (`ESPORTS_LOGIN`,
+`ESPORTS_SECRET`), and sites follow its games through a live feed
+(`GET /api/feed`). The settings, scaling and fair play are in the
 [server README](crates/chess-server/README.md), the endpoints in
 [docs/api.md](docs/api.md).
 

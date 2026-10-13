@@ -53,7 +53,7 @@ impl Drop for Slot {
 impl Ctx {
     pub fn new(db: Db, cfg: Config) -> Ctx {
         Ctx {
-            auth: Auth::new(db.clone(), cfg.esports_login),
+            auth: Auth::new(db.clone()),
             db,
             cfg: Arc::new(cfg),
             metrics: Metrics::new(),
@@ -142,10 +142,20 @@ async fn cors(req: Request, next: Next) -> Response {
 }
 
 pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
-    use http::{account, app_files, challenges, fairplay, games, lab, oauth, streams};
+    use http::{account, app_files, challenges, fairplay, feed, games, lab, oauth, streams, web};
     let api = Router::new()
         // OAuth (PKCE) and tokens
         .route("/oauth", get(oauth::authorize).post(oauth::decide))
+        .route("/login", get(web::login_page).post(web::login))
+        .route("/signup", get(web::signup_page).post(web::signup))
+        .route("/logout", post(web::logout))
+        .route("/account", get(web::account))
+        .route("/account/tokens", post(web::new_token))
+        .route("/account/tokens/revoke", post(web::revoke_token))
+        .route("/auth/esports", get(web::esports_start))
+        .route("/auth/esports/back", get(web::esports_back))
+        .route("/api/esports/token", post(web::esports_token))
+        .route("/api/feed", get(feed::feed))
         .route("/api/token", post(oauth::token).delete(oauth::revoke))
         .route("/api/token/test", post(oauth::test))
         // account and users

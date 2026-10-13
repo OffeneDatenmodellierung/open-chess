@@ -43,11 +43,13 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.incre
 ```json
 {"name": "open-chess", "site": "open-chess", "api": "Lichess-compatible: …",
  "url": "https://chess.example.com", "version": "0.1.0",
- "login": false, "app": "https://chess.example.com/app/"}
+ "login": true, "signup": true, "esports": false, "app": "https://chess.example.com/app/"}
 ```
 
-`login` is whether the OAuth page signs people in (`ESPORTS_LOGIN`, below);
-`app` is `null` without the app.
+`login` is always true (the server has its own sign-in); `signup` is
+whether anyone may make an account (`CHESS_SIGNUP`); `esports` whether a
+host site's players sign in with it (`ESPORTS_LOGIN`, below); `app` is
+`null` without the app.
 
 **Conformance.** `crates/chess-conformance` drives a running server through a
 full game, challenges and streams, and validates every response against the
@@ -125,10 +127,15 @@ opens this first and a game stream for each `gameStart`.
 
 ## Accounts, tokens and OAuth
 
-A chess account is a player of the host site (see the
-[server README](../crates/chess-server/README.md#plugging-into-a-site)),
-created on first use with a Lichess-style username made from the player's
-name. Bearer tokens are the site's API tokens, with Lichess's scope names:
+The server has its own accounts. People make one at `/signup` (a username,
+a password of 10 or more characters, and optionally an email; off with
+`CHESS_SIGNUP=false`), sign in at `/login` (username or email), and make and
+revoke API tokens on `/account`. With `ESPORTS_LOGIN`, a host site's
+players sign in with the site instead, and the site's server gets tokens
+for them (see the
+[server README](../crates/chess-server/README.md#plugging-into-a-site)).
+Bearer tokens start `ocp_` (tokens imported from a host site keep its
+`esl_`), with Lichess's scope names:
 
 | Scope | For |
 |---|---|
@@ -141,17 +148,10 @@ name. Bearer tokens are the site's API tokens, with Lichess's scope names:
 A revoked token stops working within 15 seconds (tokens are cached that long).
 
 **OAuth** works as on Lichess: no client registration, PKCE S256, one-year
-tokens. It needs a site to sign in to, so it's off unless
-`ESPORTS_LOGIN=true`: then the consent page (`GET /oauth`) recognises whoever
-is signed in to the host site through its session cookie and links to the
-site (`ESPORTS_PUBLIC_URL`) for anyone who isn't. On a host of its own
-(`https://chess.example.com`), set the site's session cookie domain to the
-shared parent (`example.com`); under the site's origin
-(`CHESS_PUBLIC_URL=https://<site>/chess`) nothing extra is needed. Tokens it
-issues are site tokens named `OAuth: <client_id>`. With `ESPORTS_LOGIN` off
-(the default) the consent page answers 403 "No sign-in here", `GET /` says
-`"login": false`, and the Chess lab app asks for a token instead; API tokens
-(the site's, and bots') work either way.
+tokens. The consent page (`GET /oauth`) acts for whoever is signed in to
+this server in that browser, and sends anyone else to sign in (or make an
+account) first, then back. Tokens it issues are named `OAuth: <client_id>`,
+listed and revocable on `/account`.
 
 The flow, for an app at `https://app.example/`:
 
@@ -164,6 +164,30 @@ The flow, for an app at `https://app.example/`:
 player, a bot account and a token (printed once). Bots play only through the
 Bot API and people only through the Board API, as on Lichess. See
 [lichess.md](lichess.md#bots) to run one.
+
+## The live feed
+
+`GET /api/feed` sends every game on the server as
+[server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html),
+with no token needed (it shows what the public game streams show):
+
+| Event | Data |
+|---|---|
+| `start` | A game began: the public game description (as the first line of `/api/stream/game/{id}`) |
+| `move` | It moved on: the same description (position, last move, `turns`). While a game is live it runs `CHESS_PUBLIC_DELAY_PLIES` behind, as the public stream does |
+| `end` | It finished: the game as `/game/export/{id}` gives it in JSON (players, ratings and `ratingDiff`, status, winner, moves, clock). Its event id is when it finished (Unix ms) |
+
+A client that reconnects with `Last-Event-ID` (a browser's `EventSource`
+does it itself), or asks with `?since=<Unix ms>`, first gets the `end` of
+every game finished since then, oldest first, then the live events; a
+consumer that keeps the last id it handled misses nothing. `?game=<id>`
+follows one game; `?only=end` sends only finished games. A comment every
+15 seconds keeps proxies from closing the stream.
+
+```js
+const feed = new EventSource("https://chess.example.com/api/feed?only=end");
+feed.addEventListener("end", (e) => console.log(JSON.parse(e.data)));
+```
 
 ## The Chess lab's look
 

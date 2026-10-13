@@ -10,7 +10,8 @@ use clap::Args;
 #[derive(Debug, Clone, Args)]
 #[allow(clippy::struct_excessive_bools)] // settings switches
 pub struct Config {
-    /// Postgres URL: the site's Neon database. A pooled (`-pooler`) host is
+    /// Postgres URL: this server's database (its own; it may share a host
+    /// site's database in its own schema). A pooled (`-pooler`) host is
     /// fine; notifications use the direct host automatically.
     #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
     pub database_url: String,
@@ -19,7 +20,10 @@ pub struct Config {
     #[arg(long, env = "CHESS_LISTEN_DATABASE_URL", hide_env_values = true)]
     pub listen_database_url: Option<String>,
 
-    /// The site's schema (players, API tokens, sessions).
+    /// A host site's schema in the same database whose chess players (and
+    /// their chess tokens) are imported once, with their ids, the first
+    /// time this version starts. Nothing is read from it afterwards; a
+    /// schema that isn't there is skipped.
     #[arg(long, env = "CHESS_SITE_SCHEMA", default_value = "esports")]
     pub site_schema: String,
 
@@ -36,15 +40,14 @@ pub struct Config {
     #[arg(long, env = "CHESS_PUBLIC_URL", default_value = "http://localhost:8090")]
     pub public_url: String,
 
-    /// The site whose players and sign-ins this server uses, for "sign in
-    /// first" links on the OAuth page.
+    /// The host site (esports-lab) players can sign in with.
     #[arg(long, env = "ESPORTS_PUBLIC_URL", default_value = "http://localhost:8080")]
     pub site_url: String,
 
-    /// Sign in through the host site (esports-lab): the OAuth page accepts
-    /// the site's session cookie and links to its sign-in. Off by default,
-    /// so a server without that site offers no browser sign-in; API
-    /// tokens (the site's, and `open-chess bot create`) work either way.
+    /// "Sign in with the host site" (esports-lab): its players sign in
+    /// here through it, and its server gets tokens for them. Needs
+    /// `ESPORTS_SECRET`. Off by default (the site is private); the
+    /// server's own accounts work either way.
     #[arg(
         long,
         env = "ESPORTS_LOGIN",
@@ -55,6 +58,25 @@ pub struct Config {
         value_parser = clap::builder::BoolishValueParser::new()
     )]
     pub esports_login: bool,
+
+    /// The secret shared with the host site: it signs sign-ins and asks
+    /// for its players' tokens with it (at least 32 characters).
+    #[arg(long, env = "ESPORTS_SECRET", hide_env_values = true)]
+    pub esports_secret: Option<String>,
+
+    /// Anyone may make an account here (a name and a password). Off: only
+    /// accounts that exist (and the host site's players, with
+    /// `ESPORTS_LOGIN`) sign in.
+    #[arg(
+        long,
+        env = "CHESS_SIGNUP",
+        default_value_t = true,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        action = clap::ArgAction::Set,
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub signup: bool,
 
     /// What players know the site as: on the OAuth page, in PGN event
     /// names and in `GET /` (which the training app shows).
@@ -178,6 +200,11 @@ impl Config {
         self.public_url.trim_end_matches('/')
     }
 
+    /// The secret shared with the host site, when signing in with it is on.
+    pub fn esports(&self) -> Option<&str> {
+        self.esports_secret.as_deref().filter(|s| self.esports_login && s.len() >= 32)
+    }
+
     pub fn challenge_ttl(&self) -> Duration {
         Duration::from_secs(self.challenge_ttl_secs.max(5))
     }
@@ -190,6 +217,9 @@ impl Config {
         }
         if self.schema == self.site_schema {
             bail!("CHESS_SCHEMA must differ from CHESS_SITE_SCHEMA");
+        }
+        if self.esports_login && self.esports_secret.as_deref().is_none_or(|s| s.len() < 32) {
+            bail!("ESPORTS_LOGIN needs ESPORTS_SECRET (at least 32 characters), shared with the site");
         }
         self.base_path()?;
         Ok(())

@@ -7,26 +7,23 @@ by changing the base URL: a host site's Lichess backend, Lichess Board API
 apps, and
 [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot).
 
-It shares a host site's Postgres database: players, API tokens and
-sessions stay where the site keeps them (`CHESS_SITE_SCHEMA`; see
-"Plugging into a site" below). The server adds a
-`chess` schema only for what the Lichess flows need: challenges, games,
-moves and clocks, ratings and fair play.
+It keeps everything in its own Postgres schema (`chess`): players, API
+tokens and sessions, challenges, games, moves and clocks, ratings and fair
+play. People make accounts on it (`/signup`, `/login`, `/account` for
+tokens), and a host site's players can sign in with the site (see
+"Plugging into a site" below). Sites and dashboards follow its games
+through a live feed (`GET /api/feed`, server-sent events).
 
-**Database rights.** The role needs to create and write the `chess` schema.
-In the site's schema it mostly reads, but it also writes in four places:
-* `api_tokens.last_used_at` on use;
-* revocations (`DELETE /api/token`);
-* the tokens OAuth issues;
-* the players and tokens `open-chess bot create` makes.
-
-A read-only role there won't do.
+**Database rights.** The role needs to create and write its schema. It
+may share a database with a host site, but reads nothing of the site's
+after a one-time import of the site's chess players (`CHESS_SITE_SCHEMA`).
 
 ```
 Lichess client / bot / site ──▶ open-chess × N ──▶ Postgres
-                                  │   ▲             site.*     players, api_tokens, sessions (see rights below)
-                                  │   └─ LISTEN ──  chess.*    games, challenges, ratings, fair play
-fair-play worker × M (Stockfish) ─┘
+           host site ◀── /api/feed ──┘   ▲         chess.*   players, tokens, sessions, games,
+                                         │                   challenges, ratings, fair play
+                                         └─ LISTEN
+fair-play worker × M (Stockfish) ───▶ the same database
 ```
 
 ## Crates
@@ -127,12 +124,15 @@ Everything is environment (each variable is also a command-line flag:
 
 | Variable | Default | |
 |---|---|---|
-| `DATABASE_URL` | — | The site's database (pooled host fine) |
+| `DATABASE_URL` | — | The server's database (its own, or shared with a host site in its own schema; pooled host fine) |
 | `CHESS_LISTEN_DATABASE_URL` | derived | For LISTEN, if the direct host can't be derived from a `-pooler` host |
-| `CHESS_SITE_SCHEMA` / `CHESS_SCHEMA` | `esports` / `chess` | |
+| `CHESS_SCHEMA` | `chess` | The server's schema |
+| `CHESS_SITE_SCHEMA` | `esports` | A host site's schema in the same database whose chess players and their chess tokens are imported once, keeping their ids (skipped if it isn't there) |
+| `CHESS_SIGNUP` | `true` | Anyone may make an account (`/signup`); off, only existing accounts and the host site's players sign in |
 | `CHESS_PUBLIC_URL` | `http://localhost:8090` | Where clients reach the API; a path in it (e.g. `/chess`) is where the API is mounted |
-| `ESPORTS_PUBLIC_URL` | `http://localhost:8080` | The site (sign-in link on the consent page) |
-| `ESPORTS_LOGIN` | `false` | Browser sign-in through the site: the OAuth consent page accepts its session cookie. Off, there's no OAuth sign-in (API tokens work either way) and `GET /` says `"login": false` |
+| `ESPORTS_PUBLIC_URL` | `http://localhost:8080` | The host site, for "Sign in with the site" |
+| `ESPORTS_LOGIN` | `false` | "Sign in with the site": its players sign in here through it, and its server asks for their tokens (`POST /api/esports/token`). Needs `ESPORTS_SECRET` |
+| `ESPORTS_SECRET` | — | Shared with the host site (32+ characters): it signs sign-ins and token requests with it |
 | `CHESS_SITE_NAME` | `open-chess` | What players know the site as: the consent page, PGN event names, `GET /` (the app shows it) |
 | `CHESS_BIND` / `CHESS_METRICS_BIND` | `0.0.0.0:8090` / `0.0.0.0:9465` | API; `/metrics`, `/healthz`, `/readyz` |
 | `CHESS_POOL_SIZE` | 8 | |
@@ -183,21 +183,36 @@ no Stockfish. To deploy:
 
 ## Plugging into a site
 
-The server keeps no accounts of its own yet: it reads players, API tokens
-and sessions from a host site's schema (`CHESS_SITE_SCHEMA`), which needs
-`players`, `api_tokens` and `sessions` tables. esports-lab, the
-(private) application this server was extracted from, is the reference
-host, and its deployment sets `ESPORTS_LOGIN=true` so people sign in to
-apps through it. A standalone mode with its own accounts is planned.
+The server has its own accounts; a host site plugs in as a client of it,
+with a secret they share (`ESPORTS_SECRET`, and `ESPORTS_LOGIN=true`):
 
-There, the site's `native` chess backend is a Lichess client pointed at
-this server. The site's watcher mints
-both players a short-lived site API token per game (`board:play`,
-`challenge:read`, `challenge:write`, named `chess match {fixture}`), which
-this server accepts because it reads the same `api_tokens`, and
-revokes them when the game ends. Players link nothing; fixtures keep
-`backend = 'native'`, the game id in `external_id`, and the competition
-state in the site's tables.
+* **Signing in.** The sign-in page offers "Sign in with <site>":
+  `/auth/esports` sends the browser to the site's `/chess/sso?return=…&nonce=…`,
+  and the site sends it back to `/auth/esports/back?a=…` with a signed
+  statement of who is signed in there: `base64url(json)` `.`
+  `base64url(HMAC-SHA256(secret, the first part))`, the JSON
+  `{"sub": "<the site's player id>", "name", "email", "role", "roles", "nonce", "exp": <Unix seconds>}`.
+* **Tokens for its players.** The site's server calls
+  `POST /api/esports/token` with `Authorization: Bearer <secret>` and a form
+  (`sub`, `name`, `email`, `role`, `roles`, `scopes`, `days`, `label`); the
+  answer is `{"token", "username", "scopes", "expires"}`.
+* Either way the site's player is linked to a player here (made on first
+  use, with a chess account named after them; the site's roles carry
+  over, so its managers review fair play).
+* **Following games.** The site reads `GET /api/feed` (every game's start,
+  moves and end, with rating changes; resumable), and the public APIs.
+
+A deployment that used to share the site's players (this server's first
+versions read them from the site's schema) imports them once, with their
+ids and chess tokens, when this version first starts (`CHESS_SITE_SCHEMA`).
+
+esports-lab, the (private) application this server was extracted from, is
+the reference host. Its `native` chess backend is a Lichess client pointed
+at this server: its watcher gets both players a short-lived token per game
+(`board:play`, `challenge:read`, `challenge:write`, named
+`chess match {fixture}`) from `POST /api/esports/token`, and revokes them
+when the game ends. Fixtures keep `backend = 'native'`, the game id in
+`external_id`, and the competition state in the site's tables.
 
 Players play on the site's own board page (`#/play/{fixture}`), which asks
 the site for its token (`GET /api/me/chess/play/{fixture}`) and then talks

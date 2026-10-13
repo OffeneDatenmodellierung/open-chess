@@ -1,11 +1,14 @@
 //! Postgres: the connection pool, this server's schema, and the LISTEN
 //! connection that fans changes out to every replica.
 //!
-//! SQL is written with `chess.` and `site.` table prefixes; [`Db::sql`]
-//! swaps in the configured schema names. Explicit names rather than a
+//! SQL is written with `chess.` table prefixes; [`Db::sql`] swaps in the
+//! configured schema name. The server keeps its own players, API tokens
+//! and sessions there; a host site's (`site.`, `CHESS_SITE_SCHEMA`) are read
+//! once, to import the players who already used chess there. Explicit names rather than a
 //! `search_path` because Neon's pooler (transaction pooling) doesn't keep
 //! session settings.
 
+use std::fmt::Write as _;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -160,26 +163,10 @@ impl Db {
         }
     }
 
-    /// Run migrations: this server's schema and tables. The site's schema
-    /// must exist (its players and API tokens are what we sign people in
-    /// with).
+    /// Run migrations: this server's schema and tables, then (once) the
+    /// import of a host site's chess players ([`Db::import_site`]).
     pub async fn migrate(&self) -> Result<()> {
         let mut c = self.conn().await?;
-        let site_ok: bool = c
-            .query_one(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = 'players')
-                    AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = 'api_tokens')",
-                &[&&*self.site],
-            )
-            .await?
-            .get(0);
-        if !site_ok {
-            bail!(
-                "schema {:?} has no players / api_tokens tables: point CHESS_SITE_SCHEMA at the site's schema \
-                 (run the site once to create it)",
-                &*self.site
-            );
-        }
         let tx = c.transaction().await?;
         tx.batch_execute(&format!(
             "SELECT pg_advisory_xact_lock(hashtext('open-chess-migrate'));
@@ -188,6 +175,8 @@ impl Db {
             s = quote_ident(&self.schema)
         ))
         .await?;
+        // Players, tokens and sessions first: the migrations refer to them.
+        tx.batch_execute(&self.sql(IDENTITY)).await.context("chess identity tables")?;
         let current: i32 = tx
             .query_opt(&self.sql("SELECT version FROM chess.schema_version"), &[])
             .await?
@@ -207,7 +196,115 @@ impl Db {
         } else if latest > current {
             tx.execute(&self.sql("UPDATE chess.schema_version SET version = $1"), &[&latest]).await?;
         }
+        self.import_site(&tx).await.context("importing the site's chess players")?;
         tx.commit().await?;
+        Ok(())
+    }
+
+    /// Once: copy the host site's players who use chess (they have a chess
+    /// account, or are named in any of our tables, or hold a token with a
+    /// chess scope) with their ids, and their unexpired chess tokens, into
+    /// our own tables, linked to the site by `esports_id`; then point our
+    /// tables' references at our players. A site without those tables (a
+    /// stand-alone server) has nothing to import.
+    async fn import_site(&self, tx: &tokio_postgres::Transaction<'_>) -> Result<()> {
+        if *self.site == *self.schema {
+            return Ok(());
+        }
+        let has = |t: &'static str| {
+            let site = self.site.clone();
+            async move {
+                tx.query_one(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2)",
+                    &[&&*site, &t],
+                )
+                .await
+                .map(|r| r.get::<_, bool>(0))
+            }
+        };
+        if !(has("players").await? && has("api_tokens").await?) {
+            return Ok(());
+        }
+        let done = tx
+            .query_opt(&self.sql("SELECT 1 FROM chess.imports WHERE source = $1"), &[&&*self.site])
+            .await?
+            .is_some();
+        if done {
+            return Ok(());
+        }
+        let site_players = format!("{}.players", quote_ident(&self.site));
+        // Our foreign keys still pointing at the site's players.
+        let fks = tx
+            .query(
+                "SELECT c.conname, c.conrelid::regclass::text, a.attname, pg_get_constraintdef(c.oid)
+                   FROM pg_constraint c
+                   JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+                  WHERE c.contype = 'f' AND c.confrelid = to_regclass($1)
+                    AND c.connamespace = (SELECT oid FROM pg_namespace WHERE nspname = $2)",
+                &[&site_players, &&*self.schema],
+            )
+            .await?;
+        let scopes: Vec<String> = crate::auth::SCOPES.iter().map(|(s, _)| (*s).to_owned()).collect();
+        let mut named = String::from("SELECT player_id FROM site.api_tokens WHERE scopes && $1::text[]");
+        for f in &fks {
+            let (table, column): (String, String) = (f.get(1), f.get(2));
+            let _ = write!(named, " UNION SELECT {} FROM {table}", quote_ident(&column));
+        }
+        let players = tx
+            .execute(
+                &self.sql(&format!(
+                    "INSERT INTO chess.players (id, name, email, key_hash, role, roles, disabled_at, esports_id)
+                     SELECT p.id, p.name, p.email, p.key_hash, p.role, p.roles, p.disabled_at, p.id::text
+                       FROM site.players p WHERE p.id IN ({named})
+                     ON CONFLICT (id) DO NOTHING"
+                )),
+                &[&scopes],
+            )
+            .await?;
+        let tokens = tx
+            .execute(
+                &self.sql(
+                    "INSERT INTO chess.api_tokens (player_id, name, token_hash, prefix, scopes, created_at,
+                                                   expires_at, last_used_at, revoked_at, revoked_by)
+                     SELECT t.player_id, t.name, t.token_hash, t.prefix,
+                            ARRAY(SELECT unnest(t.scopes) INTERSECT SELECT unnest($1::text[])),
+                            t.created_at, t.expires_at, t.last_used_at, t.revoked_at, t.revoked_by
+                       FROM site.api_tokens t
+                      WHERE t.player_id IN (SELECT id FROM chess.players) AND t.scopes && $1::text[]
+                        AND t.revoked_at IS NULL AND t.expires_at > now()
+                     ON CONFLICT (token_hash) DO NOTHING",
+                ),
+                &[&scopes],
+            )
+            .await?;
+        tx.execute(
+            &self.sql(
+                "SELECT setval(pg_get_serial_sequence($1, 'id'), GREATEST((SELECT max(id) FROM chess.players), 1))",
+            ),
+            &[&self.sql("chess.players")],
+        )
+        .await?;
+        let ours = self.sql("chess.players");
+        for f in &fks {
+            let (name, table, column, def): (String, String, String, String) =
+                (f.get(0), f.get(1), f.get(2), f.get(3));
+            let tail = def.split_once(".players(id)").map_or("", |(_, t)| t);
+            tx.batch_execute(&format!(
+                "ALTER TABLE {table} DROP CONSTRAINT {n};
+                 ALTER TABLE {table} ADD CONSTRAINT {n} FOREIGN KEY ({c}) REFERENCES {ours}(id){tail};",
+                n = quote_ident(&name),
+                c = quote_ident(&column),
+            ))
+            .await?;
+        }
+        tx.execute(&self.sql("INSERT INTO chess.imports (source) VALUES ($1)"), &[&&*self.site]).await?;
+        info!(
+            players,
+            tokens,
+            references = fks.len(),
+            site = &*self.site,
+            "imported the site's chess players"
+        );
         Ok(())
     }
 
@@ -340,6 +437,46 @@ pub async fn notify(tx: &impl tokio_postgres::GenericClient, db: &Db, note: &Not
     Ok(())
 }
 
+/// The server's own players, API tokens and sessions (created before the
+/// migrations, which refer to them; idempotent). `esports_id` links a
+/// player to the host site's (signed in with it, or imported from it).
+const IDENTITY: &str = r"
+CREATE TABLE IF NOT EXISTS chess.players (
+    id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    name text NOT NULL,
+    email text,
+    key_hash text,
+    password_hash text,
+    role text NOT NULL DEFAULT 'player',
+    roles text[] NOT NULL DEFAULT '{}',
+    esports_id text UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    disabled_at timestamptz);
+CREATE TABLE IF NOT EXISTS chess.api_tokens (
+    id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    player_id bigint NOT NULL REFERENCES chess.players ON DELETE CASCADE,
+    name text NOT NULL,
+    token_hash text NOT NULL UNIQUE,
+    prefix text NOT NULL,
+    scopes text[] NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    last_used_at timestamptz,
+    revoked_at timestamptz,
+    revoked_by text);
+CREATE INDEX IF NOT EXISTS api_tokens_player_idx ON chess.api_tokens (player_id);
+CREATE TABLE IF NOT EXISTS chess.sessions (
+    id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    token_hash text NOT NULL UNIQUE,
+    player_id bigint NOT NULL REFERENCES chess.players ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz);
+CREATE TABLE IF NOT EXISTS chess.imports (
+    source text PRIMARY KEY,
+    at timestamptz NOT NULL DEFAULT now());
+";
+
 const MIGRATIONS: &[&str] = &[
     r"
 -- One row per site player who has used the chess server. `username` is
@@ -347,7 +484,7 @@ const MIGRATIONS: &[&str] = &[
 -- through the Bot API and are never fair-play screened); `marked_at` is a
 -- confirmed fair-play violation (shown as tosViolation).
 CREATE TABLE chess.accounts (
-    player_id bigint PRIMARY KEY REFERENCES site.players ON DELETE CASCADE,
+    player_id bigint PRIMARY KEY REFERENCES chess.players ON DELETE CASCADE,
     username text NOT NULL,
     kind text NOT NULL DEFAULT 'human' CHECK (kind IN ('human', 'bot')),
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -457,7 +594,7 @@ CREATE UNLOGGED TABLE chess.presence (
 -- OAuth authorization codes (PKCE), single use, two minutes.
 CREATE TABLE chess.oauth_codes (
     code_hash text PRIMARY KEY,
-    player_id bigint NOT NULL REFERENCES site.players ON DELETE CASCADE,
+    player_id bigint NOT NULL REFERENCES chess.players ON DELETE CASCADE,
     client_id text NOT NULL,
     redirect_uri text NOT NULL,
     code_challenge text NOT NULL,
@@ -646,6 +783,6 @@ mod tests {
     #[test]
     fn schema_prefixes() {
         assert_eq!(quote_ident("a\"b"), "\"a\"\"b\"");
-        assert!(MIGRATIONS[0].contains("REFERENCES site.players"));
+        assert!(MIGRATIONS[0].contains("REFERENCES chess.players"));
     }
 }

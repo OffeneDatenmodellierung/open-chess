@@ -2,11 +2,10 @@
 //! `client_id` is any name the app picks), S256 code challenges, and
 //! long-lived access tokens.
 //!
-//! The person approving is whoever is signed in to the site (`CHESS_SITE_NAME`) in
-//! this browser (its `esl_session` cookie), so the consent page works when
-//! the chess server shares the site's origin (served under /chess). Tokens
-//! issued here are ordinary site API tokens, listed and revocable on the
-//! site's Account page.
+//! The person approving is whoever is signed in to this server in this
+//! browser (its own accounts, or the host site's: [`crate::http::web`]);
+//! anyone else is sent to sign in first. Tokens issued here are listed and
+//! revocable on the Account page.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -85,32 +84,23 @@ fn redirect_with(uri: &str, params: &[(&str, &str)]) -> Response {
     Redirect::to(u.as_str()).into_response()
 }
 
-fn page(title: &str, body: &str) -> Response {
+pub fn page(title: &str, body: &str) -> Response {
     Html(format!(
         "<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">\
          <title>{t}</title><style>body{{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;\
          color:#e8eaed;background:#14161a}}a{{color:#8ab4f8}}button{{font:inherit;padding:.5rem 1.2rem;margin-right:.5rem;\
-         border-radius:6px;border:1px solid #555;background:#2a2d33;color:inherit;cursor:pointer}}button.go{{background:#1a73e8;\
-         border-color:#1a73e8}}code{{background:#2a2d33;padding:0 .3rem;border-radius:4px}}li{{margin:.2rem 0}}</style>\
+         border-radius:6px;border:1px solid #555;background:#2a2d33;color:inherit;cursor:pointer}}button.go,a.btn{{background:#1a73e8;\
+         border-color:#1a73e8}}a.btn{{display:inline-block;padding:.5rem 1.2rem;border-radius:6px;color:#fff;text-decoration:none}}\
+         code{{background:#2a2d33;padding:0 .3rem;border-radius:4px}}li{{margin:.2rem 0}}label{{display:block;margin:.6rem 0}}\
+         label input:not([type=checkbox]){{display:block;width:100%;box-sizing:border-box;font:inherit;padding:.4rem;margin-top:.2rem;\
+         border-radius:6px;border:1px solid #555;background:#1d2025;color:inherit}}label.check{{margin:.3rem 0}}\
+         .err{{color:#ff7a8a}}.ok{{color:#7ee2a8}}.muted{{color:#9aa0a6}}table{{border-collapse:collapse;width:100%}}\
+         td,th{{text-align:left;padding:.3rem;border-bottom:1px solid #333;vertical-align:top}}code.token{{word-break:break-all}}\
+         form{{margin:.6rem 0}}</style>\
          <h1>{t}</h1>{body}</html>",
         t = html_escape(title)
     ))
     .into_response()
-}
-
-/// Players may only grant scopes their roles allow.
-async fn allowed_scopes(ctx: &Ctx, player: i64, wanted: &[String]) -> ApiResult<Vec<String>> {
-    let c = ctx.db.conn().await?;
-    let r =
-        c.query_one(&ctx.db.sql("SELECT role, roles FROM site.players WHERE id = $1"), &[&player]).await?;
-    let role: String = r.get(0);
-    let roles: Vec<String> = r.get(1);
-    let staff = role == "admin" || roles.iter().any(|x| x == "manager");
-    Ok(wanted
-        .iter()
-        .filter(|s| staff || !matches!(s.as_str(), "chess:fairplay" | "bot:play"))
-        .cloned()
-        .collect())
 }
 
 /// `GET /oauth`: the consent page.
@@ -129,38 +119,21 @@ pub async fn authorize(
                 .into_response());
         }
     };
-    if !ctx.cfg.esports_login {
-        return Ok((
-            StatusCode::FORBIDDEN,
-            page(
-                "No sign-in here",
-                &format!(
-                    "<p><code>{}</code> asked to sign in, but this chess server doesn't offer browser \
-                     sign-in. Use an API token instead (a Lichess client takes it as a personal \
-                     token).</p>",
-                    html_escape(&req.client_id)
-                ),
-            ),
-        )
-            .into_response());
-    }
     let Some(player) = ctx.auth.session(&h).await? else {
-        let site = html_escape(&ctx.cfg.site_url);
-        let name = html_escape(&ctx.cfg.site_name);
-        return Ok(page(
-            "Sign in first",
-            &format!(
-                "<p><code>{}</code> wants to use your {name} chess account.</p>\
-                 <p><a href=\"{site}\">Sign in to {name}</a> in this browser, then come back to this page and reload it.</p>",
-                html_escape(&req.client_id)
-            ),
-        ));
+        // Sign in (or make an account), then back here.
+        let base = ctx.cfg.base_path().unwrap_or_default();
+        let here: String =
+            url::form_urlencoded::Serializer::new(String::new()).extend_pairs(q.iter()).finish();
+        let ret = format!("{base}/oauth?{here}");
+        return Ok(
+            Redirect::to(&format!("{base}/login?return={}", urlencoding::encode(&ret))).into_response()
+        );
     };
     let session = cookie(&h, crate::auth::SESSION_COOKIE).unwrap_or_default();
     let c = ctx.db.conn().await?;
     let account = model::ensure_account(&ctx.db, &*c, player).await?;
     drop(c);
-    let scopes = allowed_scopes(&ctx, player, &req.scopes).await?;
+    let scopes = crate::http::web::allowed(&ctx, player, &req.scopes).await?;
     let granted = AuthRequest { scopes: scopes.clone(), ..req.clone() };
     let list: String = if scopes.is_empty() {
         "<li>Read your public profile</li>".into()
@@ -181,7 +154,7 @@ pub async fn authorize(
              <form method=post action=\"{base}/oauth\">{h1}{h2}{h3}{h4}{h5}{h6}\
              <button class=go name=decision value=approve>Authorize</button>\
              <button name=decision value=deny>Cancel</button></form>\
-             <p>You can revoke this later on the site's Account page (API tokens).</p>",
+             <p>You can revoke this later on your <a href=\"{base}/account\">Account page</a>.</p>",
             client = html_escape(&req.client_id),
             user = html_escape(&account.username),
             redirect = html_escape(&req.redirect_uri),
@@ -201,11 +174,7 @@ pub async fn decide(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) -> ApiRes
     f.insert("response_type".into(), "code".into());
     f.insert("code_challenge_method".into(), "S256".into());
     let req = parse_request(&f).map_err(ApiError::bad)?;
-    let player = ctx
-        .auth
-        .session(&h)
-        .await?
-        .ok_or_else(|| ApiError::forbidden(format!("sign in to {} first", ctx.cfg.site_name)))?;
+    let player = ctx.auth.session(&h).await?.ok_or_else(|| ApiError::forbidden("sign in first"))?;
     let session = cookie(&h, crate::auth::SESSION_COOKIE).unwrap_or_default();
     if f.get("csrf").map(String::as_str) != Some(csrf(&session, &req).as_str()) {
         return Err(ApiError::forbidden("this consent form has expired: start again"));
@@ -214,7 +183,7 @@ pub async fn decide(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) -> ApiRes
     if f.get("decision").map(String::as_str) != Some("approve") {
         return Ok(redirect_with(&req.redirect_uri, &[("error", "access_denied"), ("state", &state)]));
     }
-    let scopes = allowed_scopes(&ctx, player, &req.scopes).await?;
+    let scopes = crate::http::web::allowed(&ctx, player, &req.scopes).await?;
     let code = format!("liu_{}", random_token(32));
     let c = ctx.db.conn().await?;
     c.execute(
@@ -271,7 +240,7 @@ pub async fn token(State(ctx): State<Ctx>, body: Bytes) -> ApiResult<Response> {
     let expires = Utc::now() + Duration::days(TOKEN_DAYS);
     tx.execute(
         &ctx.db.sql(
-            "INSERT INTO site.api_tokens (player_id, name, token_hash, prefix, scopes, expires_at)
+            "INSERT INTO chess.api_tokens (player_id, name, token_hash, prefix, scopes, expires_at)
              VALUES ($1, $2, $3, $4, $5, $6)",
         ),
         &[&player, &name, &hash_key(&token), &prefix, &scopes, &expires],
@@ -292,7 +261,7 @@ pub async fn revoke(State(ctx): State<Ctx>, h: HeaderMap) -> ApiResult<Response>
     let c = ctx.db.conn().await?;
     c.execute(
         &ctx.db.sql(
-            "UPDATE site.api_tokens SET revoked_at = now(), revoked_by = 'chess: DELETE /api/token'
+            "UPDATE chess.api_tokens SET revoked_at = now(), revoked_by = 'chess: DELETE /api/token'
               WHERE token_hash = $1 AND revoked_at IS NULL",
         ),
         &[&hash_key(t)],

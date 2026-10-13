@@ -53,7 +53,7 @@ pub async fn ensure(ctx: &Ctx, level: u8) -> Result<Account> {
     let tx = c.transaction().await?;
     let player: i64 = tx
         .query_one(
-            &ctx.db.sql("INSERT INTO site.players (name, key_hash) VALUES ($1, $2) RETURNING id"),
+            &ctx.db.sql("INSERT INTO chess.players (name, key_hash) VALUES ($1, $2) RETURNING id"),
             &[&format!("Computer level {level}"), &crate::auth::hash_key(&crate::auth::random_token(28))],
         )
         .await?

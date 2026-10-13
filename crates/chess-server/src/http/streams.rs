@@ -348,7 +348,7 @@ pub async fn moves(State(ctx): State<Ctx>, Path(id): Path<String>) -> ApiResult<
 
 /// The game description line. `delay` plies are held back while the game
 /// is live, so the position shown is as old as the move lines.
-fn describe(row: &GameRow, delay: usize) -> serde_json::Value {
+pub(crate) fn describe(row: &GameRow, delay: usize) -> serde_json::Value {
     let lines = move_lines(row);
     let shown = if row.status.is_ongoing() { lines.len().saturating_sub(delay).max(1) } else { lines.len() };
     let at = lines.get(shown.saturating_sub(1));
