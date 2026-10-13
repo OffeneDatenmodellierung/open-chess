@@ -64,6 +64,11 @@ impl Session {
     }
 
     /// Commands to write now, in order.
+    /// Ask again for real-time positions (a board that hasn't answered).
+    pub fn restart(&mut self, now: Instant) {
+        self.start(now);
+    }
+
     pub fn take_writes(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.writes)
     }
