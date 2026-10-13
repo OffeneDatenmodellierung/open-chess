@@ -24,6 +24,8 @@ pub struct Session {
     writes: Vec<Vec<u8>>,
     /// The latest position and when it arrived, until it settles.
     pending: Option<(Placement, Instant)>,
+    /// The last position that settled.
+    settled: Option<Placement>,
     settle: Duration,
     next_battery: Option<Instant>,
 }
@@ -35,6 +37,7 @@ impl Session {
             decoder: Decoder::default(),
             writes: Vec::new(),
             pending: None,
+            settled: None,
             settle: Duration::from_millis(350),
             next_battery: None,
         }
@@ -63,12 +66,12 @@ impl Session {
         self.next_battery = Some(now + Duration::from_secs(30));
     }
 
-    /// Commands to write now, in order.
     /// Ask again for real-time positions (a board that hasn't answered).
     pub fn restart(&mut self, now: Instant) {
         self.start(now);
     }
 
+    /// Commands to write now, in order.
     pub fn take_writes(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.writes)
     }
@@ -88,7 +91,13 @@ impl Session {
         let mut events = Vec::new();
         while let Some(m) = self.decoder.next_message() {
             match m {
-                Message::Position(placement) => self.pending = Some((placement, now)),
+                // Boards like the GO send the position many times a second
+                // even when nothing moves: only a change restarts the wait.
+                Message::Position(placement) => match self.pending {
+                    Some((waiting, _)) if waiting == placement => {}
+                    _ if self.pending.is_none() && self.settled == Some(placement) => {}
+                    _ => self.pending = Some((placement, now)),
+                },
                 Message::Battery { percent, charging } => events.push(Event::Battery { percent, charging }),
             }
         }
@@ -102,6 +111,7 @@ impl Session {
             && now.duration_since(at) >= self.settle
         {
             self.pending = None;
+            self.settled = Some(placement);
             let o = self.follower.observe(&placement);
             if o != Observation::Unchanged {
                 events.push(Event::Game(o));
@@ -155,5 +165,27 @@ mod tests {
         let t2 = t1 + Duration::from_secs(3);
         s.receive(&p::position_bytes(&after("e2e4 e7e5")), t2);
         assert_eq!(s.poll(t2 + Duration::from_secs(1)), [Event::Game(Observation::Caught)]);
+    }
+
+    #[test]
+    fn a_board_that_repeats_its_position_still_moves() {
+        // The Chessnut GO sends the position ten times a second, changed or
+        // not (the bytes after it count up).
+        let t0 = Instant::now();
+        let mut s = Session::new(Follower::new());
+        let frames = |p: &Placement, n: u8| {
+            let mut b = p::position_bytes(p);
+            b[36] = n;
+            b
+        };
+        let start = Placement::from_fen(STARTING_PLACEMENT).unwrap();
+        let mut t = t0;
+        let mut seen = Vec::new();
+        for (i, p) in [start; 10].iter().chain([after("e2e4"); 10].iter()).enumerate() {
+            s.receive(&frames(p, u8::try_from(i).unwrap()), t);
+            seen.extend(s.poll(t));
+            t += Duration::from_millis(100);
+        }
+        assert_eq!(seen, [Event::Game(Observation::Move { uci: "e2e4".into(), san: "e4".into() })]);
     }
 }

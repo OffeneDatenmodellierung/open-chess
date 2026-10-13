@@ -181,7 +181,7 @@ impl Wire for BleWire {
         let got = self.transport.notifications(wait)?;
         for n in &got {
             self.heard += 1;
-            if self.heard <= 20 || self.heard.is_multiple_of(100) {
+            if self.heard <= 10 || self.heard.is_multiple_of(1000) {
                 log::line(Source::Board, format!("bluetooth ← #{} {}", self.heard, hex(n)));
             }
         }

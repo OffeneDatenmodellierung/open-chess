@@ -1,6 +1,6 @@
 //! The device's log: what the board, the engine, the server and the web
 //! clients did, kept for the terminal screen (newest first) and written to
-//! stderr when there's no screen.
+//! stderr when there's no screen, and to a file while the screen shows.
 
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
@@ -51,6 +51,8 @@ struct Log {
     quiet: bool,
     /// Lines written since the start (to tell the screen something's new).
     count: u64,
+    /// A file every line is also written to.
+    file: Option<std::fs::File>,
 }
 
 fn log() -> &'static Mutex<Log> {
@@ -69,6 +71,18 @@ pub fn line(source: Source, text: impl Into<String>) {
     if !l.quiet {
         eprintln!("{}: {text}", source.label());
     }
+    if let Some(f) = l.file.as_mut() {
+        use std::io::Write as _;
+        let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let _ = writeln!(
+            f,
+            "{:02}:{:02}:{:02} {:<9} {text}",
+            (secs / 3600) % 24,
+            (secs / 60) % 60,
+            secs % 60,
+            source.label()
+        );
+    }
     l.lines.push_front(Line { at: SystemTime::now(), source, text });
     l.lines.truncate(KEEP);
     l.count += 1;
@@ -77,6 +91,17 @@ pub fn line(source: Source, text: impl Into<String>) {
 /// A screen takes over: lines are kept, not written to stderr.
 pub fn quiet(on: bool) {
     lock().quiet = on;
+}
+
+/// Also write every line to `path` (started afresh).
+pub fn to_file(path: &std::path::Path) -> std::io::Result<()> {
+    lock().file = Some(std::fs::File::create(path)?);
+    Ok(())
+}
+
+/// How many lines are kept.
+pub fn len() -> usize {
+    lock().lines.len()
 }
 
 /// The newest `n` lines, newest first, and how many have ever been written.

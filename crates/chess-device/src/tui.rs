@@ -13,7 +13,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
 use chess_core::Side;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+};
+use ratatui::crossterm::execute;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -43,6 +46,13 @@ struct App {
     scanning: Arc<AtomicBool>,
     log_scroll: usize,
     title: String,
+    /// Where the log is also written.
+    log_file: Option<std::path::PathBuf>,
+}
+
+/// Where the screen's log is also written: the system's temporary folder.
+pub fn log_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("open-chess-device.log")
 }
 
 /// Run the screen. `start` connects at once (a board named on the command
@@ -55,8 +65,14 @@ pub fn run(
     start: Option<Found>,
 ) -> io::Result<()> {
     log::quiet(true);
+    let path = log_path();
+    let log_file = log::to_file(&path).is_ok().then_some(path);
     let mut terminal = ratatui::init();
-    let result = main_loop(&mut terminal, title, view, scan, connect, start);
+    // The mouse wheel scrolls the log (hold Option on macOS, or Shift
+    // elsewhere, to select text; the whole log is in the file too).
+    let _ = execute!(io::stdout(), EnableMouseCapture);
+    let result = main_loop(&mut terminal, title, view, scan, connect, start, log_file);
+    let _ = execute!(io::stdout(), DisableMouseCapture);
     ratatui::restore();
     log::quiet(false);
     result
@@ -83,6 +99,7 @@ fn main_loop(
     scan: &Arc<Scan>,
     connect: &Connect,
     start: Option<Found>,
+    log_file: Option<std::path::PathBuf>,
 ) -> io::Result<()> {
     let mut app = App {
         state: State::Picking { list: ListState::default().with_selected(Some(0)) },
@@ -90,6 +107,7 @@ fn main_loop(
         scanning: Arc::new(AtomicBool::new(false)),
         log_scroll: 0,
         title: title.to_owned(),
+        log_file,
     };
     match start {
         Some(f) => {
@@ -117,7 +135,19 @@ fn main_loop(
         if !event::poll(Duration::from_millis(250))? {
             continue;
         }
-        let Event::Key(k) = event::read()? else { continue };
+        let k = match event::read()? {
+            Event::Key(k) => k,
+            Event::Mouse(m) => {
+                match m.kind {
+                    // Newest at the top: down goes back in time.
+                    MouseEventKind::ScrollDown => app.log_scroll += 3,
+                    MouseEventKind::ScrollUp => app.log_scroll = app.log_scroll.saturating_sub(3),
+                    _ => {}
+                }
+                continue;
+            }
+            _ => continue,
+        };
         if k.kind != KeyEventKind::Press {
             continue;
         }
@@ -128,8 +158,8 @@ fn main_loop(
                 }
                 return Ok(());
             }
-            KeyCode::PageUp => app.log_scroll = app.log_scroll.saturating_sub(10),
             KeyCode::PageDown => app.log_scroll += 10,
+            KeyCode::PageUp => app.log_scroll = app.log_scroll.saturating_sub(10),
             KeyCode::Home => app.log_scroll = 0,
             _ => {}
         }
@@ -152,12 +182,13 @@ fn main_loop(
                 }
                 _ => {}
             },
-            State::Playing { stop, .. } => {
-                if k.code == KeyCode::Char('b') {
-                    // Disconnect: the board loop stops and the list comes back.
-                    stop.store(true, Ordering::SeqCst);
-                }
-            }
+            State::Playing { stop, .. } => match k.code {
+                // Disconnect: the board loop stops and the list comes back.
+                KeyCode::Char('b') => stop.store(true, Ordering::SeqCst),
+                KeyCode::Down => app.log_scroll += 1,
+                KeyCode::Up => app.log_scroll = app.log_scroll.saturating_sub(1),
+                _ => {}
+            },
         }
     }
 }
@@ -198,10 +229,11 @@ fn draw(f: &mut Frame, app: &mut App, v: &View) {
             draw_game(f, top[1], v, &format!(" {}: {} ", app.title, found.describe()));
         }
     }
-    draw_log(f, rows[1], app.log_scroll);
+    app.log_scroll = app.log_scroll.min(log::len().saturating_sub(1));
+    draw_log(f, rows[1], app.log_scroll, app.log_file.as_deref());
     let keys = match app.state {
         State::Picking { .. } => " ↑↓ choose · Enter connect · r look again · PgUp/PgDn log · q quit",
-        State::Playing { .. } => " b back to the boards · PgUp/PgDn log · Home newest · q quit",
+        State::Playing { .. } => " b back to the boards · ↑↓/wheel/PgUp/PgDn log · Home newest · q quit",
     };
     f.render_widget(Paragraph::new(keys).style(Style::default().fg(Color::DarkGray)), rows[2]);
 }
@@ -333,7 +365,7 @@ fn draw_game(f: &mut Frame, area: Rect, v: &View, title: &str) {
     );
 }
 
-fn draw_log(f: &mut Frame, area: Rect, scroll: usize) {
+fn draw_log(f: &mut Frame, area: Rect, scroll: usize, file: Option<&std::path::Path>) {
     let height = usize::from(area.height.saturating_sub(2));
     let (lines, _) = log::newest(scroll + height);
     let items: Vec<Line> = lines
@@ -358,12 +390,15 @@ fn draw_log(f: &mut Frame, area: Rect, scroll: usize) {
             ])
         })
         .collect();
-    let title = if scroll == 0 {
-        " log, newest first (UTC) ".to_owned()
-    } else {
-        format!(" log, newest first (UTC), {scroll} back ")
-    };
-    f.render_widget(Paragraph::new(items).block(Block::default().borders(Borders::ALL).title(title)), area);
+    let back = if scroll == 0 { String::new() } else { format!(", {scroll} back") };
+    let saved = file.map(|p| format!(", also in {}", p.display())).unwrap_or_default();
+    let title = format!(" log, newest first (UTC){back}{saved} ");
+    f.render_widget(
+        Paragraph::new(items)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().borders(Borders::ALL).title(title)),
+        area,
+    );
 }
 
 #[cfg(test)]
@@ -399,6 +434,7 @@ mod tests {
             scanning: Arc::new(AtomicBool::new(false)),
             log_scroll: 0,
             title: "open-chess".into(),
+            log_file: None,
         };
         let mut t = Terminal::new(TestBackend::new(100, 30)).unwrap();
         t.draw(|f| draw(f, &mut app, &v)).unwrap();
