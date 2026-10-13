@@ -85,6 +85,7 @@ async fn setup(tweak: impl FnOnce(&mut Config)) -> Option<Env> {
         vision_review: true,
         vision_review_max: 5000,
         app_dir: None,
+        app_theme: None,
         tablebase_url: String::new(),
     };
     tweak(&mut cfg);
@@ -979,8 +980,17 @@ async fn serves_the_training_app() {
     std::fs::write(dir.join("index.html"), "<!doctype html><title>Chess lab</title>").unwrap();
     std::fs::write(dir.join("sw.js"), "// worker").unwrap();
     std::fs::write(dir.join("pkg/engine_bg.wasm"), b"\0asm\x01\0\0\0").unwrap();
+    std::fs::create_dir_all(dir.join("docs")).unwrap();
+    std::fs::write(dir.join("docs/api.md"), "# The API").unwrap();
     let app_dir = dir.to_string_lossy().into_owned();
-    let Some(env) = setup(|c| c.app_dir = Some(app_dir)).await else { return };
+    let Some(env) = setup(|c| {
+        c.app_dir = Some(app_dir);
+        c.app_theme = Some(":root { --paper: #06114a; }".into());
+    })
+    .await
+    else {
+        return;
+    };
     let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
     let base = &env.base[0];
 
@@ -999,6 +1009,12 @@ async fn serves_the_training_app() {
     assert_eq!(r.bytes().await.unwrap().as_ref(), b"\0asm\x01\0\0\0");
     let r = http.get(format!("{base}/app/sw.js")).send().await.unwrap();
     assert_eq!(r.headers()["service-worker-allowed"], "/app/");
+    // The deployment's look, and the docs that ship with the app.
+    let r = http.get(format!("{base}/app/theme.css")).send().await.unwrap();
+    assert_eq!(r.headers()["content-type"], "text/css; charset=utf-8");
+    assert_eq!(r.text().await.unwrap(), ":root { --paper: #06114a; }");
+    let r = http.get(format!("{base}/app/docs/api.md")).send().await.unwrap();
+    assert_eq!(r.headers()["content-type"], "text/markdown; charset=utf-8");
 
     for bad in ["/app/missing.js", "/app/..%2f..%2fetc%2fpasswd", "/app/.hidden"] {
         assert_eq!(http.get(format!("{base}{bad}")).send().await.unwrap().status(), 404, "{bad}");

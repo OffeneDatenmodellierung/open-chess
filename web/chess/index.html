@@ -12,6 +12,31 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="preload" href="fonts/atkinson-hyperlegible-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
+  <!-- The deployment's look (an open-chess server's CHESS_APP_THEME); empty by default. -->
+  <link rel="stylesheet" href="theme.css">
+  <script>
+    // A page that embeds the app can set its look: ?theme=dark|light and
+    // ?embed=1 (hides the app's own title), kept for this tab so they survive
+    // signing in; a message {type: "open-chess:theme", theme} changes the
+    // theme later (when the host page's changes).
+    (function () {
+      var d = document.documentElement, q = new URLSearchParams(location.search), look = {};
+      try { look = JSON.parse(sessionStorage.getItem("open-chess:look") || "{}"); } catch (e) {}
+      if (q.has("theme")) look.theme = q.get("theme");
+      if (q.has("embed")) look.embed = q.get("embed") === "1";
+      try { sessionStorage.setItem("open-chess:look", JSON.stringify(look)); } catch (e) {}
+      var set = function (t) { if (t === "dark" || t === "light") d.dataset.theme = t; };
+      set(look.theme);
+      if (look.embed) d.classList.add("embedded");
+      addEventListener("message", function (e) {
+        var m = e.data;
+        if (m && m.type === "open-chess:theme") {
+          set(m.theme);
+          try { look.theme = m.theme; sessionStorage.setItem("open-chess:look", JSON.stringify(look)); } catch (x) {}
+        }
+      });
+    })();
+  </script>
 </head>
 <body>
   <header class="top">

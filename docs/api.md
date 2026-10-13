@@ -35,7 +35,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.incre
 | Games | `GET /game/export/{id}` and `/api/games/export/{id}` (PGN, or JSON with `Accept: application/json`; `pgnInJson`, `clocks`, `moves`) |
 | Fair play (ours) | `GET /api/fairplay/queue` (`limit`, default 50, up to 500; `all=true` for reviewed games too), `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` (scope `chess:fairplay`) |
 | Training app (ours) | see [below](#training-app-endpoints) |
-| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there) |
+| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them) |
 | Operations (the metrics port, `CHESS_METRICS_BIND`) | `GET /metrics` (Prometheus), `/healthz` (the process is up), `/readyz` (it can reach Postgres) |
 
 **`GET /`** answers what the server is, for the app and for tools:
@@ -149,6 +149,35 @@ The flow, for an app at `https://app.example/`:
 player, a bot account and a token (printed once). Bots play only through the
 Bot API and people only through the Board API, as on Lichess. See
 [lichess.md](lichess.md#bots) to run one.
+
+## The Chess lab's look
+
+A deployment can give the app (`/app/`) its own colours and fonts:
+`CHESS_APP_THEME` holds CSS (or the path of a `.css` file), served as
+`/app/theme.css` after the app's styles. The app's colours are CSS
+variables, for light (`:root`) and dark (`:root[data-theme="dark"]`, or the
+system's dark mode when nothing chose):
+
+```css
+:root, :root[data-theme="light"] { --paper: #eef2fb; --panel: #ffffff; --ink: #06114a; --muted: #4d5f8b;
+  --rule: #c9d4ee; --sq-light: #e3eafa; --sq-dark: #7b8bb0; --action: #d94a00; --action-ink: #ffffff; }
+:root[data-theme="dark"] { --paper: #06114a; --panel: #0d1e6a; --ink: #ffffff; /* … */ }
+body { font-family: Inter, system-ui, sans-serif; }
+```
+
+The others are `--amber`, `--danger`, `--w-seg`, `--b-seg`, `--d-seg`
+(the win/draw/loss bar), `--arrow-best` and `--arrow-reply`.
+
+**Embedding.** A page can show the app in an `<iframe>`:
+`/app/?embed=1&theme=dark` drops the app's own title and picks the theme
+(`light` or `dark`), and
+
+```js
+frame.contentWindow.postMessage({ type: "open-chess:theme", theme: "light" }, "*");
+```
+
+changes it when the page's own theme changes. Both stay set for the tab,
+through signing in.
 
 ## Training-app endpoints
 

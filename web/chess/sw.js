@@ -45,6 +45,22 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
   if (/\/(api|oauth)(\/|$)/.test(url.pathname)) return;
+  // The deployment's look can change without a release: the network first,
+  // the cached copy offline.
+  if (url.pathname.endsWith("/theme.css")) {
+    e.respondWith(
+      fetch(e.request)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(e.request, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(e.request).then((hit) => hit || new Response("", { headers: { "content-type": "text/css" } }))),
+    );
+    return;
+  }
   // Cache first; the page itself ignores its query string (?code= after
   // sign-in), so it opens offline too.
   e.respondWith(

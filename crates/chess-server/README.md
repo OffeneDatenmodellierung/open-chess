@@ -138,6 +138,7 @@ Everything is environment (each variable is also a command-line flag:
 | `CHESS_POOL_SIZE` | 8 | |
 | `CHESS_SWEEP_MS` | 500 | How often each replica's sweeper looks for flags, unstarted games and lapsed challenges |
 | `CHESS_APP_DIR` | — (the image sets `/usr/share/open-chess/app`) | The Chess lab app's files, served at `/app/` |
+| `CHESS_APP_THEME` | — | The app's look: CSS, or a `.css` file's path, served as `/app/theme.css` ([docs/api.md](../../docs/api.md#the-chess-labs-look)) |
 | `CHESS_TABLEBASE_URL` | `https://tablebase.lichess.ovh` | A Lichess-compatible tablebase server for `/api/esl/tablebase`; empty turns it off |
 | `CHESS_LAG_COMP_MS` | 100 | Given back per move for the round trip |
 | `CHESS_CHALLENGE_TTL_SECS` | 20 | Real-time challenges lapse without `keepAliveStream` |

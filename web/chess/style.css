@@ -30,8 +30,27 @@
   --arrow-reply: #b4392f;
   color-scheme: light;
 }
+/* Dark: chosen by the page that embeds the app (data-theme), or the system's. */
+:root[data-theme="dark"] {
+  --paper: #121820;
+  --panel: #19222c;
+  --ink: #e6ebf0;
+  --muted: #9aa7b4;
+  --rule: #2c3845;
+  --sq-light: #b9c6d2;
+  --sq-dark: #5d7287;
+  --action: #6fa3d6;
+  --action-ink: #0c1218;
+  --danger: #ef8277;
+  --w-seg: #f3f5f7;
+  --b-seg: #05080b;
+  --d-seg: #5c6876;
+  --arrow-best: #1f4f7f;
+  --arrow-reply: #a8352b;
+  color-scheme: dark;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --paper: #121820;
     --panel: #19222c;
     --ink: #e6ebf0;
@@ -50,6 +69,9 @@
     color-scheme: dark;
   }
 }
+
+/* Inside another page (?embed=1): its own title goes. */
+.embedded header.top h1 { display: none; }
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }

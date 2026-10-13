@@ -192,6 +192,7 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         // the training app (static files)
         .route("/app", get(app_files::bare))
         .route("/app/", get(app_files::index))
+        .route("/app/theme.css", get(app_files::theme))
         .route("/app/{*path}", get(app_files::file))
         .route("/", get(http::index))
         .layer(middleware::from_fn(cors))

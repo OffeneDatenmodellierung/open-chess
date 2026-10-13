@@ -27,6 +27,7 @@ fn content_type(path: &Path) -> &'static str {
         "png" => "image/png",
         "woff2" => "font/woff2",
         "txt" => "text/plain; charset=utf-8",
+        "md" => "text/markdown; charset=utf-8",
         _ => "application/octet-stream",
     }
 }
@@ -56,6 +57,24 @@ pub fn resolve(dir: &Path, tail: &str) -> Option<PathBuf> {
 /// `GET /app/{*path}`.
 pub async fn file(State(ctx): State<Ctx>, UrlPath(tail): UrlPath<String>) -> Response {
     serve(&ctx, &tail).await
+}
+
+/// `GET /app/theme.css`: the deployment's look (`CHESS_APP_THEME`: CSS, or
+/// a file of it), empty when there is none.
+pub async fn theme(State(ctx): State<Ctx>) -> Response {
+    let css = match ctx.cfg.app_theme.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        None => String::new(),
+        Some(t) if !t.contains('{') => tokio::fs::read_to_string(t).await.unwrap_or_else(|e| {
+            tracing::warn!("CHESS_APP_THEME {t}: {e}");
+            String::new()
+        }),
+        Some(css) => css.to_owned(),
+    };
+    let mut h = HeaderMap::new();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/css; charset=utf-8"));
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    (h, css).into_response()
 }
 
 /// `GET /app/`.
