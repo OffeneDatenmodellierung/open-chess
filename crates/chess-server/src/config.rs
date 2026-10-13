@@ -218,9 +218,6 @@ impl Config {
         if self.schema == self.site_schema {
             bail!("CHESS_SCHEMA must differ from CHESS_SITE_SCHEMA");
         }
-        if self.esports_login && self.esports_secret.as_deref().is_none_or(|s| s.len() < 32) {
-            bail!("ESPORTS_LOGIN needs ESPORTS_SECRET (at least 32 characters), shared with the site");
-        }
         self.base_path()?;
         Ok(())
     }

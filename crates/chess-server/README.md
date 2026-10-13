@@ -194,8 +194,10 @@ with a secret they share (`ESPORTS_SECRET`, and `ESPORTS_LOGIN=true`):
   `{"sub": "<the site's player id>", "name", "email", "role", "roles", "nonce", "exp": <Unix seconds>}`.
 * **Tokens for its players.** The site's server calls
   `POST /api/esports/token` with `Authorization: Bearer <secret>` and a form
-  (`sub`, `name`, `email`, `role`, `roles`, `scopes`, `days`, `label`); the
-  answer is `{"token", "username", "scopes", "expires"}`.
+  (`sub`, `name`, `email`, `role`, `roles`, `scopes`, `days` or `hours`,
+  `label`); the answer is `{"token", "username", "scopes", "expires"}`.
+  `POST /api/esports/revoke` (`label`, optionally `sub`) revokes the
+  tokens of that name it asked for, e.g. a match's when it ends.
 * Either way the site's player is linked to a player here (made on first
   use, with a chess account named after them; the site's roles carry
   over, so its managers review fair play).

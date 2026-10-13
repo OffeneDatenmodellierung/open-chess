@@ -233,6 +233,9 @@ came from, so existing app installs keep working.
 | `GET /api/esl/tablebase?fen=` | Exact endgame results (up to seven pieces) from a Lichess-compatible tablebase server (`CHESS_TABLEBASE_URL`), in that server's JSON, cached in the database (`"cached": true` when it came from there). Refused while you're playing here; 400 above seven pieces; 503 when `CHESS_TABLEBASE_URL` is empty. |
 | `POST /api/esl/recognise` | `{"image": "data:image/jpeg;base64,…"}` (up to 8 MB) → the board read from a photo: `placement` (FEN piece placement, White's side), `plausible` (a legal-looking position), `whiteAtBottom`, `sideToMove` (when it can tell), `unsureSquares`, `confidence`, `model` (which reader), and from the board reader (`source: "model"`) each square's class probabilities in `squares`. A photo the reader isn't sure of is also shown to the vision model (`CHESS_VISION_ENDPOINT`), whose reading comes back in `llm` (or as the answer, `source: "llm"`). With `CHESS_VISION_REVIEW` on, an unsure photo is kept for review (`photoId`, `review`) while fewer than `CHESS_VISION_REVIEW_MAX` are waiting. Off unless `CHESS_VISION_LOCAL_MODEL` or `CHESS_VISION_ENDPOINT` is set. |
 | `POST /api/esl/photos/{id}/confirm` | `{"placement": "…"}` from the player who sent photo `id`: the position it showed. Kept as a player-confirmed label; a reviewer's label always wins. |
+| `GET /api/esl/photos` | Reviewers (`chess:fairplay`, managers and admins): photos waiting for a person (`?all=true`: all), newest first, without the bytes |
+| `GET /api/esl/photos/{id}/image` | Reviewers: the photo |
+| `POST /api/esl/photos/{id}/label` | Reviewers: `{"placement": "…"}` or `{"unreadable": true}`, replacing a player's label; the position joins the dictionary |
 
 ## Fair-play review
 

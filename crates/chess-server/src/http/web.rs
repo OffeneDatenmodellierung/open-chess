@@ -422,9 +422,20 @@ pub async fn issue(
     scopes: &[String],
     days: i64,
 ) -> ApiResult<(String, chrono::DateTime<Utc>)> {
+    issue_for(ctx, player, label, scopes, Duration::days(days.clamp(1, 365))).await
+}
+
+/// Make a token lasting `life`.
+pub async fn issue_for(
+    ctx: &Ctx,
+    player: i64,
+    label: &str,
+    scopes: &[String],
+    life: Duration,
+) -> ApiResult<(String, chrono::DateTime<Utc>)> {
     let token = format!("{TOKEN_PREFIX}{}", random_token(36));
     let prefix: String = token.chars().take(TOKEN_PREFIX.len() + 6).collect();
-    let expires = Utc::now() + Duration::days(days.clamp(1, 365));
+    let expires = Utc::now() + life;
     let label: String = label.trim().chars().take(80).collect();
     let c = ctx.db.conn().await?;
     c.execute(
@@ -654,9 +665,16 @@ pub async fn esports_token(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) ->
         |s| s.split([' ', ',']).filter(|x| !x.is_empty()).map(str::to_owned).collect(),
     );
     let scopes = allowed(&ctx, player, &wanted).await?;
-    let days = f.get("days").and_then(|d| d.parse().ok()).unwrap_or(30);
     let label = f.get("label").map_or_else(|| format!("{} (site)", ctx.cfg.site_name), Clone::clone);
-    let (token, expires) = issue(&ctx, player, &label, &scopes, days).await?;
+    let (token, expires) = match f.get("hours").and_then(|h| h.parse::<i64>().ok()) {
+        Some(hours) => {
+            issue_for(&ctx, player, &label, &scopes, Duration::hours(hours.clamp(1, 24 * 365))).await?
+        }
+        None => {
+            issue(&ctx, player, &label, &scopes, f.get("days").and_then(|d| d.parse().ok()).unwrap_or(30))
+                .await?
+        }
+    };
     Ok(Json(json!({
         "token": token,
         "username": username,
@@ -664,6 +682,32 @@ pub async fn esports_token(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) ->
         "expires": expires.timestamp_millis(),
     }))
     .into_response())
+}
+
+/// `POST /api/esports/revoke` (bearer the secret; form `label`, and
+/// optionally `sub`): revoke the tokens of that name the site asked for
+/// (all its players', or one's). Answers how many.
+pub async fn esports_revoke(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) -> ApiResult<Response> {
+    let secret = ctx.cfg.esports().ok_or_else(|| ApiError::not_found("the site's token endpoint"))?;
+    if !bearer(&h).is_some_and(|b| same(b.as_bytes(), secret.as_bytes())) {
+        return Err(ApiError::unauthorized());
+    }
+    let f = form(&body);
+    let label = f.get("label").filter(|l| !l.is_empty()).ok_or_else(|| ApiError::bad("label is required"))?;
+    let sub = f.get("sub").filter(|s| !s.is_empty());
+    let c = ctx.db.conn().await?;
+    let n = c
+        .execute(
+            &ctx.db.sql(
+                "UPDATE chess.api_tokens t SET revoked_at = now(), revoked_by = 'site: ' || $1
+                   FROM chess.players p
+                  WHERE p.id = t.player_id AND p.esports_id IS NOT NULL AND ($2::text IS NULL OR p.esports_id = $2)
+                    AND t.name = $1 AND t.revoked_at IS NULL",
+            ),
+            &[label, &sub],
+        )
+        .await?;
+    Ok(Json(json!({ "revoked": n })).into_response())
 }
 
 #[cfg(test)]

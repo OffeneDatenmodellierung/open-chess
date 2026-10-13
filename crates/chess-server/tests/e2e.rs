@@ -975,6 +975,33 @@ async fn the_host_site_signs_players_in_and_gets_their_tokens() {
     assert_eq!(t["scopes"], serde_json::json!(["board:play", "chess:fairplay"]), "a manager on the site");
     let me = env.client(1, t["token"].as_str().unwrap());
     assert_eq!(me.account().await.unwrap().username, "Hal-Jones");
+    // A game's tokens last hours, and go together when the site says.
+    let before = chrono::Utc::now().timestamp_millis();
+    let game: serde_json::Value = http
+        .post(format!("{}/api/esports/token", env.base[0]))
+        .bearer_auth(SECRET)
+        .form(&[("sub", "77"), ("name", "Hal Jones"), ("label", "chess match 5"), ("hours", "2")])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let left = game["expires"].as_i64().unwrap() - before;
+    assert!((7_100_000..=7_300_000).contains(&left), "{left}");
+    let r: serde_json::Value = http
+        .post(format!("{}/api/esports/revoke", env.base[1]))
+        .bearer_auth(SECRET)
+        .form(&[("label", "chess match 5")])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["revoked"], 1);
+    assert!(env.client(0, game["token"].as_str().unwrap()).account().await.is_err());
+    assert_eq!(me.account().await.unwrap().username, "Hal-Jones", "other tokens stay");
     // A new site player gets a chess account on first use.
     let t: serde_json::Value = http
         .post(format!("{}/api/esports/token", env.base[0]))
@@ -1313,6 +1340,65 @@ async fn unsure_photos_are_kept_for_review_and_confirmed() {
         Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
     );
     assert_eq!(row.get::<_, Option<String>>(1).as_deref(), Some("player"));
+
+    // The review API: a site manager's token lists, shows and labels it;
+    // a player's can't.
+    let http = reqwest::Client::new();
+    let t: serde_json::Value = http
+        .post(format!("{}/api/esports/token", env.base[0]))
+        .bearer_auth(SECRET)
+        .form(&[("sub", "900"), ("name", "Reviewer"), ("roles", "manager"), ("scopes", "chess:fairplay")])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let manager = t["token"].as_str().unwrap().to_owned();
+    let list: serde_json::Value = http
+        .get(format!("{}/api/esl/photos", env.base[1]))
+        .bearer_auth(&manager)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        list["photos"].as_array().unwrap().iter().any(|p| p["id"] == id && p["label_source"] == "player"),
+        "{list}"
+    );
+    let img = http
+        .get(format!("{}/api/esl/photos/{id}/image", env.base[1]))
+        .bearer_auth(&manager)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(img.status(), 200);
+    assert!(!img.bytes().await.unwrap().is_empty());
+    let refused =
+        http.get(format!("{}/api/esl/photos", env.base[1])).bearer_auth(&token).send().await.unwrap();
+    assert_eq!(refused.status(), 403);
+    let r = http
+        .post(format!("{}/api/esl/photos/{id}/label", env.base[0]))
+        .bearer_auth(&manager)
+        .json(&serde_json::json!({"placement": "4k3/8/8/8/8/8/8/4K3 w - - 0 1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let row = env
+        .pg
+        .query_one(
+            &format!("SELECT label, label_source FROM {}.board_photos WHERE id = $1", env.chess),
+            &[&id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (row.get::<_, Option<String>>(0).as_deref(), row.get::<_, Option<String>>(1).as_deref()),
+        (Some("4k3/8/8/8/8/8/8/4K3"), Some("reviewer"))
+    );
 
     // A reviewer's label isn't overwritten by the player.
     env.pg

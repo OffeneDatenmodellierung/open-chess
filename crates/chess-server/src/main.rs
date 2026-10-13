@@ -192,6 +192,11 @@ async fn serve(cfg: Config) -> Result<()> {
 
     let listener = tokio::net::TcpListener::bind(&cfg.bind).await.context("binding CHESS_BIND")?;
     info!(bind = cfg.bind, public = cfg.public_url(), "chess server listening");
+    if cfg.esports_login && cfg.esports().is_none() {
+        tracing::warn!(
+            "ESPORTS_LOGIN is on but ESPORTS_SECRET isn't set (32+ characters): signing in with the site is off"
+        );
+    }
     axum::serve(listener, app::router(&ctx)?).with_graceful_shutdown(wait(stop)).await?;
     Ok(())
 }

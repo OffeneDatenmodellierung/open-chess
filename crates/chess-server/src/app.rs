@@ -155,6 +155,7 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/auth/esports", get(web::esports_start))
         .route("/auth/esports/back", get(web::esports_back))
         .route("/api/esports/token", post(web::esports_token))
+        .route("/api/esports/revoke", post(web::esports_revoke))
         .route("/api/feed", get(feed::feed))
         .route("/api/token", post(oauth::token).delete(oauth::revoke))
         .route("/api/token/test", post(oauth::test))
@@ -201,6 +202,9 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
             post(lab::recognise).layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)),
         )
         .route("/api/esl/photos/{id}/confirm", post(lab::confirm_photo))
+        .route("/api/esl/photos", get(lab::photos))
+        .route("/api/esl/photos/{id}/image", get(lab::photo_image))
+        .route("/api/esl/photos/{id}/label", post(lab::label_photo))
         // the training app (static files)
         .route("/app", get(app_files::bare))
         .route("/app/", get(app_files::index))
