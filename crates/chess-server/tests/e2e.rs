@@ -1002,6 +1002,16 @@ async fn the_host_site_signs_players_in_and_gets_their_tokens() {
     assert_eq!(r["revoked"], 1);
     assert!(env.client(0, game["token"].as_str().unwrap()).account().await.is_err());
     assert_eq!(me.account().await.unwrap().username, "Hal-Jones", "other tokens stay");
+    let linked: serde_json::Value = http
+        .get(format!("{}/api/esports/players", env.base[1]))
+        .bearer_auth(SECRET)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(linked["players"], serde_json::json!([{"sub": "77", "username": "Hal-Jones"}]));
     // A new site player gets a chess account on first use.
     let t: serde_json::Value = http
         .post(format!("{}/api/esports/token", env.base[0]))

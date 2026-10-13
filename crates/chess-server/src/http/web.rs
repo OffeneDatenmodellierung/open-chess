@@ -684,6 +684,31 @@ pub async fn esports_token(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) ->
     .into_response())
 }
 
+/// `GET /api/esports/players` (bearer the secret): the site's players
+/// linked here, `{"players": [{"sub", "username"}]}`, so the site can tell
+/// whose games the feed shows.
+pub async fn esports_players(State(ctx): State<Ctx>, h: HeaderMap) -> ApiResult<Response> {
+    let secret = ctx.cfg.esports().ok_or_else(|| ApiError::not_found("the site's token endpoint"))?;
+    if !bearer(&h).is_some_and(|b| same(b.as_bytes(), secret.as_bytes())) {
+        return Err(ApiError::unauthorized());
+    }
+    let c = ctx.db.conn().await?;
+    let rows = c
+        .query(
+            &ctx.db.sql(
+                "SELECT p.esports_id, a.username FROM chess.players p JOIN chess.accounts a ON a.player_id = p.id
+                  WHERE p.esports_id IS NOT NULL ORDER BY p.id",
+            ),
+            &[],
+        )
+        .await?;
+    let players: Vec<Value> = rows
+        .iter()
+        .map(|r| json!({"sub": r.get::<_, String>(0), "username": r.get::<_, String>(1)}))
+        .collect();
+    Ok(Json(json!({ "players": players })).into_response())
+}
+
 /// `POST /api/esports/revoke` (bearer the secret; form `label`, and
 /// optionally `sub`): revoke the tokens of that name the site asked for
 /// (all its players', or one's). Answers how many.
