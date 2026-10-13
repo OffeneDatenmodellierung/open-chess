@@ -53,6 +53,8 @@ pub struct View {
     pub clocks: Option<[i64; 2]>,
     pub running: Option<Side>,
     pub paused: bool,
+    /// What the clock's menu shows, while it's open.
+    pub menu: Option<String>,
     pub at: Instant,
 }
 
@@ -94,6 +96,7 @@ impl View {
             clocks,
             running: c.running(),
             paused: c.paused(),
+            menu: c.menu().map(str::to_owned),
             at: now,
         }
     }
@@ -133,6 +136,7 @@ impl View {
             clocks: live.and_then(|l| l.clocks_at(now)),
             running: live.and_then(crate::online::Live::running),
             paused: false,
+            menu: None,
             at: now,
         }
     }
@@ -160,6 +164,7 @@ impl View {
             clocks: None,
             running: None,
             paused: false,
+            menu: None,
             at: now,
         }
     }
@@ -185,6 +190,7 @@ impl View {
             clocks: None,
             running: None,
             paused: false,
+            menu: None,
             at: Instant::now(),
         }
     }
@@ -212,6 +218,9 @@ impl View {
 
     /// What's going on, in a few words.
     pub fn status_line(&self) -> String {
+        if let Some(m) = &self.menu {
+            return format!("menu: {m}");
+        }
         match self.status {
             Status::Created => "waiting for a board".to_owned(),
             Status::Started if self.awaiting_board => {

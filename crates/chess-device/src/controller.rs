@@ -13,8 +13,9 @@
 //! start with the first move, as on Lichess.
 //!
 //! The DGT3000's buttons, left to right: show the engine's last move
-//! again, level down, switch sides (the engine plays the side to move),
-//! level up, pause or resume the clock.
+//! again, level down, play (pause or resume a running clock, otherwise
+//! switch sides: the engine plays the side to move), level up, and the
+//! menu ([`crate::menu`]: time control, level, side, book, engine).
 
 use std::time::Instant;
 
@@ -23,6 +24,7 @@ use chess_core::{Clock, Game, Side, Status};
 use chess_dgt::{ClockButton, ClockReport, Command, Event, Observation, RunMode, Square};
 
 use crate::board::Board;
+use crate::menu::{Choices, Current, Menu, Picked, Step};
 
 /// A request for the engine's move in a position.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,11 +89,21 @@ pub struct Setup {
     pub white_on_left: bool,
     /// For choosing among book moves.
     pub seed: u64,
+    /// The books and engines the menu offers.
+    pub choices: Choices,
 }
 
 impl Default for Setup {
     fn default() -> Self {
-        Setup { player: Side::White, level: 4, book: None, time: None, white_on_left: true, seed: 1 }
+        Setup {
+            player: Side::White,
+            level: 4,
+            book: None,
+            time: None,
+            white_on_left: true,
+            seed: 1,
+            choices: Choices::default(),
+        }
     }
 }
 
@@ -116,6 +128,17 @@ pub struct Controller {
     last_engine_san: Option<String>,
     flagged: Option<Side>,
     games: u32,
+    menu: Option<(Menu, String)>,
+    switch: Option<Switch>,
+}
+
+/// A change picked in the menu that the controller can't make itself: the
+/// player's loop loads the book or starts the engine, then tells the
+/// controller ([`Controller::set_book`], [`Controller::engine_changed`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Switch {
+    Book(Option<usize>),
+    Engine(usize),
 }
 
 impl Controller {
@@ -133,6 +156,8 @@ impl Controller {
             last_engine_san: None,
             flagged: None,
             games: 0,
+            menu: None,
+            switch: None,
             setup,
         }
     }
@@ -168,6 +193,40 @@ impl Controller {
 
     pub fn paused(&self) -> bool {
         self.paused
+    }
+
+    /// What the clock's menu shows, while it's open.
+    pub fn menu(&self) -> Option<&str> {
+        self.menu.as_ref().map(|(_, text)| text.as_str())
+    }
+
+    /// The books and engines on offer, and which are in use.
+    pub fn choices(&self) -> &Choices {
+        &self.setup.choices
+    }
+
+    /// A book or engine picked in the menu, for the loop to load.
+    pub fn take_switch(&mut self) -> Option<Switch> {
+        self.switch.take()
+    }
+
+    /// Use this book (number `at` among the choices), or none.
+    pub fn set_book(&mut self, book: Option<Book>, at: Option<usize>, s: &mut impl Board) {
+        self.setup.book = book;
+        self.setup.choices.book = at;
+        let name = at.and_then(|i| self.setup.choices.books.get(i)).map_or("no book", String::as_str);
+        say(s, name);
+    }
+
+    /// The engine changed (to number `at`): ask the new one if the old one
+    /// was thinking.
+    pub fn engine_changed(&mut self, at: usize, s: &mut impl Board, now: Instant) -> Option<Think> {
+        self.setup.choices.engine = at;
+        if let Some(name) = self.setup.choices.engines.get(at) {
+            say(s, name);
+        }
+        self.thinking = None;
+        self.engine_turn(s, now)
     }
 
     /// The time control new games are played to.
@@ -229,6 +288,10 @@ impl Controller {
 
     /// React to the board. May ask for the engine's move.
     pub fn on_event(&mut self, event: &Event, s: &mut impl Board, now: Instant) -> Option<Think> {
+        if matches!(event, Event::Game(_)) {
+            // Play on the board leaves the menu.
+            self.menu = None;
+        }
         match event {
             Event::Connected { .. } => {
                 say(s, "ready");
@@ -318,29 +381,88 @@ impl Controller {
 
     /// A DGT3000 button, from the board's cable or a DGT Pi's own clock.
     pub fn on_button(&mut self, b: ClockButton, s: &mut impl Board, now: Instant) -> Option<Think> {
+        let ClockButton::Button(b) = b else { return None };
+        if let Some((mut menu, _)) = self.menu.take() {
+            let current = Current { time: self.setup.time, level: self.level, player: self.player };
+            return match menu.press(b, &self.setup.choices, current) {
+                Step::Show(text) => {
+                    say(s, &text);
+                    self.menu = Some((menu, text));
+                    None
+                }
+                Step::Closed => {
+                    self.show_game(s, now);
+                    None
+                }
+                Step::Picked(p) => self.picked(p, s, now),
+            };
+        }
         match b {
-            ClockButton::Button(0) => {
+            0 => {
                 let text = self.last_engine_san.clone().unwrap_or_else(|| "no move".into());
                 say(s, &text);
                 None
             }
-            ClockButton::Button(1) => {
+            1 => {
                 self.set_level(self.level.saturating_sub(1), s);
                 None
             }
-            ClockButton::Button(3) => {
+            3 => {
                 self.set_level(self.level + 1, s);
                 None
             }
-            // Switch sides: the engine takes over the side to move.
-            ClockButton::Button(2) => self.set_player(self.player.opposite(), s, now).ok().flatten(),
-            ClockButton::Button(4) => {
-                if self.clock.is_some() && !self.ended {
-                    self.toggle_pause(s, now);
-                }
+            // Play: pause or resume a running clock, otherwise switch
+            // sides (the engine takes over the side to move).
+            2 if self.running.is_some() && !self.ended => {
+                self.toggle_pause(s, now);
+                None
+            }
+            2 => self.set_player(self.player.opposite(), s, now).ok().flatten(),
+            4 => {
+                let current = Current { time: self.setup.time, level: self.level, player: self.player };
+                let (menu, text) = Menu::open(&self.setup.choices, current);
+                say(s, &text);
+                self.menu = Some((menu, text));
                 None
             }
             _ => None,
+        }
+    }
+
+    fn picked(&mut self, p: Picked, s: &mut impl Board, now: Instant) -> Option<Think> {
+        match p {
+            Picked::Time(t) => {
+                let now_or_next = self.set_time(t, s, now);
+                let label = t.map_or_else(|| "no time".to_owned(), |t| t.to_string());
+                say(s, &if now_or_next { label } else { format!("next {label}") });
+                None
+            }
+            Picked::Level(l) => {
+                self.set_level(l, s);
+                None
+            }
+            Picked::Player(side) => self.set_player(side, s, now).unwrap_or_else(|_| {
+                say(s, "not now");
+                None
+            }),
+            Picked::Book(b) => {
+                self.switch = Some(Switch::Book(b));
+                None
+            }
+            Picked::Engine(e) => {
+                self.switch = Some(Switch::Engine(e));
+                None
+            }
+        }
+    }
+
+    /// Back from the menu: the clock shows the game again.
+    fn show_game(&self, s: &mut impl Board, now: Instant) {
+        if self.clock.is_some() {
+            s.send(Command::ClockEndText);
+            self.show_clock(s, now);
+        } else {
+            say(s, self.last_engine_san.as_deref().unwrap_or("ready"));
         }
     }
 
@@ -799,9 +921,67 @@ mod tests {
         let mut c = timed(5, 0);
         show_at(&mut c, &mut s, "", t0);
         show_at(&mut c, &mut s, "e2e4", t0);
-        press(&mut c, &mut s, 4, t0 + ms(1_000));
+        press(&mut c, &mut s, 2, t0 + ms(1_000));
         assert_eq!(c.remaining(Side::Black, t0 + ms(60_000)), Some(299_000), "paused");
-        press(&mut c, &mut s, 4, t0 + ms(60_000));
+        press(&mut c, &mut s, 2, t0 + ms(60_000));
         assert_eq!(c.remaining(Side::Black, t0 + ms(61_000)), Some(298_000), "running again");
+    }
+
+    #[test]
+    fn the_menu_sets_the_time_and_side() {
+        let now = Instant::now();
+        let mut s = Session::new(Follower::new());
+        let mut c = timed(5, 3);
+        show_at(&mut c, &mut s, "", now);
+        s.take_commands();
+        press(&mut c, &mut s, 4, now);
+        assert_eq!(c.menu(), Some("time"));
+        press(&mut c, &mut s, 4, now);
+        press(&mut c, &mut s, 3, now);
+        press(&mut c, &mut s, 4, now);
+        assert_eq!(c.menu(), None);
+        assert_eq!(c.time_control(), Some(TimeControl { minutes: 10, increment_secs: 5 }));
+        assert_eq!(texts(&mut s), ["time", "5+3", "10+5", "10+5"]);
+        assert_eq!(c.remaining(Side::White, now), Some(600_000), "applies before the first move");
+
+        // Side: Black, and the engine opens.
+        press(&mut c, &mut s, 4, now);
+        press(&mut c, &mut s, 3, now);
+        press(&mut c, &mut s, 3, now);
+        press(&mut c, &mut s, 4, now);
+        press(&mut c, &mut s, 3, now);
+        let t = press(&mut c, &mut s, 4, now).expect("the engine plays White");
+        assert_eq!(t.ply, 0);
+        assert_eq!(c.player(), Side::Black);
+    }
+
+    #[test]
+    fn books_and_engines_go_to_the_loop_and_moves_leave_the_menu() {
+        let now = Instant::now();
+        let mut s = Session::new(Follower::new());
+        let choices = crate::menu::Choices {
+            books: vec!["varied".into()],
+            book: None,
+            engines: vec!["open-chess".into(), "stockfish".into()],
+            engine: 0,
+        };
+        let mut c = Controller::new(Setup { choices, ..Setup::default() });
+        show_at(&mut c, &mut s, "", now);
+        press(&mut c, &mut s, 4, now);
+        press(&mut c, &mut s, 1, now);
+        press(&mut c, &mut s, 1, now);
+        assert_eq!(c.menu(), Some("engine"));
+        press(&mut c, &mut s, 4, now);
+        press(&mut c, &mut s, 3, now);
+        press(&mut c, &mut s, 4, now);
+        assert_eq!(c.take_switch(), Some(Switch::Engine(1)));
+        assert_eq!(c.take_switch(), None);
+        c.engine_changed(1, &mut s, now);
+        assert_eq!(c.choices().engine, 1);
+
+        press(&mut c, &mut s, 4, now);
+        assert!(c.menu().is_some());
+        show_at(&mut c, &mut s, "e2e4", now);
+        assert_eq!(c.menu(), None, "a move on the board leaves the menu");
     }
 }

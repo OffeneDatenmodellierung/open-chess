@@ -100,7 +100,7 @@ impl Board for chess_chessnut::Session {
 
 /// The Centaur's buttons as the DGT3000's, so they do the same things:
 /// back shows the engine's move again, down and up change the level,
-/// tick switches sides, play pauses the clock.
+/// tick is play (pause, or switch sides), play opens the menu.
 pub fn centaur_button(b: chess_centaur::Button) -> Option<ClockButton> {
     use chess_centaur::Button;
     Some(match b {
