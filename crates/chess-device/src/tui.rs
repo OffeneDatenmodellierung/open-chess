@@ -677,6 +677,7 @@ mod tests {
 
     /// A test terminal's screen as HTML, in its colours (to look at).
     fn html(t: &Terminal<TestBackend>) -> String {
+        use std::fmt::Write as _;
         let colour = |c: ratatui::style::Color, fallback: &str| match c {
             ratatui::style::Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
             _ => fallback.to_owned(),
@@ -695,11 +696,12 @@ mod tests {
                     "&" => "&amp;",
                     s => s,
                 };
-                out.push_str(&format!(
+                let _ = write!(
+                    out,
                     "<span style='background:{};color:{};{bold}'>{sym}</span>",
                     colour(c.bg, "#06114a"),
                     colour(c.fg, "#ffffff")
-                ));
+                );
             }
             out.push('\n');
         }
