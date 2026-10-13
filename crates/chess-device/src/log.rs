@@ -1,6 +1,6 @@
 //! The device's log: what the board, the engine, the server and the web
 //! clients did, kept for the terminal screen (newest first) and written to
-//! stderr when there's no screen, and to a file while the screen shows.
+//! stderr when there's no screen, and to a file with --log-file or --debug.
 
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
@@ -53,6 +53,10 @@ struct Log {
     count: u64,
     /// A file every line is also written to.
     file: Option<std::fs::File>,
+    /// Where that file is (for the screen's title).
+    path: Option<std::path::PathBuf>,
+    /// --debug: keep the fault-finding lines too.
+    debug: bool,
 }
 
 fn log() -> &'static Mutex<Log> {
@@ -95,8 +99,32 @@ pub fn quiet(on: bool) {
 
 /// Also write every line to `path` (started afresh).
 pub fn to_file(path: &std::path::Path) -> std::io::Result<()> {
-    lock().file = Some(std::fs::File::create(path)?);
+    let file = std::fs::File::create(path)?;
+    let mut l = lock();
+    l.file = Some(file);
+    l.path = Some(std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned()));
     Ok(())
+}
+
+/// Where the log is also written, if anywhere.
+pub fn file_path() -> Option<std::path::PathBuf> {
+    lock().path.clone()
+}
+
+/// Turn the fault-finding lines on or off (--debug).
+pub fn debug_on(on: bool) {
+    lock().debug = on;
+}
+
+pub fn debugging() -> bool {
+    lock().debug
+}
+
+/// A fault-finding line: kept only with --debug.
+pub fn debug(source: Source, text: impl Into<String>) {
+    if debugging() {
+        line(source, text);
+    }
 }
 
 /// How many lines are kept.

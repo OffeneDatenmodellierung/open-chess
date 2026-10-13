@@ -174,12 +174,32 @@ struct Args {
     /// looks on localhost:1982, on the computer its browser runs on).
     #[arg(long, num_args = 0..=1, default_missing_value = "127.0.0.1:1982")]
     livechess: Option<String>,
+
+    /// Log more for finding faults (every Bluetooth message the board
+    /// sends and receives, and what it offers), and write the log to a file:
+    /// --log-file, or open-chess-device.log in the current folder.
+    #[arg(long, env = "OPEN_CHESS_DEBUG")]
+    debug: bool,
+
+    /// Also write the log to this file (started afresh each run).
+    #[arg(long)]
+    log_file: Option<std::path::PathBuf>,
 }
 
 fn main() -> ExitCode {
     let matches = Args::command().get_matches();
     let args = match Args::from_arg_matches(&matches) {
-        Ok(a) => a,
+        Ok(a) => {
+            log::debug_on(a.debug);
+            let file = a.log_file.clone().or_else(|| a.debug.then(|| "open-chess-device.log".into()));
+            if let Some(path) = file {
+                match log::to_file(&path) {
+                    Ok(()) => log::line(Source::Device, format!("logging to {}", path.display())),
+                    Err(e) => eprintln!("can't write the log to {}: {e}", path.display()),
+                }
+            }
+            a
+        }
         Err(e) => e.exit(),
     };
     let args = match &args.picochess_ini {

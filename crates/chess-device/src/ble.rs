@@ -182,7 +182,7 @@ mod imp {
                     // What the board offers, in the log (for boards that
                     // don't behave as expected).
                     for c in &chars {
-                        crate::log::line(
+                        crate::log::debug(
                             crate::log::Source::Board,
                             format!("bluetooth: {} {:?}", c.uuid, c.properties),
                         );

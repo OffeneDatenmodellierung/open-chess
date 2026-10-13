@@ -50,10 +50,6 @@ struct App {
     log_file: Option<std::path::PathBuf>,
 }
 
-/// Where the screen's log is also written: the system's temporary folder.
-pub fn log_path() -> std::path::PathBuf {
-    std::env::temp_dir().join("open-chess-device.log")
-}
 
 /// Run the screen. `start` connects at once (a board named on the command
 /// line); otherwise it starts by listing boards.
@@ -65,11 +61,10 @@ pub fn run(
     start: Option<Found>,
 ) -> io::Result<()> {
     log::quiet(true);
-    let path = log_path();
-    let log_file = log::to_file(&path).is_ok().then_some(path);
+    let log_file = log::file_path();
     let mut terminal = ratatui::init();
     // The mouse wheel scrolls the log (hold Option on macOS, or Shift
-    // elsewhere, to select text; the whole log is in the file too).
+    // elsewhere, to select text; --log-file keeps it all in a file).
     let _ = execute!(io::stdout(), EnableMouseCapture);
     let result = main_loop(&mut terminal, title, view, scan, connect, start, log_file);
     let _ = execute!(io::stdout(), DisableMouseCapture);

@@ -19,8 +19,16 @@ Enter. Once connected it shows the board, the players, both clocks, the
 moves and what's waiting to be made on the board, above a log, newest
 first: the board, the engine, the online game, and every request from the
 app, PicoChess's tools and Lichess's DGT page (handy when the page doesn't
-connect). `b` goes back to the list, `r` scans again, `q` quits,
-PgUp/PgDn/Home scroll the log. Every other option works with it.
+connect). `b` goes back to the list, `r` scans again, `q` quits; the
+mouse wheel, ↑/↓ (while playing), PgUp/PgDn and Home scroll the log. To
+select text with the mouse, hold Option (macOS) or Shift. Every other
+option works with it.
+
+When a board doesn't behave, run with `--debug` (or `OPEN_CHESS_DEBUG=1`):
+the log adds every Bluetooth message to and from the board and what the
+board offers, and is written to `open-chess-device.log` in the folder you
+ran it from (the log's title says where). `--log-file PATH` writes the log
+to a file of your choosing, with or without `--debug`.
 
 Or name the board and go:
 

@@ -171,7 +171,7 @@ impl Wire for BleWire {
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
         let r = self.transport.write(chess_chessnut::protocol::WRITE, data);
         match &r {
-            Ok(()) => log::line(Source::Board, format!("bluetooth → {}", hex(data))),
+            Ok(()) => log::debug(Source::Board, format!("bluetooth → {}", hex(data))),
             Err(e) => log::line(Source::Board, format!("bluetooth → {} failed: {e}", hex(data))),
         }
         r
@@ -181,7 +181,7 @@ impl Wire for BleWire {
         let got = self.transport.notifications(wait)?;
         for n in &got {
             self.heard += 1;
-            if self.heard <= 10 || self.heard.is_multiple_of(1000) {
+            if log::debugging() && (self.heard <= 20 || self.heard.is_multiple_of(100)) {
                 log::line(Source::Board, format!("bluetooth ← #{} {}", self.heard, hex(n)));
             }
         }
