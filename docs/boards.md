@@ -207,6 +207,33 @@ must run on the computer the device runs on: the device's own screen, or a
 laptop with the board on USB or Bluetooth. (`--online` does the same
 without a browser.)
 
+**The terminal screen.** Run `open-chess-device` in a terminal without
+naming a board (or with `--tui`) and it lists the boards it finds, Bluetooth
+LE boards nearby, USB and serial ports, Chessnut boards on USB, to choose
+from with the arrow keys and Enter. Once connected it shows the board, the
+players, both clocks, the moves and what's waiting to be made on the
+board, above a log, newest first: the board, the engine, the online game,
+and every request from the app, PicoChess's tools and Lichess's DGT page
+(handy when the page doesn't connect). `b` goes back to the list, `q`
+quits, PgUp/PgDn scroll the log. All the other options work with it
+(`--online`, `--livechess`, `--listen` …).
+
+**Chessnut boards on USB.** `--usb /dev/hidraw0` (or choose it on the
+screen) plays a Chessnut Air, Air+, Pro or Go on its USB cable: the same
+messages as over Bluetooth, as HID reports, found by Chessnut's USB ids
+(those in Chessnut's EasyLink SDK). On Linux, give your user access to the
+board's `hidraw` node with a udev rule (or run as root):
+
+```
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="2d80", MODE="0660", GROUP="plugdev"
+```
+
+**macOS and Windows.** The device runs there too: DGT boards on USB
+(`/dev/cu.usbmodem…`, or `COM3`), and Bluetooth LE boards through the
+system's own Bluetooth (on a Mac a board is known by the id macOS gives it,
+which the screen shows). Chessnut boards on USB are Linux-only for now, and
+the DGT Pi clock and the Centaur are Linux by nature.
+
 ## Coming next
 
 In order; each lands in open-chess as it's ready.
@@ -220,12 +247,9 @@ In order; each lands in open-chess as it's ready.
    reading the `picochess.ini` settings people already have, and
    PicoChess's full clock menu.
 5. **Lichess's DGT connector.** Done (above).
-6. **A terminal screen and Mac/Windows.** Pick a board (Bluetooth boards
-   found nearby, USB and serial ports), watch the game live, and read a
-   log of everything (newest first), including the Lichess DGT page's and
-   PicoChess tools' requests. Bluetooth and serial boards on macOS and
-   Windows too.
-7. **Chessnut boards over USB**, as well as Bluetooth.
+6. **A terminal screen and Mac/Windows.** Done (above).
+7. **Chessnut boards over USB.** Done on Linux (above); macOS and Windows
+   next.
 8. **The Centaur's e-paper screen.**
 
 ## Devices

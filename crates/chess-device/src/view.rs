@@ -137,6 +137,58 @@ impl View {
         }
     }
 
+    /// A board's game with no engine or online game behind it (the
+    /// Lichess DGT page drives it), titled `title`.
+    pub fn board_only(board: &impl Board, id: &str, title: &str, created_ms: i64, now: Instant) -> View {
+        let g = board.game();
+        let (status, winner) = g.outcome().map_or((Status::Started, None), |o| (o.status, o.winner));
+        View {
+            game_id: id.to_owned(),
+            created_ms,
+            initial_fen: g.initial_fen().map(str::to_owned),
+            moves: g.uci_moves(),
+            fen: g.fen(),
+            turn: g.turn(),
+            status,
+            winner,
+            player: Side::White,
+            level: 0,
+            engine: EngineInfo { name: Some(title.to_owned()) },
+            thinking: false,
+            awaiting_board: board.awaiting_board(),
+            time: None,
+            clocks: None,
+            running: None,
+            paused: false,
+            at: now,
+        }
+    }
+
+    /// Before a board is connected.
+    pub fn waiting(title: &str) -> View {
+        let g = chess_core::Game::new(None).expect("the starting position");
+        View {
+            game_id: "waiting0".into(),
+            created_ms: 0,
+            initial_fen: None,
+            moves: Vec::new(),
+            fen: g.fen(),
+            turn: Side::White,
+            status: Status::Created,
+            winner: None,
+            player: Side::White,
+            level: 0,
+            engine: EngineInfo { name: Some(title.to_owned()) },
+            thinking: false,
+            awaiting_board: false,
+            time: None,
+            clocks: None,
+            running: None,
+            paused: false,
+            at: Instant::now(),
+        }
+    }
+
     /// The same to a viewer, apart from the clocks counting down.
     pub fn same(&self, other: &View) -> bool {
         let strip = |v: &View| View { clocks: v.clocks.map(|_| [0, 0]), at: self.at, ..v.clone() };

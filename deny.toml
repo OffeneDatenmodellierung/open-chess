@@ -44,6 +44,11 @@ allow = ["GPL-3.0-or-later"]
 crate = "open-chess-chessnut"
 allow = ["GPL-3.0-or-later"]
 
+# Windows COM ports for the device runtime (GPL), file-level copyleft.
+[[licenses.exceptions]]
+crate = "serialport"
+allow = ["MPL-2.0"]
+
 [[licenses.exceptions]]
 crate = "open-chess-device"
 allow = ["GPL-3.0-or-later"]
