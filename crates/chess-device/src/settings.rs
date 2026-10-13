@@ -41,6 +41,9 @@ pub struct Settings {
     pub lichess_token: String,
     pub server_url: String,
     pub server_token: String,
+    /// A second account's token, for both sides on the board.
+    pub lichess_other_token: String,
+    pub server_other_token: String,
 }
 
 impl Settings {

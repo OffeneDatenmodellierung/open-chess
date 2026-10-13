@@ -165,7 +165,7 @@ impl View {
             running: live.and_then(crate::online::Live::running),
             paused: false,
             menu: None,
-            names: None,
+            names: live.filter(|_| online.plays_both_sides()).map(|l| l.names.clone()),
             ratings: None,
             at: now,
         }

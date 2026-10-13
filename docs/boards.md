@@ -32,6 +32,12 @@ starts, Esc goes back to the boards):
   still in progress (to go back to after a disconnect) or a challenge
   waiting for you to accept. ←/→ on **Game** goes through them. Only that
   game is played on the board; others on the account are left alone.
+  **Two players here, both accounts** puts two people's accounts on one
+  board: give the other player's token too, and the game is started
+  between the two accounts (accepted at once with their token). Each move
+  made on the board is sent as the account whose side it is, so both
+  accounts' ratings count it. A game in progress between them can be
+  resumed the same way, with the other token filled in.
 * **The board for Lichess's DGT page**: see below.
 
 The names, the level, the clock, the server and the tokens are remembered

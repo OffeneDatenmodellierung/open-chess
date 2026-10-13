@@ -57,10 +57,11 @@ const TIMES: [Option<TimeControl>; 7] = [
 ];
 
 /// How an online game starts, before the site's open games.
-const STARTS: [&str; 3] = [
+const STARTS: [&str; 4] = [
     "a new one: wait for it to start on the site",
     "a new one: challenge a player",
     "a new one: the site's computer",
+    "a new one: two players here, both accounts",
 ];
 
 /// One line of the form.
@@ -80,11 +81,15 @@ enum Row {
     SiteLevel,
     SidePlay,
     Rated,
+    OtherToken,
 }
 
 impl Row {
     fn text(self) -> bool {
-        matches!(self, Row::Name | Row::White | Row::Black | Row::Token | Row::Url | Row::Opponent)
+        matches!(
+            self,
+            Row::Name | Row::White | Row::Black | Row::Token | Row::Url | Row::Opponent | Row::OtherToken
+        )
     }
 }
 
@@ -150,6 +155,9 @@ pub struct Form {
     lichess_token: String,
     server_url: String,
     server_token: String,
+    /// The other account's token, for both sides on the board.
+    lichess_other: String,
+    server_other: String,
     start: usize,
     opponent: String,
     site_level: u8,
@@ -190,6 +198,8 @@ impl Form {
             lichess_token: or(&d.lichess_token, &s.lichess_token),
             server_url: or(&d.server, &s.server_url),
             server_token: or(&d.server_token, &s.server_token),
+            lichess_other: s.lichess_other_token.clone(),
+            server_other: s.server_other_token.clone(),
             start: 0,
             opponent: String::new(),
             site_level: 4,
@@ -234,9 +244,17 @@ impl Form {
                 }
                 r.extend([Row::Token, Row::Game]);
                 match self.start {
+                    0 => {}
                     1 => r.extend([Row::Opponent, Row::SidePlay, Row::Time, Row::Rated]),
                     2 => r.extend([Row::SiteLevel, Row::SidePlay, Row::Time]),
-                    _ => {}
+                    3 => r.extend([Row::OtherToken, Row::SidePlay, Row::Time, Row::Rated]),
+                    // A game in progress: the other token too, to play
+                    // both sides again.
+                    n => {
+                        if matches!(self.open().get(n - STARTS.len()), Some(Open::Playing { .. })) {
+                            r.push(Row::OtherToken);
+                        }
+                    }
                 }
             }
             Kind::DgtPage => {}
@@ -326,6 +344,8 @@ impl Form {
             Row::Black => &mut self.black,
             Row::Token if self.kind() == Kind::Lichess => &mut self.lichess_token,
             Row::Token => &mut self.server_token,
+            Row::OtherToken if self.kind() == Kind::Lichess => &mut self.lichess_other,
+            Row::OtherToken => &mut self.server_other,
             Row::Url => &mut self.server_url,
             Row::Opponent => &mut self.opponent,
             _ => return None,
@@ -388,8 +408,17 @@ impl Form {
                 if token.is_empty() {
                     return Err("type the account's API token (with the board:play scope)".into());
                 }
+                let other =
+                    if self.kind() == Kind::Lichess { &self.lichess_other } else { &self.server_other };
+                let other = other.trim();
                 let start = match self.start {
                     0 => Start::Wait,
+                    3 if other.is_empty() => {
+                        return Err(
+                            "type the other player's API token (their account plays the other side)".into()
+                        );
+                    }
+                    3 => Start::Pair,
                     1 if self.opponent.trim().is_empty() => return Err("type the player to challenge".into()),
                     1 => Start::Challenge(self.opponent.trim().to_owned()),
                     2 => Start::Computer(self.site_level),
@@ -405,7 +434,9 @@ impl Form {
                     start,
                     play: colour,
                     time: self.time(),
-                    rated: self.rated && self.start == 1,
+                    rated: self.rated && matches!(self.start, 1 | 3),
+                    other_token: (!other.is_empty() && self.rows().contains(&Row::OtherToken))
+                        .then(|| other.to_owned()),
                 }
             }
         })
@@ -422,6 +453,8 @@ impl Form {
             lichess_token: self.lichess_token.trim().to_owned(),
             server_url: self.server_url.trim().to_owned(),
             server_token: self.server_token.trim().to_owned(),
+            lichess_other_token: self.lichess_other.trim().to_owned(),
+            server_other_token: self.server_other.trim().to_owned(),
         }
     }
 
@@ -445,6 +478,14 @@ impl Form {
                 let t = if self.kind() == Kind::Lichess { &self.lichess_token } else { &self.server_token };
                 mask(t)
             }
+            Row::OtherToken => {
+                let t = if self.kind() == Kind::Lichess { &self.lichess_other } else { &self.server_other };
+                if t.is_empty() && self.start >= STARTS.len() {
+                    "(empty: only your side)".into()
+                } else {
+                    mask(t)
+                }
+            }
             Row::Game => {
                 let n = self.start;
                 let base = if n < STARTS.len() {
@@ -463,8 +504,10 @@ impl Form {
         }
     }
 
-    fn label(row: Row) -> &'static str {
+    fn label(&self, row: Row) -> &'static str {
         match row {
+            Row::SidePlay if self.start == 3 => "Token plays",
+            Row::OtherToken => "Other token",
             Row::Kind => "Game type",
             Row::Level => "Level",
             Row::SiteLevel => "Its level",
@@ -495,7 +538,7 @@ impl Form {
                 let style =
                     if here { Style::default().add_modifier(Modifier::REVERSED) } else { Style::default() };
                 Line::from(vec![
-                    Span::styled(format!("{:>10}: ", Form::label(r)), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("{:>10}: ", self.label(r)), Style::default().fg(Color::DarkGray)),
                     Span::styled(format!("{}{cursor}", self.value(r)), style),
                     Span::styled(format!(" {arrows}"), Style::default().fg(Color::DarkGray)),
                 ])
@@ -609,5 +652,29 @@ mod tests {
         assert_eq!(start, Start::Resume("g1".into()));
         assert_eq!(site, Site::Server("http://localhost:8080".into()));
         assert_eq!(mask("lip_abcdefghij"), "lip_••••••ghij");
+    }
+
+    #[test]
+    fn two_accounts_on_one_board() {
+        let mut f = form();
+        f.select(Kind::Lichess);
+        f.focus = 1;
+        for c in "lip_first_token".chars() {
+            f.key(KeyCode::Char(c));
+        }
+        f.key(KeyCode::Down); // the game row
+        f.start = 3;
+        assert!(matches!(f.key(KeyCode::Enter), Action::None));
+        assert!(f.error.as_deref().is_some_and(|e| e.contains("other player")));
+        f.key(KeyCode::Down); // the other token
+        assert!(f.typing());
+        for c in "lip_second_token".chars() {
+            f.key(KeyCode::Char(c));
+        }
+        let Action::Start(GameChoice::Online { start, other_token, .. }) = f.key(KeyCode::Enter) else {
+            panic!("no game")
+        };
+        assert_eq!((start, other_token.as_deref()), (Start::Pair, Some("lip_second_token")));
+        assert_eq!(f.settings().lichess_other_token, "lip_second_token");
     }
 }

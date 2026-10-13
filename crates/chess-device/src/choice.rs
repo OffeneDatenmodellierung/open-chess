@@ -42,6 +42,9 @@ pub enum Start {
     Resume(String),
     /// Accept this challenge to us.
     Accept(String),
+    /// A new game between this account and the other one, both played on
+    /// the board.
+    Pair,
 }
 
 /// A game to play.
@@ -60,6 +63,9 @@ pub enum GameChoice {
         play: Option<Side>,
         time: Option<TimeControl>,
         rated: bool,
+        /// The other account's token: both sides are played on the board,
+        /// each move sent as the account whose side it is.
+        other_token: Option<String>,
     },
     /// The board for Lichess's DGT page, answering DGT LiveChess here.
     DgtPage { addr: String },
@@ -83,6 +89,9 @@ impl GameChoice {
             }
             GameChoice::Online { site, start: Start::Resume(id), .. } => {
                 format!("{}: back to game {id}", site.name())
+            }
+            GameChoice::Online { site, start: Start::Pair, .. } => {
+                format!("{}: two accounts on this board", site.name())
             }
             GameChoice::Online { site, start: Start::Accept(id), .. } => {
                 format!("{}: accepting challenge {id}", site.name())

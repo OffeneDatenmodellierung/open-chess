@@ -352,6 +352,44 @@ async fn clocks_flag_and_unplayed_games_abort() {
     env.teardown().await;
 }
 
+/// Two accounts on one board (the device's "two players here"): one
+/// challenges the other, accepted at once with the other's token; each side
+/// moves as its own account; a rated finish changes both ratings.
+#[tokio::test]
+async fn two_accounts_play_on_one_board() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let (_, ann_token) = env.player("Ann", HUMAN).await;
+    let (_, bob_token) = env.player("Bob", HUMAN).await;
+    let (ann, bob) = (env.client(0, &ann_token), env.client(1, &bob_token));
+    let them = bob.account().await.unwrap();
+    let req = ChallengeRequest {
+        rated: true,
+        limit_secs: Some(600),
+        increment_secs: Some(5),
+        color: Some("white".into()),
+        accept_by_token: Some(bob_token.clone()),
+        ..Default::default()
+    };
+    let id = ann.challenge(&them.id, &req).await.unwrap().id;
+    ann.make_move(Api::Board, &id, "f2f3", false).await.unwrap();
+    bob.make_move(Api::Board, &id, "e7e5", false).await.unwrap();
+    ann.make_move(Api::Board, &id, "g2g4", false).await.unwrap();
+    bob.make_move(Api::Board, &id, "d8h4", false).await.unwrap();
+    let mut g = ann.export_game(&id).await.unwrap();
+    for _ in 0..40 {
+        if g.players.white.rating_diff.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        g = ann.export_game(&id).await.unwrap();
+    }
+    assert_eq!((g.status, g.winner), (Status::Mate, Some(Side::Black)));
+    let (w, b) = (g.players.white.rating_diff.unwrap(), g.players.black.rating_diff.unwrap());
+    assert!(w < 0 && b > 0, "{w} {b}");
+    assert_eq!(g.players.black.user.name, "Bob");
+    env.teardown().await;
+}
+
 #[tokio::test]
 async fn the_computer_plays_at_a_level() {
     let Some(env) = setup(|_| {}).await else { return };

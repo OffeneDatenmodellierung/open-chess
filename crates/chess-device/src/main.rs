@@ -397,6 +397,7 @@ fn choice_from_args(args: &Args) -> Result<GameChoice> {
             play: Some(play),
             time: args.time,
             rated: false,
+            other_token: None,
         });
     }
     let saved = Settings::load();
@@ -421,7 +422,7 @@ fn mode(args: &Args, choice: &GameChoice, seed: u64) -> Result<Mode> {
         };
     let (player, level, time, rating, two_players) = match choice {
         GameChoice::DgtPage { addr } => return Ok(Mode::LiveChess { addr: addr.clone() }),
-        GameChoice::Online { site, token, start, play, time, rated } => {
+        GameChoice::Online { site, token, start, play, time, rated, other_token } => {
             let opening = match start {
                 Start::Wait => Opening::Wait,
                 Start::Challenge(who) => Opening::Challenge(Challenge {
@@ -433,9 +434,12 @@ fn mode(args: &Args, choice: &GameChoice, seed: u64) -> Result<Mode> {
                 }
                 Start::Resume(id) => Opening::Resume(id.clone()),
                 Start::Accept(id) => Opening::Accept(id.clone()),
+                Start::Pair => Opening::Pair { request: request(*play, *time, *rated) },
             };
             log::line(Source::Online, format!("playing online at {}", site.base()));
-            return Ok(Mode::Online { connection: Connection::spawn(site.base(), token, opening)? });
+            let other = other_token.as_deref().filter(|t| !t.trim().is_empty());
+            let connection = Connection::spawn(site.base(), token, opening, other)?;
+            return Ok(Mode::Online { connection, both: other.is_some() });
         }
         GameChoice::Computer { name, level, play, time } => {
             let rated = args.uci.is_none() && !name.trim().is_empty();

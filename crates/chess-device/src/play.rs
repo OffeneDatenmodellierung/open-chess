@@ -95,8 +95,10 @@ pub enum Mode {
         lists: Lists,
         rating: Rating,
     },
+    /// `both`: both sides are played on the board (two accounts).
     Online {
         connection: Connection,
+        both: bool,
     },
     LiveChess {
         addr: String,
@@ -160,7 +162,7 @@ pub fn drive<L: Link>(
         Mode::Engine { controller, opponent, engine, lists, rating } => {
             play_engine(link, *controller, opponent, engine, &lists, &rating, o, view, requests)
         }
-        Mode::Online { connection } => play_online(link, &connection, o, view, requests),
+        Mode::Online { connection, both } => play_online(link, &connection, both, o, view, requests),
         Mode::LiveChess { addr } => play_livechess(link, &addr, o, view, requests),
     }
 }
@@ -372,6 +374,7 @@ fn apply(
 fn play_online<L: Link>(
     link: &mut L,
     connection: &Connection,
+    both: bool,
     o: &Options,
     view: &watch::Sender<View>,
     requests: &mpsc::Receiver<Request>,
@@ -405,6 +408,9 @@ fn play_online<L: Link>(
                         format!("signed in as {id}; start a game on the site or the app"),
                     );
                     online = OnlinePlay::new(&id, o.white_on_left);
+                    if both {
+                        online = online.both_sides();
+                    }
                     signed_in = true;
                 }
                 FromServer::Full(f) if signed_in => {
