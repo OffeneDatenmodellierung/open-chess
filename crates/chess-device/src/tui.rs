@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
-use chess_core::{Game, Side, Status};
+use chess_core::Side;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -321,54 +321,16 @@ fn draw_game(f: &mut Frame, area: Rect, v: &View, title: &str) {
             if v.paused { "  (paused)" } else { "" }
         )));
     }
-    let status = match v.status {
-        Status::Created => "waiting for a board".to_owned(),
-        Status::Started if v.awaiting_board => format!("make {} on the board", last_san(v)),
-        Status::Started if v.thinking => "the engine is thinking…".to_owned(),
-        Status::Started => format!("{} to move", if v.turn == Side::White { "White" } else { "Black" }),
-        s => format!(
-            "game over: {} ({})",
-            match v.winner {
-                Some(Side::White) => "1-0",
-                Some(Side::Black) => "0-1",
-                None => "½-½",
-            },
-            s.name()
-        ),
-    };
+    let status = v.status_line();
     lines.push(Line::styled(status, Style::default().add_modifier(Modifier::BOLD)));
     lines.push(Line::from(""));
-    lines.push(Line::from(movetext(v)));
+    lines.push(Line::from(v.movetext()));
     f.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
             .block(Block::default().borders(Borders::ALL).title(title.to_owned())),
         area,
     );
-}
-
-fn sans(v: &View) -> Vec<String> {
-    Game::from_moves(v.initial_fen.as_deref(), &v.moves.join(" "))
-        .map(|g| g.sans().to_vec())
-        .unwrap_or_default()
-}
-
-fn last_san(v: &View) -> String {
-    sans(v).last().cloned().unwrap_or_default()
-}
-
-/// The moves, numbered, the latest last.
-fn movetext(v: &View) -> String {
-    let mut out = String::new();
-    for (i, s) in sans(v).iter().enumerate() {
-        if i % 2 == 0 {
-            out.push_str(&(i / 2 + 1).to_string());
-            out.push_str(". ");
-        }
-        out.push_str(s);
-        out.push(' ');
-    }
-    out
 }
 
 fn draw_log(f: &mut Frame, area: Rect, scroll: usize) {

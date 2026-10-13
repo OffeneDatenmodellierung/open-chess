@@ -189,6 +189,56 @@ impl View {
         }
     }
 
+    /// The moves in SAN.
+    pub fn sans(&self) -> Vec<String> {
+        chess_core::Game::from_moves(self.initial_fen.as_deref(), &self.moves.join(" "))
+            .map(|g| g.sans().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// The moves, numbered, the latest last.
+    pub fn movetext(&self) -> String {
+        let mut out = String::new();
+        for (i, s) in self.sans().iter().enumerate() {
+            if i % 2 == 0 {
+                out.push_str(&(i / 2 + 1).to_string());
+                out.push_str(". ");
+            }
+            out.push_str(s);
+            out.push(' ');
+        }
+        out.trim_end().to_owned()
+    }
+
+    /// What's going on, in a few words.
+    pub fn status_line(&self) -> String {
+        match self.status {
+            Status::Created => "waiting for a board".to_owned(),
+            Status::Started if self.awaiting_board => {
+                format!("make {} on the board", self.sans().last().cloned().unwrap_or_default())
+            }
+            Status::Started if self.thinking => "the engine is thinking".to_owned(),
+            Status::Started if self.turn == self.player => "your move".to_owned(),
+            Status::Started => {
+                format!("{} to move", if self.turn == Side::White { "White" } else { "Black" })
+            }
+            s => format!(
+                "game over: {} ({})",
+                match self.winner {
+                    Some(Side::White) => "1-0",
+                    Some(Side::Black) => "0-1",
+                    None => "1/2-1/2",
+                },
+                s.name()
+            ),
+        }
+    }
+
+    /// The opponent's name.
+    pub fn opponent(&self) -> String {
+        self.engine.name.clone().unwrap_or_else(|| format!("open-chess level {}", self.level))
+    }
+
     /// The same to a viewer, apart from the clocks counting down.
     pub fn same(&self, other: &View) -> bool {
         let strip = |v: &View| View { clocks: v.clocks.map(|_| [0, 0]), at: self.at, ..v.clone() };

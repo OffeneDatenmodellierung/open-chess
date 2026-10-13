@@ -125,8 +125,11 @@ position back takes moves back; the starting position starts a new game.
 Promotions are to a queen. The engine's move lights its two squares and
 beeps. The buttons: back shows the engine's move again (on the clock, so
 for now only in the app), down and up change the level, tick switches sides,
-play pauses the clock. The e-paper screen isn't driven yet: the app is the
-screen (`--listen`). The original Centaur has a Raspberry Pi Zero W, a
+play pauses the clock. Its e-paper screen shows the game: the players and
+clocks, the board (from your side) with the last move marked, what's
+going on ("make e5 on the board") and the latest moves, with quick
+partial refreshes and a full one now and then to clear ghosting
+(`--no-screen` leaves it alone). The original Centaur has a Raspberry Pi Zero W, a
 32-bit ARMv6: build for `arm-unknown-linux-gnueabihf`, or swap in a Zero 2 W
 and use the 64-bit build. [`deploy/centaur`](../deploy/centaur) has a
 systemd unit.
@@ -231,8 +234,16 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="2d80", MODE="0660", GROUP="plugdev"
 **macOS and Windows.** The device runs there too: DGT boards on USB
 (`/dev/cu.usbmodem…`, or `COM3`), and Bluetooth LE boards through the
 system's own Bluetooth (on a Mac a board is known by the id macOS gives it,
-which the screen shows). Chessnut boards on USB are Linux-only for now, and
-the DGT Pi clock and the Centaur are Linux by nature.
+which the screen shows). Chessnut boards on USB work there too (through hidapi); the DGT Pi
+clock and the Centaur are Linux by nature.
+
+**PicoChess's settings.** `--picochess-ini /opt/picochess/picochess.ini`
+takes what a PicoChess setup already says: the board's port
+(`dgt-port`), the DGT Pi's clock (`dgtpi`), the engine, its level
+(`Elo@2200` limits a UCI engine's strength, `Level@5` sets Skill Level)
+and book, the time control (`time = 5 3`), the web server's port and which
+side of the clock is White's. Options on the command line win; keys the
+device doesn't use are listed in the log.
 
 ## Coming next
 
@@ -243,14 +254,12 @@ In order; each lands in open-chess as it's ready.
    full clock menu comes with PicoChess compatibility (4).
 2. **The Chess lab app as the board's screen.** Done (above).
 3. **Online play from the board.** Done (above).
-4. **PicoChess compatibility.** The web API is done (above). Still to come:
-   reading the `picochess.ini` settings people already have, and
-   PicoChess's full clock menu.
+4. **PicoChess compatibility.** The web API and `picochess.ini` are done
+   (above). Still to come: PicoChess's full clock menu.
 5. **Lichess's DGT connector.** Done (above).
 6. **A terminal screen and Mac/Windows.** Done (above).
-7. **Chessnut boards over USB.** Done on Linux (above); macOS and Windows
-   next.
-8. **The Centaur's e-paper screen.**
+7. **Chessnut boards over USB.** Done (above).
+8. **The Centaur's e-paper screen.** Done (above).
 
 ## Devices
 
@@ -258,7 +267,7 @@ In order; each lands in open-chess as it's ready.
 |---|---|---|
 | DGT USB / Bluetooth e-Board, Smart Board, Revelation II | — (a computer drives it) | Works: `open-chess-device` (above) |
 | DGT Pi | Raspberry Pi 3 in a DGT3000 clock; the board on USB or Bluetooth | Works: the board via `chess-dgt`, the built-in clock via `chess-dgtpi` (`--clock dgtpi`). Install: a 64-bit Raspberry Pi OS card with the runtime, like PicoChess v4 |
-| DGT Centaur | Raspberry Pi Zero W (or a Zero 2 W swapped in), board controller on serial, e-paper | Works: board, lights, buttons, sounds (`--centaur`, `chess-centaur`); the e-paper screen next |
+| DGT Centaur | Raspberry Pi Zero W (or a Zero 2 W swapped in), board controller on serial, e-paper | Works: board, lights, buttons, sounds, e-paper screen (`--centaur`, `chess-centaur`) |
 | DGT Pegasus | Bluetooth LE | `--ble … --ble-board pegasus` (`chess-ble`, `chess-dgt`) |
 | Chessnut Air, Air+, Pro | Bluetooth LE; recognises pieces | `--ble … --ble-board chessnut` (`chess-chessnut`) |
 | Chessnut Go | Bluetooth LE (and USB); recognises pieces | Expected to work as the Air; to be confirmed. USB later |

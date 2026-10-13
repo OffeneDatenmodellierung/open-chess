@@ -41,6 +41,7 @@ rustix = { version = "1.1.5", features = ["event"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 btleplug = "0.13.5"
+hidapi = "2.6.7"
 
 [target.'cfg(windows)'.dependencies]
 serialport = { version = "4.10.1", default-features = false }
