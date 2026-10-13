@@ -353,6 +353,52 @@ async fn clocks_flag_and_unplayed_games_abort() {
 }
 
 #[tokio::test]
+async fn the_computer_plays_at_a_level() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let (_, token) = env.player("Fay", &["board:play"]).await;
+    let http = reqwest::Client::new();
+    let r = http
+        .post(format!("{}/api/challenge/ai", env.base[0]))
+        .bearer_auth(&token)
+        .form(&[("level", "2"), ("color", "white"), ("clock.limit", "300"), ("clock.increment", "3")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let g: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(
+        (g["player"].as_str(), g["source"].as_str(), g["aiLevel"].as_i64()),
+        (Some("white"), Some("ai"), Some(2))
+    );
+    let id = g["id"].as_str().unwrap().to_owned();
+    let me = env.client(0, &token);
+    me.make_move(Api::Board, &id, "e2e4", false).await.unwrap();
+    // The computer answers within a few seconds.
+    let mut moves = String::new();
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        moves = me.export_game(&id).await.unwrap().moves.unwrap_or_default();
+        if moves.split(' ').count() >= 2 {
+            break;
+        }
+    }
+    assert_eq!(moves.split(' ').count(), 2, "the computer replied: {moves}");
+    // Its account has the level's fixed rating; bad levels are refused.
+    let u: serde_json::Value =
+        http.get(format!("{}/api/user/ai-level-2", env.base[0])).send().await.unwrap().json().await.unwrap();
+    assert_eq!(u["perfs"]["rapid"]["rating"].as_i64(), Some(1000));
+    let r = http
+        .post(format!("{}/api/challenge/ai", env.base[0]))
+        .bearer_auth(&token)
+        .form(&[("level", "9")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400);
+    env.teardown().await;
+}
+
+#[tokio::test]
 async fn draws_takebacks_and_claims() {
     let Some(env) = setup(|_| {}).await else { return };
     let (_, a) = env.player("Ann", HUMAN).await;

@@ -1108,7 +1108,7 @@ function onGameEvent(ev) {
   const o = app.online;
   const g = o.game;
   if (ev.type === "gameFull") {
-    const name = (p) => p?.name || p?.id || (p?.aiLevel ? `Lichess AI level ${p.aiLevel}` : "Anonymous");
+    const name = (p) => p?.name || p?.id || (p?.aiLevel ? `Computer level ${p.aiLevel}` : "Anonymous");
     g.white = name(ev.white);
     g.black = name(ev.black);
     g.myWhite = ev.white?.id?.toLowerCase() === o.me.id.toLowerCase();
@@ -1274,7 +1274,7 @@ function renderOnline() {
       </div>
       <label class="check"><input type="checkbox" id="tcRated"> Rated</label>
       <div class="row"><button type="button" class="primary" id="sendChallenge">Send challenge</button></div>
-      ${o.serverKey === "lichess" ? `<div class="row"><label class="field"><span>Lichess AI level</span><select id="aiLevel">${[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `<option ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select></label><button type="button" id="playAi">Play the Lichess AI</button></div>` : `<p class="hint">To play the site's Stockfish bots, challenge one by its username.</p>`}
+      <div class="row"><label class="field"><span>${o.serverKey === "lichess" ? "Lichess AI level" : "Computer level"}</span><select id="aiLevel">${[1, 2, 3, 4, 5, 6, 7, 8].map((n) => `<option ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select></label><button type="button" id="playAi">${o.serverKey === "lichess" ? "Play the Lichess AI" : "Play the computer"}</button></div>
       <p class="hint">Online games use the Board API, which allows rapid and slower time controls.</p>
     </section>`}`;
 }

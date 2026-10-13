@@ -30,7 +30,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.incre
 | Account | `GET /api/account`, `/api/account/email`, `/api/account/playing` (`nb`), `/api/user/{username}` |
 | Bots | `POST /api/bot/account/upgrade`, `GET /api/bot/online` (`nb`) |
 | Streams | `GET /api/stream/event`, `/api/board/game/stream/{id}`, `/api/bot/game/stream/{id}`, `/api/stream/game/{id}` (see [Live games](#live-games)) |
-| Challenges | `POST /api/challenge/{username}` (with `keepAliveStream`, `rules` and `acceptByToken`), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline` (`reason`), `…/cancel` |
+| Challenges | `POST /api/challenge/ai` (the computer, below), `POST /api/challenge/{username}` (with `keepAliveStream`, `rules` and `acceptByToken`), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline` (`reason`), `…/cancel` |
 | Playing | `/api/board/game/{id}/…` and `/api/bot/game/{id}/…`: `move/{uci}` (`offeringDraw`), `resign`, `abort`, `draw/{yes\|no}`, `takeback/{yes\|no}`, `claim-victory`, `claim-draw`, `chat` (GET, and POST with `room` and `text`, up to 140 characters) |
 | Games | `GET /game/export/{id}` and `/api/games/export/{id}` (PGN, or JSON with `Accept: application/json`; `pgnInJson`, `clocks`, `moves`) |
 | Fair play (ours) | `GET /api/fairplay/queue` (`limit`, default 50, up to 500; `all=true` for reviewed games too), `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` (scope `chess:fairplay`) |
@@ -63,9 +63,7 @@ An unmodified [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot)
 connects, accepts challenges, chats and plays.
 
 **Not implemented:** variants other than standard and from-position,
-correspondence games, seeks and the lobby, tournaments, the Lichess AI
-(`POST /api/challenge/ai` is taken as a challenge to a player named `ai`),
-studies, puzzles, the streams of several games at once
+correspondence games, seeks and the lobby, tournaments, studies, puzzles, the streams of several games at once
 (`/api/stream/games-by-users`, `/api/stream/games/{id}`) and TV. Paths that
 don't exist get an empty 404; unsupported options on paths that do (a
 variant, a correspondence clock) get Lichess's JSON errors. Rated games from
@@ -78,6 +76,23 @@ a position, and rated unlimited games, are refused as on Lichess.
   first move within `CHESS_FIRST_MOVE_SECS` gets the game aborted.
   Threefold repetition and the fifty-move rule draw automatically.
 * The public move stream runs behind live games (below).
+
+## Playing the computer
+
+`POST /api/challenge/ai` with `level` (1–8) plays open-chess's own engine
+at that level, as Lichess's endpoint does: `clock.limit` and
+`clock.increment` (or neither, for no clock), `color` (`white`, `black`,
+`random`) and `fen`. The game starts at once and is never rated; the answer
+is the game (`id`, `player`: your colour, `aiLevel`, `source: "ai"` …), and
+it's played through the Board API like any other. The computer is a bot
+account, `ai-level-N`, made on first use, with a fixed rating per level
+(800, 1000 … 2200) so it can't be farmed. Every server replica plays the
+computer's moves, taking each game with a Postgres advisory lock.
+
+```sh
+curl -X POST -H "Authorization: Bearer $TOKEN" -d level=4 -d clock.limit=600 -d clock.increment=5 \
+  https://chess.example.com/api/challenge/ai
+```
 
 ## Live games
 

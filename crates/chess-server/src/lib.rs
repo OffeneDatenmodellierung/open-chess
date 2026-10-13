@@ -1,6 +1,7 @@
 //! The open-chess server, as a library (the `open-chess` binary is a
 //! thin wrapper; integration tests drive the same pieces).
 
+pub mod ai;
 pub mod analyse;
 pub mod app;
 pub mod auth;
@@ -30,6 +31,7 @@ pub async fn stopped(stop: &mut watch::Receiver<bool>) {
 /// sweeper (rows are claimed with SKIP LOCKED, so replicas don't collide).
 pub fn spawn_background(ctx: &app::Ctx, stop: &watch::Receiver<bool>) {
     tokio::spawn(ctx.db.clone().listen((*ctx.cfg).clone(), stop.clone()));
+    tokio::spawn(ai::run(ctx.clone(), stop.clone()));
     let sweeper = ctx.clone();
     let mut stop_sweep = stop.clone();
     tokio::spawn(async move {

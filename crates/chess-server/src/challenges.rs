@@ -153,6 +153,26 @@ pub async fn create(
     dest_name: &str,
     req: &Request,
 ) -> ApiResult<(ChallengeRow, (i32, i32))> {
+    create_with(ctx, who, dest_name, req, false).await
+}
+
+/// A challenge accepted at once on the opponent's behalf (the computer).
+pub async fn create_accepted(
+    ctx: &Ctx,
+    who: &Identity,
+    dest_name: &str,
+    req: &Request,
+) -> ApiResult<(ChallengeRow, (i32, i32))> {
+    create_with(ctx, who, dest_name, req, true).await
+}
+
+async fn create_with(
+    ctx: &Ctx,
+    who: &Identity,
+    dest_name: &str,
+    req: &Request,
+    accept_now: bool,
+) -> ApiResult<(ChallengeRow, (i32, i32))> {
     let mut c = ctx.db.conn().await?;
     let tx = c.transaction().await?;
     let me = model::ensure_account(&ctx.db, &tx, who.player).await?;
@@ -165,20 +185,24 @@ pub async fn create(
     can_play(ctx, &dest)?;
     // Accepting on the opponent's behalf needs their token, with a scope
     // that lets them play.
-    let acceptor = match &req.accept_by_token {
-        Some(t) => {
-            let id =
-                ctx.auth.token(t).await?.ok_or_else(|| ApiError::bad("acceptByToken isn't a valid token"))?;
-            if id.player != dest.player_id {
-                return Err(ApiError::bad("acceptByToken belongs to someone else"));
+    let acceptor = accept_now
+        || match &req.accept_by_token {
+            Some(t) => {
+                let id = ctx
+                    .auth
+                    .token(t)
+                    .await?
+                    .ok_or_else(|| ApiError::bad("acceptByToken isn't a valid token"))?;
+                if id.player != dest.player_id {
+                    return Err(ApiError::bad("acceptByToken belongs to someone else"));
+                }
+                if !id.has_any(&["challenge:write", "board:play", "bot:play"]) {
+                    return Err(ApiError::bad("acceptByToken lacks the challenge:write scope"));
+                }
+                true
             }
-            if !id.has_any(&["challenge:write", "board:play", "bot:play"]) {
-                return Err(ApiError::bad("acceptByToken lacks the challenge:write scope"));
-            }
-            true
-        }
-        None => false,
-    };
+            None => false,
+        };
     let id = model::new_id();
     let ttl_secs = if req.clock.is_some() { ctx.cfg.challenge_ttl().as_secs_f64() } else { 7.0 * 86_400.0 };
     tx.execute(
