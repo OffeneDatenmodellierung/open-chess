@@ -10,10 +10,6 @@ repository.workspace = true
 homepage.workspace = true
 readme = "README.md"
 
-[[bin]]
-name = "open-chess"
-path = "src/main.rs"
-
 [dependencies]
 chess-core = { workspace = true }
 chess-proto = { workspace = true }

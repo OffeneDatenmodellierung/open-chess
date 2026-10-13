@@ -1,6 +1,7 @@
-//! `open-chess`: a Lichess-compatible chess server.
+//! The server's commands, as the `open-chess` program runs them (the
+//! `open-chess` crate; built with its `server` feature):
 //!
-//!   open-chess serve      the Lichess-compatible API (default)
+//!   open-chess serve      the Lichess-compatible API
 //!   open-chess analyse    the fair-play worker (needs Stockfish)
 //!   open-chess migrate    create or update the chess schema, then exit
 //!   open-chess bot create --name esl-stockfish-1800   a bot account and its token
@@ -13,17 +14,10 @@ use clap::{Parser, Subcommand};
 use tokio::sync::watch;
 use tracing::info;
 
-use open_chess_server::app::{self, Ctx};
-use open_chess_server::config::{AnalyseConfig, Config};
-use open_chess_server::db::Db;
-use open_chess_server::{analyse, auth, stopped};
-
-#[derive(Parser)]
-#[command(name = "open-chess", version, about = "A Lichess-compatible chess server")]
-struct Cli {
-    #[command(subcommand)]
-    cmd: Option<Cmd>,
-}
+use crate::app::{self, Ctx};
+use crate::config::{AnalyseConfig, Config};
+use crate::db::Db;
+use crate::{analyse, auth, stopped};
 
 /// `open-chess` with no subcommand: serve, configured from the environment.
 #[derive(Parser)]
@@ -32,8 +26,9 @@ struct ServeOnly {
     cfg: Config,
 }
 
+/// The server's commands.
 #[derive(Subcommand)]
-enum Cmd {
+pub enum Cmd {
     /// Serve the API (and sweep clocks and challenges).
     Serve(Config),
     /// Screen finished games for fair play with Stockfish.
@@ -63,7 +58,7 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
-enum BotCmd {
+pub enum BotCmd {
     /// Make a bot: a site player, its bot account here and an API token
     /// (printed once).
     Create {
@@ -81,7 +76,7 @@ enum BotCmd {
 }
 
 #[derive(Subcommand)]
-enum PhotosCmd {
+pub enum PhotosCmd {
     /// Write the photos a person confirmed as a training set for
     /// chess-vision-train (dataset `esl-review`): `photos/<id>.<ext>` and `labels.jsonl`
     /// (dataset `esl-review` in its datasets.toml).
@@ -126,11 +121,20 @@ fn shutdown_signal() -> watch::Receiver<bool> {
     rx
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Whether the environment configures a server (`DATABASE_URL` is set):
+/// `open-chess` with no command serves then.
+pub fn configured() -> bool {
+    std::env::var_os("DATABASE_URL").is_some_and(|v| !v.is_empty())
+}
+
+/// Run a server command; `None` serves, configured from the environment.
+pub fn run(cmd: Option<Cmd>) -> Result<()> {
     tracing_init();
-    let cli = Cli::parse();
-    let cmd = match cli.cmd {
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(dispatch(cmd))
+}
+
+async fn dispatch(cmd: Option<Cmd>) -> Result<()> {
+    let cmd = match cmd {
         Some(c) => c,
         None => {
             Cmd::Serve(ServeOnly::try_parse_from(["open-chess"]).context("DATABASE_URL must be set")?.cfg)
@@ -181,7 +185,7 @@ async fn serve(cfg: Config) -> Result<()> {
     let ctx = Ctx::new(db.clone(), cfg.clone()).with_reader()?;
     let stop = shutdown_signal();
 
-    open_chess_server::spawn_background(&ctx, &stop);
+    crate::spawn_background(&ctx, &stop);
 
     let ops = tokio::net::TcpListener::bind(&cfg.metrics_bind).await.context("binding CHESS_METRICS_BIND")?;
     let ops_ctx = ctx.clone();

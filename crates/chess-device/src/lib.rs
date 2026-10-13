@@ -18,6 +18,7 @@ pub mod ble;
 pub mod board;
 pub mod choice;
 pub mod chooser;
+pub mod cli;
 pub mod controller;
 pub mod dgtpi;
 pub mod discover;

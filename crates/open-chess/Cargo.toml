@@ -1,0 +1,39 @@
+[package]
+name = "open-chess"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "open-chess in one program: the Lichess-compatible chess server (feature `server`) and the electronic-board runtime (feature `device`)"
+# This crate's own code; a build with the `device` feature links the GPL
+# board drivers, so that program is distributed under GPL-3.0-or-later.
+license = "MIT OR Apache-2.0"
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[[bin]]
+name = "open-chess"
+path = "src/main.rs"
+
+[features]
+default = ["server", "device"]
+# The server: the Lichess-compatible API, the fair-play worker, migrations,
+# bots and photos (Postgres, TLS, the photo reader).
+server = ["dep:chess-server"]
+# The board runtime (DGT, Centaur, Chessnut, Pegasus boards; Bluetooth and
+# USB HID on macOS and Windows).
+device = ["dep:chess-device"]
+
+[dependencies]
+chess-server = { workspace = true, optional = true }
+chess-device = { workspace = true, optional = true }
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

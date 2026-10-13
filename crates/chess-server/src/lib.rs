@@ -6,6 +6,7 @@ pub mod analyse;
 pub mod app;
 pub mod auth;
 pub mod challenges;
+pub mod cli;
 pub mod config;
 pub mod db;
 pub mod error;

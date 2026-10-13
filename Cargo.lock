@@ -3159,6 +3159,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-chess"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "open-chess-device",
+ "open-chess-server",
+]
+
+[[package]]
 name = "open-chess-analysis"
 version = "0.1.2"
 dependencies = [

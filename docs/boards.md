@@ -8,7 +8,10 @@ on a computer with the board on USB or Bluetooth (Linux, macOS, Windows),
 or inside the board's own Raspberry Pi (the DGT Pi, the DGT Centaur).
 
 Get it from a [release](releases.md) (Linux x86-64, arm64 and ARMv6, macOS,
-Windows), or build it: `cargo build --release -p open-chess-device`.
+Windows), or build it: `cargo build --release -p open-chess-device`. It's the board
+part of the `open-chess` program: `open-chess device …` takes the same
+options, and the release archives' `open-chess-device` is a link to
+`open-chess`.
 
 ## Getting started
 
