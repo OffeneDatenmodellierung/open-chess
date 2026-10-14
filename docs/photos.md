@@ -120,13 +120,47 @@ It also tells you when:
   board, then take the photo again");
 * the photo doesn't match any legal move.
 
+## Checking photos, and the photo licence
+
+When the reader isn't sure of a photo, the server can keep it so people
+can say what it shows. It does this only if the sender has accepted the
+[photo licence](photo-licence.md). The licence lets the server and the
+open-chess project use the photo, and the answers, to train any model,
+commercial or not. Senders can also choose to add their photos to a
+public dataset (CC0).
+
+* **In the Chess lab:** it asks the first time one of your photos could be
+  kept. You can change your answer at the bottom of **Board photos to
+  check**.
+* **On the command line:** `open-chess photo terms --accept` (add
+  `--public` for the public dataset, or `--withdraw` to stop).
+
+**Anyone signed in can check photos.** Open the camera-check button in
+the Chess lab's header. For each photo:
+* set the board to what it shows (drag pieces, click squares), then
+  confirm;
+* or mark it as not a readable board;
+* or skip it.
+
+Your own photos and ones you've answered don't come up.
+
+**Two matching answers label a photo.** Confirming your own photo in the
+app counts as one of them. An admin's or manager's answer is the label at
+once, and others can't outvote it. Admins and managers see disputed
+photos first: three or more answers, still without two agreeing.
+
+`open-chess photos export` writes the labelled photos as a training set,
+each with its licence. `--reviewed-only` keeps only labels two people
+agreed on or an admin gave. `--public-only` keeps only the public
+dataset.
+
 ## Training the reader
 
 The weights come from `open-chess train board-reader`, which takes the
 same options as the `chess-vision-train` program:
 
 ```sh
-open-chess train board-reader --datasets esl-review --data-root /data/chess \
+open-chess train board-reader --datasets open-chess-photos --data-root /data/chess \
     --dinov2 dinov2_vits14_pretrain.pth --encoder small --image-size 392 --out runs/small-392
 ```
 
@@ -135,7 +169,11 @@ The macOS downloads train on the Mac's GPU. Elsewhere, build with
 
 Every dataset passes a licence check first. ChessReD's licence is
 noncommercial, so a model trained on it needs `--internal` and is stamped
-as internal-only. Your own server's confirmed photos make a training set
-with `open-chess photos export --out /data/chess/esl-review`. Datasets,
+as internal-only. A server's labelled photos make a training set:
+* `open-chess photos export --out /data/chess/open-chess-photos` writes
+  the dataset `open-chess-photos`, under the photo licence, usable for any
+  model;
+* `--public-only --out /data/chess/open-chess-public` writes
+  `open-chess-public`, which is CC0. Datasets,
 splits and model cards are in the trainer's
 [README](../crates/chess-vision-train/README.md).

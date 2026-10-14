@@ -80,6 +80,22 @@ pub enum Cmd {
         #[arg(long, short = 'y')]
         yes: bool,
     },
+    /// The photo licence on an open-chess server: whether it may keep your
+    /// photos the reader wasn't sure of, for people to check and the next
+    /// reader to learn from (docs/photo-licence.md).
+    Terms {
+        #[command(flatten)]
+        server: ServerArgs,
+        /// Accept it.
+        #[arg(long, conflicts_with = "withdraw")]
+        accept: bool,
+        /// Also add your photos to the public dataset (CC0).
+        #[arg(long, requires = "accept")]
+        public: bool,
+        /// Stop the server keeping your photos from now on.
+        #[arg(long)]
+        withdraw: bool,
+    },
     /// Play the move a new photo shows in a game that's running: the photo
     /// is matched against every legal move from the game's position.
     Move {
@@ -349,6 +365,11 @@ pub fn reading_from_answer(v: &Value) -> Result<Reading> {
         r.plausible = p;
     }
     r.photo_id = v.get("photoId").and_then(Value::as_i64);
+    if v.get("termsNeeded").and_then(Value::as_bool) == Some(true) {
+        eprintln!(
+            "(the server didn't keep this photo for people to check: `open-chess photo terms --accept` lets it, under its photo licence)"
+        );
+    }
     Ok(r)
 }
 
@@ -446,6 +467,7 @@ async fn dispatch(cmd: Cmd) -> Result<()> {
         Cmd::Read { photo, reader, server, turn, json } => {
             read_cmd(&photo, &reader, &server, &turn, json).await
         }
+        Cmd::Terms { server, accept, public, withdraw } => terms_cmd(&server, accept, public, withdraw).await,
         Cmd::Start { photo, reader, server, opponent, computer, turn, castling, colour, time, yes } => {
             let opponent = match (computer, opponent) {
                 (Some(level), _) => Opponent::Computer(level),
@@ -460,6 +482,34 @@ async fn dispatch(cmd: Cmd) -> Result<()> {
             move_cmd(&photo, &reader, &server, game, &how).await
         }
     }
+}
+
+async fn terms_cmd(server: &ServerArgs, accept: bool, public: bool, withdraw: bool) -> Result<()> {
+    let token = server.token.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    let Some(token) = token else {
+        bail!("a token is needed for {} (--token or OPEN_CHESS_TOKEN)", server.base())
+    };
+    let url = format!("{}/api/esl/photo-terms", server.base());
+    let http = reqwest::Client::new();
+    let r = if accept || withdraw {
+        http.post(&url).bearer_auth(token).json(&json!({ "accept": accept, "public": public })).send().await
+    } else {
+        http.get(&url).bearer_auth(token).send().await
+    }
+    .with_context(|| format!("reaching {url}"))?;
+    if r.status().as_u16() == 404 {
+        bail!("{} has no photo licence (it isn't an open-chess server)", server.base());
+    }
+    let v: Value = r.error_for_status()?.json().await?;
+    let licence = format!("{}/docs/photo-licence", server.base());
+    match (v["accepted"].as_bool(), v["public"].as_bool()) {
+        (Some(true), Some(true)) => println!(
+            "accepted: your photos are kept under the photo licence, and added to the public dataset (CC0) ({licence})"
+        ),
+        (Some(true), _) => println!("accepted: your photos are kept under the photo licence ({licence})"),
+        _ => println!("not accepted: the server doesn't keep your photos ({licence}; --accept to agree)"),
+    }
+    Ok(())
 }
 
 async fn read_cmd(

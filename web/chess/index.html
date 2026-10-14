@@ -48,6 +48,9 @@
       <button type="button" role="radio" data-mode="analyse" aria-checked="false">Analyse</button>
       <button type="button" role="radio" data-mode="online" aria-checked="false">Online</button>
     </div>
+    <a class="icon-btn" id="openReview" href="#review" aria-label="Board photos to check" title="Board photos to check" aria-pressed="false" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><path d="M9.5 13.5l2 2 3.5-4"/></svg>
+    </a>
     <a class="icon-btn" id="openDocs" href="#docs" aria-label="Guides" title="Guides" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5C6.5 4.5 9.5 4.5 12 6c2.5-1.5 5.5-1.5 8-.5V19c-2.5-1-5.5-1-8 .5-2.5-1.5-5.5-1.5-8-.5z"/><path d="M12 6v13.5"/></svg>
     </a>
@@ -170,6 +173,7 @@
   </main>
 
   <section class="docs" id="docsView" aria-label="Guides" hidden></section>
+  <section class="review-page" id="reviewView" aria-label="Board photos to check" hidden></section>
 
   <dialog id="settings" aria-labelledby="settingsTitle">
     <form method="dialog">

@@ -29,13 +29,27 @@ attribution = "Chess Recognition Dataset (ChessReD), A. Masouris, 4TU.ResearchDa
 format = "chessred"
 path = "chessred"
 
-[dataset.esl-review]
-# Our own: board photos the chess server kept for review and a person
-# confirmed (`open-chess photos export`). Players are told photos they send
-# may be kept to improve the reader.
-licence = "LicenseRef-esl-internal"
+[dataset.open-chess-photos]
+# Board photos an open-chess server kept for review and people labelled
+# (`open-chess photos export --out /data/chess/open-chess-photos`), sent
+# under the open-chess photo licence (docs/photo-licence.md): any model,
+# commercial or not. Labels two people agreed on, or an admin gave, are the
+# reviewed ones (`--reviewed-only`).
+licence = "LicenseRef-open-chess-photo-licence-1"
+licence_url = "https://github.com/OffeneDatenmodellierung/open-chess/blob/main/docs/photo-licence.md"
 licence_verified = true
-verified_by = "esports-lab"
-verified_on = "2026-10-12"
+verified_by = "open-chess"
+verified_on = "2026-10-14"
 format = "jsonl"
-path = "esl-review"
+path = "open-chess-photos"
+
+[dataset.open-chess-public]
+# The public subset: photos their senders also released as CC0
+# (`open-chess photos export --public-only --out /data/chess/open-chess-public`).
+licence = "CC0-1.0"
+licence_url = "https://creativecommons.org/publicdomain/zero/1.0/legalcode"
+licence_verified = true
+verified_by = "open-chess"
+verified_on = "2026-10-14"
+format = "jsonl"
+path = "open-chess-public"

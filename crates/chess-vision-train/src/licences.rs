@@ -38,6 +38,8 @@ pub const ALLOWED: &[&str] = &[
     "BSD-2-Clause",
     "BSD-3-Clause",
     "LicenseRef-esl-internal",
+    // docs/photo-licence.md: any model, commercial or not.
+    "LicenseRef-open-chess-photo-licence-1",
 ];
 pub const SHARE_ALIKE: &[&str] = &["CC-BY-SA-4.0", "CC-BY-SA-3.0", "ODbL-1.0", "CDLA-Sharing-1.0"];
 /// Allowed only for an internal-only model: used by our own staff, never
@@ -228,8 +230,9 @@ mod tests {
     #[test]
     fn the_manifest_in_the_repo_loads_and_gates_as_expected() {
         let m = load_manifest(&Path::new(env!("CARGO_MANIFEST_DIR")).join("datasets.toml")).unwrap();
-        assert_eq!(m["esl-review"].format, "jsonl");
-        assert_eq!(problem(&m["esl-review"], SHARED), None);
+        assert_eq!(m["open-chess-photos"].format, "jsonl");
+        assert_eq!(problem(&m["open-chess-photos"], SHARED), None);
+        assert_eq!(problem(&m["open-chess-public"], SHARED), None);
         // ChessReD is CC BY-NC-SA 4.0: internal-only models only.
         assert!(problem(&m["chessred"], SHARED).unwrap().contains("--internal"));
         assert_eq!(problem(&m["chessred"], INTERNAL), None);

@@ -353,3 +353,17 @@ dialog#pickMove form { margin: 0; }
   .docs-nav li a { border: 1px solid var(--rule); border-radius: 999px; margin: 0; padding: 0.25rem 0.75rem; }
   .docs-nav li a[aria-current="page"] { border-color: var(--action); }
 }
+
+/* ---------- board photos to check (#review) */
+.review-page { max-width: 70rem; margin: 0 auto; padding: 0.5rem 1rem 3rem; }
+.review .back { color: var(--action); }
+.review h1 { font-size: 1.7rem; margin: 0.5rem 0; }
+.review-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 26rem); gap: 1.5rem; align-items: start; margin-top: 1rem; }
+.review-card img { width: 100%; border-radius: 10px; border: 1px solid var(--rule); background: var(--panel); min-height: 12rem; }
+.review .row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.terms-box { margin-top: 2rem; border-top: 1px solid var(--rule); padding-top: 0.5rem; }
+dialog.terms { width: min(34rem, calc(100vw - 2rem)); border: 1px solid var(--rule); border-radius: 14px; background: var(--panel); color: var(--ink); padding: 1.25rem; }
+dialog.terms h2 { margin-top: 0; }
+dialog.terms a { color: var(--action); }
+dialog.terms .check { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.75rem 0; }
+@media (max-width: 760px) { .review-card { grid-template-columns: 1fr; } }

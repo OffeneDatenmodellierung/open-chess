@@ -4,7 +4,7 @@
 //!
 //! ```sh
 //! open-chess train board-reader \
-//!     --datasets chessred esl-review --data-root /data/chess \
+//!     --datasets chessred open-chess-photos --data-root /data/chess \
 //!     --dinov2 dinov2_vits14_pretrain.pth --encoder small --image-size 392 --out runs/small-392
 //! ```
 //!

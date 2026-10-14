@@ -340,6 +340,65 @@ pub async fn tablebase(
     Ok(Json(answer).into_response())
 }
 
+/// The photo licence's version (docs/photo-licence.md). A photo is kept
+/// for review, and trained on, only under terms its sender accepted.
+pub const PHOTO_TERMS: &str = "open-chess-photo-licence-1";
+
+/// The photo terms a player accepted, if the current ones: (terms, public).
+async fn accepted_terms(ctx: &Ctx, player: i64) -> anyhow::Result<Option<bool>> {
+    let c = ctx.db.conn().await?;
+    let r = c
+        .query_opt(
+            &ctx.db.sql("SELECT photo_terms, photo_public FROM chess.players WHERE id = $1"),
+            &[&player],
+        )
+        .await?;
+    Ok(r.and_then(|r| (r.get::<_, Option<String>>(0).as_deref() == Some(PHOTO_TERMS)).then(|| r.get(1))))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TermsBody {
+    /// Accept the photo licence (false withdraws, for photos sent later).
+    accept: bool,
+    /// Also release my photos as CC0 for a public dataset.
+    #[serde(default)]
+    public: bool,
+}
+
+fn terms_json(accepted: Option<bool>) -> serde_json::Value {
+    json!({
+        "terms": PHOTO_TERMS,
+        "accepted": accepted.is_some(),
+        "public": accepted.unwrap_or(false),
+        "text": "/docs/photo-licence",
+    })
+}
+
+/// `GET /api/esl/photo-terms`: the photo licence, and whether I accepted it.
+pub async fn photo_terms(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
+    Ok(Json(terms_json(accepted_terms(&ctx, who.0.player).await?)).into_response())
+}
+
+/// `POST /api/esl/photo-terms` (JSON `{accept, public}`): accept (or
+/// withdraw from) the photo licence for photos I send from now on, and
+/// whether they're also CC0.
+pub async fn set_photo_terms(
+    State(ctx): State<Ctx>,
+    who: Who,
+    Json(b): Json<TermsBody>,
+) -> ApiResult<Response> {
+    let c = ctx.db.conn().await?;
+    let terms = b.accept.then_some(PHOTO_TERMS);
+    c.execute(
+        &ctx.db.sql(
+            "UPDATE chess.players SET photo_terms = $2, photo_terms_at = now(), photo_public = $3 WHERE id = $1",
+        ),
+        &[&who.0.player, &terms, &(b.accept && b.public)],
+    )
+    .await?;
+    Ok(Json(terms_json(b.accept.then_some(b.public))).into_response())
+}
+
 #[derive(Deserialize)]
 pub struct RecogniseBody {
     /// A `data:image/...;base64,` URL or bare base64.
@@ -400,21 +459,27 @@ pub async fn recognise(
         Some(r) if !r.plausible => "implausible",
         Some(_) => "unsure",
     };
-    let photo_id = if ctx.cfg.vision_review {
-        keep_photo(&ctx, me, &bytes, &mime, reason, local.as_ref(), model_name.as_deref(), llm.as_ref())
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!("keeping a photo for review: {e:#}");
-                None
-            })
-    } else {
-        None
+    // Kept for review (and training) only under the photo licence.
+    let terms = if ctx.cfg.vision_review { accepted_terms(&ctx, me).await? } else { None };
+    let terms_needed = ctx.cfg.vision_review && terms.is_none();
+    let photo_id = match terms {
+        Some(public) => {
+            let r = local.as_ref();
+            keep_photo(&ctx, me, &bytes, &mime, reason, r, model_name.as_deref(), llm.as_ref(), public)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("keeping a photo for review: {e:#}");
+                    None
+                })
+        }
+        None => None,
     };
     let llm_answer = |l: &vision::Reading| {
         let mut v = llm_json(l, &ctx.cfg.vision_model);
         v["source"] = json!("llm");
         v["photoId"] = json!(photo_id);
         v["review"] = json!(photo_id.is_some());
+        v["termsNeeded"] = json!(terms_needed);
         v
     };
     match (local, llm) {
@@ -424,6 +489,7 @@ pub async fn recognise(
         // Otherwise the reader's (if unsure), with the model's alongside.
         (Some(r), llm) => {
             let mut v = local_answer(&r, model_name.as_deref(), photo_id);
+            v["termsNeeded"] = json!(terms_needed);
             if let Some(Ok(l)) = llm {
                 v["llm"] = llm_json(&l, &ctx.cfg.vision_model);
             }
@@ -484,6 +550,7 @@ async fn keep_photo(
     local: Option<&chess_vision::BoardReading>,
     model: Option<&str>,
     llm: Option<&anyhow::Result<vision::Reading>>,
+    public: bool,
 ) -> anyhow::Result<Option<i64>> {
     let c = ctx.db.conn().await?;
     let waiting: i64 = c
@@ -513,10 +580,10 @@ async fn keep_photo(
     let row = c
         .query_one(
             &ctx.db.sql(
-                "INSERT INTO chess.board_photos (player_id, image, mime, reason, reading, suggestion, suggestion_failed)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+                "INSERT INTO chess.board_photos (player_id, image, mime, reason, reading, suggestion, suggestion_failed, terms, public)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
             ),
-            &[&player, &bytes, &mime, &reason, &reading, &suggestion, &failed],
+            &[&player, &bytes, &mime, &reason, &reading, &suggestion, &failed, &PHOTO_TERMS, &public],
         )
         .await?;
     Ok(Some(row.get(0)))
@@ -577,6 +644,8 @@ pub async fn confirm_photo(
     if n == 0 {
         return Err(ApiError::not_found("photo"));
     }
+    // The sender's word is one vote: another person agreeing labels it.
+    vote(&ctx, &*c, id, who.0.player, Some(&placement), false).await?;
     // The position joins the dictionary: the given one if it matches the
     // placement, else each side to move.
     let given = b
@@ -596,12 +665,55 @@ pub async fn confirm_photo(
 
 // ─── photo review (reviewers: `chess:fairplay`, managers and admins) ───
 
-fn reviewer(who: &Who) -> ApiResult<i64> {
-    let id = who.need(&["chess:fairplay"])?;
-    if !(id.admin || id.manager) {
-        return Err(ApiError::forbidden("photo review is for managers and admins"));
+/// Admins and managers: their label is final, and they see every photo.
+fn staff(who: &Who) -> bool {
+    who.0.admin || who.0.manager
+}
+
+/// Record what `player` says photo `id` shows, then settle it: two people
+/// agreeing (the sender counts, by confirming it) label it, unless an
+/// admin already has.
+async fn vote(
+    ctx: &Ctx,
+    c: &impl tokio_postgres::GenericClient,
+    id: i64,
+    player: i64,
+    placement: Option<&str>,
+    unreadable: bool,
+) -> anyhow::Result<()> {
+    c.execute(
+        &ctx.db.sql(
+            "INSERT INTO chess.photo_votes (photo_id, player_id, placement, unreadable) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (photo_id, player_id) DO UPDATE SET placement = EXCLUDED.placement,
+                 unreadable = EXCLUDED.unreadable, voted_at = now()",
+        ),
+        &[&id, &player, &placement, &unreadable],
+    )
+    .await?;
+    // The answer two or more people gave, if any.
+    let agreed = c
+        .query_opt(
+            &ctx.db.sql(
+                "SELECT placement, unreadable FROM chess.photo_votes WHERE photo_id = $1
+                  GROUP BY placement, unreadable HAVING count(*) >= 2 ORDER BY count(*) DESC LIMIT 1",
+            ),
+            &[&id],
+        )
+        .await?;
+    if let Some(r) = agreed {
+        let (placement, unreadable): (Option<String>, bool) = (r.get(0), r.get(1));
+        c.execute(
+            &ctx.db.sql(
+                "UPDATE chess.board_photos SET label = $2, unreadable = $3, label_source = CASE WHEN $3 THEN NULL ELSE 'consensus' END,
+                        labelled_by = NULL, labelled_at = now()
+                  WHERE id = $1 AND coalesce(label_source, '') NOT IN ('admin', 'reviewer')
+                    AND NOT (unreadable AND labelled_by IS NOT NULL)",
+            ),
+            &[&id, &placement, &unreadable],
+        )
+        .await?;
     }
-    Ok(id.player)
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -610,21 +722,33 @@ pub struct PhotoList {
     all: bool,
 }
 
-/// `GET /api/esl/photos`: board photos the reader wasn't sure of, waiting
-/// for a person (`?all=true`: every photo), newest first, without the
-/// image bytes.
+/// `GET /api/esl/photos`: board photos waiting for people to say what they
+/// show, for anyone signed in: not their own, not ones they've answered,
+/// not ones already settled (two agreeing, or an admin), newest first,
+/// without the image bytes. Admins and managers see disputed photos
+/// first, and with `?all=true` every photo.
 pub async fn photos(State(ctx): State<Ctx>, who: Who, Query(q): Query<PhotoList>) -> ApiResult<Response> {
-    reviewer(&who)?;
+    let me = who.0.player;
+    let staff = staff(&who);
+    let all = q.all && staff;
     let c = ctx.db.conn().await?;
     let rows = c
         .query(
             &ctx.db.sql(
-                "SELECT id, created_at, reason, reading, suggestion, suggestion_failed, label, label_source, unreadable, labelled_at
-                   FROM chess.board_photos
-                  WHERE $1 OR ((label IS NULL OR label_source = 'player') AND NOT unreadable)
-                  ORDER BY id DESC LIMIT 200",
+                "SELECT p.id, p.created_at, p.reason, p.reading, p.suggestion, p.suggestion_failed, p.label, p.label_source,
+                        p.unreadable, p.labelled_at, p.public, p.player_id = $2,
+                        (SELECT count(*) FROM chess.photo_votes v WHERE v.photo_id = p.id),
+                        (SELECT row_to_json(v) FROM (SELECT placement, unreadable FROM chess.photo_votes
+                          WHERE photo_id = p.id AND player_id = $2) v)
+                   FROM chess.board_photos p
+                  WHERE $1 OR (
+                        coalesce(p.label_source, 'player') = 'player' AND NOT p.unreadable
+                        AND ($3 OR (p.terms IS NOT NULL AND coalesce(p.player_id, 0) <> $2
+                                    AND NOT EXISTS (SELECT 1 FROM chess.photo_votes v WHERE v.photo_id = p.id AND v.player_id = $2))))
+                  ORDER BY CASE WHEN $3 THEN (SELECT count(*) FROM chess.photo_votes v WHERE v.photo_id = p.id) ELSE 0 END DESC, p.id DESC
+                  LIMIT 200",
             ),
-            &[&q.all],
+            &[&all, &me, &staff],
         )
         .await?;
     let list: Vec<serde_json::Value> = rows
@@ -641,15 +765,20 @@ pub async fn photos(State(ctx): State<Ctx>, who: Who, Query(q): Query<PhotoList>
                 "label_source": r.get::<_, Option<String>>(7),
                 "unreadable": r.get::<_, bool>(8),
                 "labelled_at": r.get::<_, Option<chrono::DateTime<chrono::Utc>>>(9),
+                "public": r.get::<_, bool>(10),
+                "mine": r.get::<_, Option<bool>>(11).unwrap_or(false),
+                "votes": r.get::<_, i64>(12),
+                "my_vote": r.get::<_, Option<serde_json::Value>>(13),
+                // Three or more people, and still no two agree: for an admin.
+                "disputed": r.get::<_, i64>(12) >= 3 && r.get::<_, Option<String>>(7).as_deref() != Some("consensus"),
             })
         })
         .collect();
-    Ok(Json(json!({ "photos": list })).into_response())
+    Ok(Json(json!({ "photos": list, "staff": staff, "terms": PHOTO_TERMS })).into_response())
 }
 
 /// `GET /api/esl/photos/{id}/image`: a photo's bytes.
-pub async fn photo_image(State(ctx): State<Ctx>, who: Who, Path(id): Path<i64>) -> ApiResult<Response> {
-    reviewer(&who)?;
+pub async fn photo_image(State(ctx): State<Ctx>, _who: Who, Path(id): Path<i64>) -> ApiResult<Response> {
     let c = ctx.db.conn().await?;
     let r = c
         .query_opt(&ctx.db.sql("SELECT image, mime FROM chess.board_photos WHERE id = $1"), &[&id])
@@ -677,16 +806,17 @@ pub struct PhotoLabel {
 }
 
 /// `POST /api/esl/photos/{id}/label` (JSON `{placement}` or
-/// `{unreadable: true}`): a reviewer's label, which replaces a player's.
-/// The position joins the dictionary (each side to move: a photo doesn't
-/// say).
+/// `{unreadable: true}`): what I say the photo shows. Anyone signed in may
+/// answer; two agreeing answers label it. An admin's or manager's answer is
+/// the label at once, whatever others said. A labelled position joins the
+/// dictionary (each side to move: a photo doesn't say).
 pub async fn label_photo(
     State(ctx): State<Ctx>,
     who: Who,
     Path(id): Path<i64>,
     Json(b): Json<PhotoLabel>,
 ) -> ApiResult<Response> {
-    let player = reviewer(&who)?;
+    let player = who.0.player;
     let grid = match (&b.placement, b.unreadable) {
         (_, true) => None,
         (Some(p), false) => Some(
@@ -697,24 +827,37 @@ pub async fn label_photo(
     };
     let placement = grid.as_ref().map(chess_analysis::photo::placement);
     let c = ctx.db.conn().await?;
-    let n = c
-        .execute(
+    let exists = c.query_opt(&ctx.db.sql("SELECT 1 FROM chess.board_photos WHERE id = $1"), &[&id]).await?;
+    if exists.is_none() {
+        return Err(ApiError::not_found("photo"));
+    }
+    vote(&ctx, &*c, id, player, placement.as_deref(), b.unreadable).await?;
+    if staff(&who) {
+        c.execute(
             &ctx.db.sql(
                 "UPDATE chess.board_photos SET label = $2, unreadable = $3, labelled_by = $4, labelled_at = now(),
-                        label_source = CASE WHEN $3 THEN NULL ELSE 'reviewer' END
+                        label_source = CASE WHEN $3 THEN NULL ELSE 'admin' END
                   WHERE id = $1",
             ),
             &[&id, &placement, &b.unreadable, &player],
         )
         .await?;
-    if n == 0 {
-        return Err(ApiError::not_found("photo"));
     }
-    if let Some(grid) = &grid {
+    let row = c
+        .query_one(
+            &ctx.db.sql("SELECT label, label_source, unreadable FROM chess.board_photos WHERE id = $1"),
+            &[&id],
+        )
+        .await?;
+    let settled =
+        matches!(row.get::<_, Option<String>>(1).as_deref(), Some("consensus" | "admin" | "reviewer"))
+            || row.get::<_, bool>(2);
+    if let (Some(grid), true) = (&grid, settled && row.get::<_, Option<String>>(0) == placement) {
         let games = chess_analysis::dictionary::photo_positions(grid, None);
         if let Err(e) = queue_photo_positions(&ctx.db, &*c, &games).await {
             tracing::warn!("queueing a photo's position: {e:#}");
         }
     }
-    Ok(ok())
+    Ok(Json(json!({ "ok": true, "settled": settled, "label": row.get::<_, Option<String>>(0) }))
+        .into_response())
 }
