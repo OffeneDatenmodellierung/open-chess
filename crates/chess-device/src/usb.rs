@@ -176,6 +176,7 @@ mod hidapi_impl {
     /// An open Chessnut board on USB: every HID interface of it on
     /// Chessnut's vendor page (macOS shows each collection as its own
     /// device; which one carries the board's reports varies).
+    #[allow(clippy::struct_excessive_bools)] // what the link has seen so far
     pub struct Hid {
         devices: Vec<(String, hidapi::HidDevice, super::Reports)>,
         /// How commands are framed: 0, as the descriptor says; then, while
