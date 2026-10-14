@@ -191,6 +191,9 @@ mod hidapi_impl {
         first_write: Option<std::time::Instant>,
         polling: bool,
         hinted: bool,
+        /// GET_REPORT failed (the Go doesn't answer it: each try blocks
+        /// five seconds), so it isn't tried again.
+        no_get_report: bool,
     }
 
     impl std::fmt::Debug for Hid {
@@ -305,6 +308,7 @@ mod hidapi_impl {
                 first_write: None,
                 polling: false,
                 hinted: false,
+                no_get_report: false,
             })
         }
 
@@ -416,6 +420,7 @@ mod hidapi_impl {
             // directly (the board's descriptor has it as input report 0x01).
             if out.is_empty()
                 && !self.heard
+                && !self.no_get_report
                 && self.first_write.is_some_and(|t| t.elapsed() >= Duration::from_secs(2))
             {
                 if !self.polling {
@@ -443,27 +448,34 @@ mod hidapi_impl {
                         }
                         Ok(_) => {}
                         Err(e) => {
-                            crate::log::debug(crate::log::Source::Board, format!("USB {p} GET_REPORT: {e}"));
+                            crate::log::line(
+                                crate::log::Source::Board,
+                                format!(
+                                    "USB {p}: the board doesn't answer GET_REPORT ({e}): waiting for its reports"
+                                ),
+                            );
+                            self.no_get_report = true;
                         }
                     }
                 }
                 if out.is_empty() {
                     std::thread::sleep(wait.min(Duration::from_millis(100)));
-                    if !self.hinted
-                        && self.first_write.is_some_and(|t| t.elapsed() >= Duration::from_secs(12))
-                    {
-                        self.hinted = true;
-                        crate::log::line(
-                            crate::log::Source::Board,
-                            if cfg!(target_os = "macos") {
-                                "USB: the board still says nothing. macOS passes on what USB input devices send only to apps allowed under System Settings › Privacy & Security › Input Monitoring: add your terminal app there, quit it and open it again. Also close Chessnut's own app, which may hold the board."
-                            } else {
-                                "USB: the board still says nothing: close Chessnut's own app, which may hold the board, and unplug and replug it."
-                            },
-                        );
-                    }
                 }
-                return Ok(out);
+            }
+            if out.is_empty()
+                && !self.heard
+                && !self.hinted
+                && self.first_write.is_some_and(|t| t.elapsed() >= Duration::from_secs(12))
+            {
+                self.hinted = true;
+                crate::log::line(
+                    crate::log::Source::Board,
+                    if cfg!(target_os = "macos") {
+                        "USB: the board still says nothing. Check your terminal app is allowed under System Settings › Privacy & Security › Input Monitoring (then quit and reopen it), close Chessnut's own app, which may hold the board, and unplug and replug the board."
+                    } else {
+                        "USB: the board still says nothing: close Chessnut's own app, which may hold the board, and unplug and replug it."
+                    },
+                );
             }
             if !out.is_empty() && !self.heard {
                 self.heard = true;
