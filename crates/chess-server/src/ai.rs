@@ -38,7 +38,7 @@ pub fn level_of(username: &str) -> Option<u8> {
 
 /// Each level's fixed rating (roughly what it plays like).
 pub fn rating(level: u8) -> i32 {
-    [800, 1000, 1200, 1400, 1600, 1800, 2000, 2200][usize::from(level.clamp(1, 8) - 1)]
+    Level::new(level).rating()
 }
 
 const PERFS: &[&str] = &["ultraBullet", "bullet", "blitz", "rapid", "classical", "correspondence"];

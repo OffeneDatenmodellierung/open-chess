@@ -39,6 +39,32 @@ allow = ["GPL-3.0-or-later"]
 crate = "open-chess-centaur"
 allow = ["GPL-3.0-or-later"]
 
+# UniFFI, the Swift bindings for the iOS app's core: MPL-2.0, file-level
+# copyleft (we don't change its files), which the App Store allows.
+[[licenses.exceptions]]
+crate = "uniffi"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+crate = "uniffi_core"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+crate = "uniffi_internal_macros"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+crate = "uniffi_macros"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+crate = "uniffi_meta"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+crate = "uniffi_pipeline"
+allow = ["MPL-2.0"]
+
 # Windows COM ports for the device runtime (GPL), file-level copyleft.
 [[licenses.exceptions]]
 crate = "serialport"
