@@ -135,6 +135,8 @@ Everything is environment (each variable is also a command-line flag:
 | `ESPORTS_SECRET` | — | Shared with the host site (32+ characters): it signs sign-ins and token requests with it |
 | `CHESS_SITE_NAME` | `open-chess` | What players know this server as: the consent page, PGN event names, `GET /` (the Chess lab shows it) |
 | `CHESS_HOST_NAME` | the site name | What players know the host site as: "Sign in with …" and "linked to your … account" |
+| `CHESS_ADMIN_EMAILS` | — | Comma-separated: accounts signing in with one of these, confirmed (by a host site's sign-in), become admins. Otherwise `open-chess admin grant <username>` |
+| `CHESS_ADMIN_PASSKEY_HOURS` | `12` | How long an admin's or manager's passkey check lasts |
 | `CHESS_BIND` / `CHESS_METRICS_BIND` | `0.0.0.0:8090` / `0.0.0.0:9465` | API; `/metrics`, `/healthz`, `/readyz` |
 | `CHESS_POOL_SIZE` | 8 | |
 | `CHESS_SWEEP_MS` | 500 | How often each replica's sweeper looks for flags, unstarted games and lapsed challenges |
@@ -184,8 +186,19 @@ no Stockfish. To deploy:
 
 ## Plugging into a site
 
-The server has its own accounts; a host site plugs in as a client of it,
-with a secret they share (`ESPORTS_SECRET`, and `ESPORTS_LOGIN=true`):
+The server has its own accounts, roles and tokens; a host site plugs in as a
+partner. Neither needs the other's accounts: people sign in here with their
+own account (a password or a passkey) or, when the site offers it, with the
+site's, which links the two. The site needs:
+
+* a **partner token** with the `read` and `site` scopes, which an admin
+  makes in the Chess lab's admin page or with `open-chess partner create
+  --name <site> --scopes read,site`, for its API calls below (until it has
+  one, the shared secret works in its place);
+* the **shared secret** (`ESPORTS_SECRET`, and `ESPORTS_LOGIN=true`) to sign
+  its players' sign-ins.
+
+In detail:
 
 * **Signing in.** The sign-in page offers "Sign in with <site>":
   `/auth/esports` sends the browser to the site's `/chess/sso?return=…&nonce=…`,
@@ -194,8 +207,8 @@ with a secret they share (`ESPORTS_SECRET`, and `ESPORTS_LOGIN=true`):
   `base64url(HMAC-SHA256(secret, the first part))`, the JSON
   `{"sub": "<the site's player id>", "name", "email", "role", "roles", "nonce", "exp": <Unix seconds>}`.
 * **Tokens for its players.** The site's server calls
-  `POST /api/esports/token` with `Authorization: Bearer <secret>` and a form
-  (`sub`, `name`, `email`, `role`, `roles`, `scopes`, `days` or `hours`,
+  `POST /api/esports/token` with `Authorization: Bearer <partner token>` and a form
+  (`sub`, `name`, `email`, `scopes`, `days` or `hours`,
   `label`); the answer is `{"token", "username", "scopes", "expires"}`.
   `POST /api/esports/revoke` (`label`, optionally `sub`) revokes the
   tokens of that name it asked for, e.g. a match's when it ends;
@@ -205,10 +218,12 @@ with a secret they share (`ESPORTS_SECRET`, and `ESPORTS_LOGIN=true`):
   account made here before (a manager says it's theirs; 409 when it's
   another site player's; an empty `username` unlinks).
 * Either way the site's player is linked to a player here (made on first
-  use, with a chess account named after them; the site's roles carry
-  over, so its managers review fair play).
+  use, with a chess account named after them). The site's roles stay the
+  site's: admins and managers here are made here
+  ([api.md](../../docs/api.md#admins-managers-and-partners)).
 * **Following games.** The site reads `GET /api/feed` (every game's start,
-  moves and end, with rating changes; resumable), and the public APIs.
+  moves and end, with rating changes; resumable), game exports and
+  players, with its partner token.
 
 A deployment that used to share the site's players (this server's first
 versions read them from the site's schema) imports them once, with their

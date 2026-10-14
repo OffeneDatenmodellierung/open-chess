@@ -15,6 +15,7 @@ const ASSETS = [
   "docs.js",
   "position-editor.js",
   "review.js",
+  "people.js",
   "engine-worker.js",
   "manifest.webmanifest",
   "icon.svg",

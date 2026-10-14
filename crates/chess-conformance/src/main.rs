@@ -256,7 +256,7 @@ async fn run(a: Args) -> Result<bool> {
     let ub = api.get("/api/account", Some(tb)).await?["id"].as_str().context("id")?.to_owned();
     let bot = api.get("/api/account", Some(tbot)).await?["id"].as_str().context("id")?.to_owned();
     api.post("/api/bot/account/upgrade", Some(tbot), &[]).await?.error_for_status()?;
-    let user = api.get(&format!("/api/user/{ua}"), None).await?;
+    let user = api.get(&format!("/api/user/{ua}"), Some(tb)).await?;
     spec.check("GET /api/user/{username}", &user, &spec.schema("UserExtended")?);
 
     let mut ev_a = Stream::open(&api.http, format!("{}/api/stream/event", api.base), Some(ta));
@@ -316,7 +316,7 @@ async fn run(a: Args) -> Result<bool> {
         &spec.response("board/api-board-game-gameId-chat.yaml", "get", "application/json")?,
     );
 
-    let mut ms = Stream::open(&api.http, format!("{}/api/stream/game/{gid}", api.base), None);
+    let mut ms = Stream::open(&api.http, format!("{}/api/stream/game/{gid}", api.base), Some(tb));
     let move_schema = spec.schema("MoveStreamEntry")?;
     spec.check("move stream: description", &ms.next(None).await?, &move_schema);
     spec.check("move stream: position", &ms.next(None).await?, &move_schema);
@@ -325,7 +325,7 @@ async fn run(a: Args) -> Result<bool> {
     spec.check("board stream: final gameState", &gs.next(Some("gameState")).await?, &board_schema);
     spec.check("event stream: gameFinish", &ev_a.next(Some("gameFinish")).await?, &event_schema);
     let exp: Value = api
-        .req(reqwest::Method::GET, &format!("/game/export/{gid}?pgnInJson=true&clocks=true"), None)
+        .req(reqwest::Method::GET, &format!("/game/export/{gid}?pgnInJson=true&clocks=true"), Some(ta))
         .header("Accept", "application/json")
         .send()
         .await?
@@ -333,7 +333,7 @@ async fn run(a: Args) -> Result<bool> {
         .await?;
     spec.check("GET /game/export/{id} (json)", &exp, &spec.schema("GameJson")?);
     let pgn =
-        api.req(reqwest::Method::GET, &format!("/game/export/{gid}"), None).send().await?.text().await?;
+        api.req(reqwest::Method::GET, &format!("/game/export/{gid}"), Some(ta)).send().await?.text().await?;
     if pgn.starts_with("[Event ") {
         println!("ok   GET /game/export/{{id}} (pgn)");
     } else {
@@ -389,7 +389,7 @@ async fn run(a: Args) -> Result<bool> {
     );
     let _ev_bot = Stream::open(&api.http, format!("{}/api/stream/event", api.base), Some(tbot));
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let text = api.req(reqwest::Method::GET, "/api/bot/online", None).send().await?.text().await?;
+    let text = api.req(reqwest::Method::GET, "/api/bot/online", Some(ta)).send().await?.text().await?;
     let online: Vec<Value> =
         text.lines().filter(|l| !l.trim().is_empty()).filter_map(|l| serde_json::from_str(l).ok()).collect();
     if let Some(u) = online.first() {

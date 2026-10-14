@@ -15,12 +15,18 @@ use crate::error::{ApiError, ApiResult};
 use crate::http::ok;
 use crate::model;
 
+/// A manager or admin with a fresh passkey check: that check is the gate
+/// (a script's token with `chess:fairplay` passes it the same way, while
+/// the check lasts).
 fn reviewer(who: &Who) -> ApiResult<&Identity> {
-    let id = who.need(&["chess:fairplay"])?;
-    if !(id.admin || id.manager) {
-        return Err(ApiError::forbidden("fair-play review is for managers and admins"));
+    let id = &who.0;
+    if id.admin || id.manager {
+        Ok(id)
+    } else if id.pending {
+        Err(ApiError::forbidden("fair-play review needs your passkey check first"))
+    } else {
+        Err(ApiError::forbidden("fair-play review is for managers and admins"))
     }
-    Ok(id)
 }
 
 const REPORT_COLS: &str =

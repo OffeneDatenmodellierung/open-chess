@@ -6,6 +6,7 @@ import init, { Session, checkFen, completeFen, glossary, motifs, openingBook } f
 import { Board, GLYPH } from "./board.js";
 import { PositionEditor } from "./position-editor.js";
 import { askPhotoTerms, startReview } from "./review.js";
+import { refreshPeopleNav, startPeople } from "./people.js";
 import { Api, DEVICE_TOKEN, SERVERS, beginSignIn, finishSignIn, lichessTablebase, loadSiteName } from "./online.js";
 
 const $ = (id) => document.getElementById(id);
@@ -315,6 +316,7 @@ function step(to) {
 function refresh() {
   // Checking board photos needs this server's sign-in.
   $("openReview").hidden = !siteApi();
+  refreshPeopleNav();
   app.st = JSON.parse(app.session.state());
   if (app.viewPly !== null && app.viewPly >= app.st.ply) app.viewPly = null;
   if (app.viewPly !== null) {
@@ -1225,7 +1227,8 @@ function renderOnline() {
   const g = o.game;
   let gamePart = "";
   if (g && g.status === "started") {
-    gamePart = `<section class="card"><h3>Playing ${esc(g.myWhite ? g.black : g.white)}</h3>
+    const them = g.myWhite ? g.black : g.white;
+    gamePart = `<section class="card"><h3>Playing ${o.serverKey === "site" ? `<a href="#@/${encodeURIComponent(them)}">${esc(them)}</a>` : esc(them)}</h3>
       <p>You have the ${g.myWhite ? "white" : "black"} pieces.</p>
       ${g.drawOffer ? `<p>Your opponent offers a draw.</p><div class="row"><button type="button" id="acceptDraw" class="primary">Accept draw</button><button type="button" id="declineDraw">Decline</button></div>` : ""}
       ${app.st.ply < 2 ? `<button type="button" id="abortGame">Abort game</button>` : ""}</section>`;
@@ -1233,7 +1236,7 @@ function renderOnline() {
   const incoming = [...o.challenges.values()].filter((c) => c.destUser?.id?.toLowerCase() === o.me.id.toLowerCase());
   const outgoing = [...o.challenges.values()].filter((c) => c.challenger?.id?.toLowerCase() === o.me.id.toLowerCase());
   box.innerHTML = `${serverPick}
-    <p>Signed in as <b>${esc(o.me.username || o.me.id)}</b>. <button type="button" class="link" id="signOut">Sign out</button></p>
+    <p>Signed in as <b>${o.serverKey === "site" ? `<a href="#@/${encodeURIComponent(o.me.username || o.me.id)}">${esc(o.me.username || o.me.id)}</a>` : esc(o.me.username || o.me.id)}</b>. <button type="button" class="link" id="signOut">Sign out</button></p>
     ${o.error ? `<p class="error">${esc(o.error)}</p>` : ""}
     ${gamePart}
     ${incoming.length ? `<section class="card"><h3>Challenges for you</h3><ul class="challenges">${incoming
@@ -1241,7 +1244,7 @@ function renderOnline() {
       .join("")}</ul></section>` : ""}
     ${outgoing.length ? `<p class="hint">Waiting for ${outgoing.map((c) => esc(c.destUser?.name || c.destUser?.id)).join(", ")} to accept your challenge.</p>` : ""}
     ${g?.status === "started" ? "" : `<section class="card"><h3>Start a game</h3>
-      <label class="field"><span>Opponent's username</span><input id="opponent" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="field"><span>Opponent's username</span><input id="opponent" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(o.prefill || "")}"></label>
       <div class="row">
         <label class="field"><span>Minutes</span><select id="tcMin"><option>10</option><option selected>15</option><option>30</option></select></label>
         <label class="field"><span>Increment</span><select id="tcInc"><option>0</option><option>5</option><option selected>10</option><option>20</option></select></label>
@@ -1509,6 +1512,14 @@ async function main() {
   });
   wire();
   startReview({ api: siteApi });
+  startPeople({ api: siteApi });
+  // "Challenge" on a profile: the Online tab, with their name filled in.
+  addEventListener("open-chess:challenge", (e) => {
+    app.online.serverKey = "site";
+    store.set("server", "site");
+    app.online.prefill = e.detail;
+    setMode("online");
+  });
   renderDictionary();
   app.session = new Session(null);
 
