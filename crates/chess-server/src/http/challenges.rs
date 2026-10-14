@@ -113,14 +113,7 @@ async fn keep_alive(ctx: Ctx, id: String, player: i64, tx: mpsc::Sender<Bytes>) 
         }
     }
     // The challenger went away: the challenge goes with them.
-    let who = crate::auth::Identity {
-        player,
-        token_id: 0,
-        scopes: Vec::new(),
-        admin: false,
-        manager: false,
-        expires_ms: 0,
-    };
+    let who = crate::auth::Identity { player, ..crate::auth::Identity::default() };
     let _ = challenges::cancel(&ctx, &who, &id).await;
 }
 

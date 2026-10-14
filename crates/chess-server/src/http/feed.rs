@@ -33,7 +33,7 @@ use futures_util::stream;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 
-use crate::app::Ctx;
+use crate::app::{Ctx, Reader};
 use crate::db::Note;
 use crate::error::ApiResult;
 use crate::http::{games, streams};
@@ -71,6 +71,7 @@ fn view_event(kind: &str, ctx: &Ctx, row: &GameRow) -> Option<Event> {
 
 pub async fn feed(
     State(ctx): State<Ctx>,
+    _reader: Reader,
     h: HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> ApiResult<Response> {

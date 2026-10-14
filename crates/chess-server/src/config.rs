@@ -89,6 +89,17 @@ pub struct Config {
     #[arg(long, env = "CHESS_HOST_NAME")]
     pub host_name: Option<String>,
 
+    /// People made admins here, by email (comma-separated): an account gets
+    /// the admin role when it signs in with one of these, once the email is
+    /// confirmed (a host site's sign-in vouches for it). Accounts made here
+    /// have unconfirmed emails: make them admins with `open-chess admin grant`.
+    #[arg(long, env = "CHESS_ADMIN_EMAILS", value_delimiter = ',', default_value = "")]
+    pub admin_emails: Vec<String>,
+
+    /// Hours an admin's or manager's passkey check lasts.
+    #[arg(long, env = "CHESS_ADMIN_PASSKEY_HOURS", default_value_t = 12)]
+    pub staff_passkey_hours: i32,
+
     #[arg(long, env = "CHESS_BIND", default_value = "0.0.0.0:8090")]
     pub bind: String,
 
@@ -209,6 +220,11 @@ impl Config {
     /// What players know the host site as.
     pub fn host_name(&self) -> &str {
         self.host_name.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&self.site_name)
+    }
+
+    /// `CHESS_ADMIN_EMAILS`, lower-cased.
+    pub fn admin_emails(&self) -> Vec<String> {
+        self.admin_emails.iter().map(|e| e.trim().to_lowercase()).filter(|e| e.contains('@')).collect()
     }
 
     /// The secret shared with the host site, when signing in with it is on.
