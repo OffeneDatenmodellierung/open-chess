@@ -1,12 +1,16 @@
 //! Training data: each dataset's photos and labels, split into train,
 //! validation and test without a game ever straddling two splits.
 //!
+//! Formats: ChessReD's own (`chessred`), our `labels.jsonl` (`jsonl`), and
+//! folders of unlabelled photos (`photos`), which only a teacher reads.
+//!
 //! Labels are always the position from White's side (square 0 = a1),
 //! however the photo was taken, so turning a photo never changes its
 //! label. Mirroring would, so there's none.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use chess_analysis::photo::{class_of, parse_placement};
@@ -39,11 +43,18 @@ impl Split {
 #[derive(Debug, Clone)]
 pub struct Sample {
     pub image: PathBuf,
+    /// All empty for an unlabelled photo (see `labelled`).
     pub labels: Labels,
+    /// Whether `labels` is a person's (or a dataset's) reading. Unlabelled
+    /// photos (format `photos`) learn only from a teacher's.
+    pub labelled: bool,
     pub dataset: String,
     /// Photos of the same game share one, so a split never divides them.
     pub group: String,
     pub split: Split,
+    /// A teacher's reading of the photo when distilling: its log
+    /// probabilities, 64 squares × 13 classes (see `teacher.rs`).
+    pub soft: Option<Arc<[f32]>>,
 }
 
 /// A FEN placement as labels.
@@ -113,9 +124,11 @@ fn load_chessred(d: &Dataset, root: &Path) -> Result<Vec<Sample>> {
         out.push(Sample {
             image: base.join(rel),
             labels: labels.get(&id).copied().unwrap_or([0; 64]),
+            labelled: true,
             dataset: d.name.clone(),
             group: format!("{}:{game}", d.name),
             split,
+            soft: None,
         });
     }
     Ok(out)
@@ -137,19 +150,70 @@ fn load_jsonl(d: &Dataset, root: &Path) -> Result<Vec<Sample>> {
         out.push(Sample {
             image: base.join(image),
             labels: labels_of(placement)?,
+            labelled: true,
             dataset: d.name.clone(),
             group,
             split,
+            soft: None,
         });
     }
     Ok(out)
+}
+
+/// Photo files under `dir`, at any depth, sorted (so a run can be repeated).
+fn photo_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for entry in std::fs::read_dir(&d).with_context(|| format!("reading {}", d.display()))? {
+            let path = entry?.path();
+            if path.is_dir() {
+                todo.push(path);
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "png" | "webp"))
+            {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// A folder of unlabelled board photos (format `photos`): training data
+/// only, read by a teacher (`--teacher`). They have no labels to score
+/// against, so they never go in a validation or test split.
+fn load_photos(d: &Dataset, root: &Path) -> Result<Vec<Sample>> {
+    let base = root.join(&d.path);
+    let files = photo_files(&base)?;
+    if files.is_empty() {
+        bail!("{}: no photos (jpg, png, webp) under {}", d.name, base.display());
+    }
+    Ok(files
+        .into_iter()
+        .map(|image| {
+            let rel = image.strip_prefix(&base).unwrap_or(&image).to_string_lossy().into_owned();
+            Sample {
+                image,
+                labels: [0; 64],
+                labelled: false,
+                dataset: d.name.clone(),
+                group: format!("{}:{rel}", d.name),
+                split: Split::Train,
+                soft: None,
+            }
+        })
+        .collect())
 }
 
 pub fn load(d: &Dataset, root: &Path) -> Result<Vec<Sample>> {
     match d.format.as_str() {
         "chessred" => load_chessred(d, root),
         "jsonl" => load_jsonl(d, root),
-        other => bail!("{}: unknown format {other:?} (chessred or jsonl)", d.name),
+        "photos" => load_photos(d, root),
+        other => bail!("{}: unknown format {other:?} (chessred, jsonl or photos)", d.name),
     }
 }
 
@@ -219,6 +283,24 @@ mod tests {
         assert_eq!((s[0].labels[4], s[0].labels[59], s[0].split), (6, 11, Split::Train));
         assert_eq!((s[1].labels, s[1].split), ([0; 64], Split::Test));
         check_no_leaks(&s).unwrap();
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn unlabelled_photos_are_training_only() {
+        let dir = std::env::temp_dir().join(format!("cvt-photos-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("loose/sub")).unwrap();
+        for f in ["loose/b.JPG", "loose/a.png", "loose/sub/c.webp", "loose/notes.txt"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        let s = load(&ds("loose", "photos"), &dir).unwrap();
+        let names: Vec<String> =
+            s.iter().map(|x| x.image.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["a.png", "b.JPG", "c.webp"]);
+        assert!(s.iter().all(|x| !x.labelled && x.split == Split::Train && x.soft.is_none()));
+        check_no_leaks(&s).unwrap();
+        std::fs::create_dir_all(dir.join("empty")).unwrap();
+        assert!(load(&ds("empty", "photos"), &dir).is_err());
         std::fs::remove_dir_all(dir).ok();
     }
 }

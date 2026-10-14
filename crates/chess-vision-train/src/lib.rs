@@ -18,6 +18,7 @@ mod augment;
 mod data;
 mod dinov2;
 mod licences;
+mod teacher;
 mod train;
 
 use std::collections::HashMap;
@@ -109,6 +110,26 @@ pub struct Args {
     /// Train on the photos as they are (to check the network can fit them).
     #[arg(long)]
     no_augment: bool,
+    /// A board reader trained earlier (typically a big one: `--encoder
+    /// base`, 518) to learn from as well as the labels: distillation. It
+    /// reads each training photo once, before training. Needed for
+    /// unlabelled photos (datasets of format `photos`). A teacher trained on
+    /// noncommercial data makes this model internal-only too.
+    #[arg(long)]
+    teacher: Option<PathBuf>,
+    /// The teacher's share of a labelled photo's loss (the labels get the
+    /// rest). Unlabelled photos learn from the teacher alone.
+    #[arg(long, default_value_t = 0.5)]
+    distill_weight: f64,
+    /// Softens the teacher's and the student's readings before they are
+    /// compared, so the teacher's second guesses count too.
+    #[arg(long, default_value_t = 2.0)]
+    distill_temperature: f64,
+    /// Unlabelled photos are kept only if the teacher reads a plausible
+    /// position with at least this confidence (every square's top
+    /// probability, multiplied).
+    #[arg(long, default_value_t = 0.5)]
+    teacher_min_confidence: f32,
 }
 
 fn encoder(name: &str, registers: bool) -> Result<EncoderConfig> {
@@ -142,6 +163,25 @@ fn today() -> String {
     format!("{y:04}.{m:02}.{d:02}")
 }
 
+/// The datasets a model owes credit to: its own and, when it was taught,
+/// its teacher's (each once).
+fn credits(chosen: &[&licences::Dataset], teacher: Option<&ModelCard>) -> Vec<DatasetCredit> {
+    let mut out: Vec<DatasetCredit> = chosen
+        .iter()
+        .map(|d| DatasetCredit {
+            name: d.name.clone(),
+            licence: d.licence.clone(),
+            attribution: d.attribution.clone(),
+        })
+        .collect();
+    for c in teacher.map(|t| t.datasets.as_slice()).unwrap_or_default() {
+        if !out.iter().any(|d| d.name == c.name) {
+            out.push(c.clone());
+        }
+    }
+    out
+}
+
 /// Train with these options.
 pub fn run(a: &Args) -> Result<()> {
     let (manifest, from) = match &a.manifest {
@@ -155,8 +195,32 @@ pub fn run(a: &Args) -> Result<()> {
     let chosen: Vec<&licences::Dataset> = a.datasets.iter().map(|n| &manifest[n]).collect();
     let policy = licences::Policy { allow_share_alike: a.allow_share_alike, internal: a.internal };
     licences::check(&chosen, policy)?;
-    let internal_only = chosen.iter().any(|d| licences::needs_internal(d));
-    if internal_only {
+    // A teacher passes on what it learnt from, licences included.
+    let teacher_card = match &a.teacher {
+        Some(p) => {
+            let bytes = std::fs::read(p).with_context(|| format!("reading the teacher {}", p.display()))?;
+            Some(chess_vision::read_metadata(&bytes)?.1)
+        }
+        None => None,
+    };
+    if let Some(c) = &teacher_card {
+        if c.internal_only && !a.internal {
+            bail!(
+                "the teacher {} is internal-only (trained on noncommercial data), so a model it teaches is too: pass --internal",
+                c.name
+            );
+        }
+        if c.internal_only {
+            eprintln!("note: the teacher {} is internal-only, so this model is too", c.name);
+        }
+    }
+    anyhow::ensure!(
+        (0.0..=1.0).contains(&a.distill_weight) && a.distill_temperature > 0.0,
+        "--distill-weight goes from 0 to 1, and --distill-temperature must be above 0"
+    );
+    let internal_only = chosen.iter().any(|d| licences::needs_internal(d))
+        || teacher_card.as_ref().is_some_and(|c| c.internal_only);
+    if chosen.iter().any(|d| licences::needs_internal(d)) {
         eprintln!(
             "note: trained on noncommercial data ({}): the model is internal-only and won't go in the Chess lab app",
             chosen
@@ -190,6 +254,9 @@ pub fn run(a: &Args) -> Result<()> {
         samples.extend(got);
     }
     data::check_no_leaks(&samples)?;
+    if a.teacher.is_none() && samples.iter().any(|s| !s.labelled) {
+        bail!("unlabelled photos (datasets of format `photos`) need a teacher to learn from: give --teacher");
+    }
 
     let cfg = ModelConfig {
         image_size: a.image_size,
@@ -210,6 +277,40 @@ pub fn run(a: &Args) -> Result<()> {
     let cache_dir = a.out.join("photo-cache");
     std::fs::create_dir_all(&cache_dir)?;
 
+    let distill = match &a.teacher {
+        Some(path) => {
+            let t = teacher::Teacher::load(path, &device)?;
+            let train_idx: Vec<usize> =
+                (0..samples.len()).filter(|&i| samples[i].split == data::Split::Train).collect();
+            let refs: Vec<&data::Sample> = train_idx.iter().map(|&i| &samples[i]).collect();
+            let readings = t.read_all(&refs, &cache_dir, &a.out.join("teacher-cache"), a.batch)?;
+            drop(t);
+            let mut keep = vec![true; samples.len()];
+            let (mut unlabelled, mut kept) = (0, 0);
+            for (i, r) in train_idx.into_iter().zip(readings) {
+                if !samples[i].labelled {
+                    unlabelled += 1;
+                    if !(r.plausible && r.confidence >= a.teacher_min_confidence) {
+                        keep[i] = false;
+                        continue;
+                    }
+                    kept += 1;
+                }
+                samples[i].soft = Some(r.log_probs);
+            }
+            let mut k = keep.into_iter();
+            samples.retain(|_| k.next().unwrap_or(true));
+            if unlabelled > 0 {
+                println!(
+                    "teacher: kept {kept} of {unlabelled} unlabelled photos (a plausible position, confidence ≥ {})",
+                    a.teacher_min_confidence
+                );
+            }
+            Some(train::Distill { weight: a.distill_weight, temperature: a.distill_temperature })
+        }
+        None => None,
+    };
+
     let (mut vm, net) = train::build(&cfg, a.dinov2.as_deref(), &device)?;
     let base = match &a.dinov2 {
         Some(_) => format!(
@@ -218,6 +319,10 @@ pub fn run(a: &Args) -> Result<()> {
             if a.registers { " reg4" } else { "" }
         ),
         None => "random initialisation (not for use)".to_owned(),
+    };
+    let base = match &teacher_card {
+        Some(c) => format!("{base}; taught by {} {} ({})", c.name, c.version, c.base),
+        None => base,
     };
     let settings = train::Settings {
         epochs: a.epochs,
@@ -232,6 +337,7 @@ pub fn run(a: &Args) -> Result<()> {
         seed: a.seed,
         augment: !a.no_augment,
         cache_dir,
+        distill,
     };
     let history =
         train::run(&mut vm, &net, &cfg, &samples, &settings, &device, &a.out.join("best.safetensors"))?;
@@ -247,14 +353,7 @@ pub fn run(a: &Args) -> Result<()> {
             "MIT OR Apache-2.0".into()
         },
         base,
-        datasets: chosen
-            .iter()
-            .map(|d| DatasetCredit {
-                name: d.name.clone(),
-                licence: d.licence.clone(),
-                attribution: d.attribution.clone(),
-            })
-            .collect(),
+        datasets: credits(&chosen, teacher_card.as_ref()),
         accuracy: test_scores.iter().map(|(k, v)| (k.clone(), v.exact as f32)).collect(),
         internal_only,
     };
