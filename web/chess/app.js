@@ -5,6 +5,7 @@
 import init, { Session, checkFen, completeFen, glossary, motifs, openingBook } from "./pkg/open_chess_wasm.js";
 import { Board, GLYPH } from "./board.js";
 import { PositionEditor } from "./position-editor.js";
+import { askPhotoTerms, startReview } from "./review.js";
 import { Api, DEVICE_TOKEN, SERVERS, beginSignIn, finishSignIn, lichessTablebase, loadSiteName } from "./online.js";
 
 const $ = (id) => document.getElementById(id);
@@ -312,6 +313,8 @@ function step(to) {
 // ---------- rendering
 
 function refresh() {
+  // Checking board photos needs this server's sign-in.
+  $("openReview").hidden = !siteApi();
   app.st = JSON.parse(app.session.state());
   if (app.viewPly !== null && app.viewPly >= app.st.ply) app.viewPly = null;
   if (app.viewPly !== null) {
@@ -922,6 +925,8 @@ async function fromPhoto(file, how) {
     }
   }
   app.photo = reading.photoId ? { id: reading.photoId } : null;
+  // The first photo the server could have kept: ask about the photo licence.
+  if (reading.termsNeeded) askPhotoTerms(siteApi());
   if (how === "next") {
     const cands = photoCandidates(reading);
     const a = sureMatch(cands);
@@ -1503,6 +1508,7 @@ async function main() {
     },
   });
   wire();
+  startReview({ api: siteApi });
   renderDictionary();
   app.session = new Session(null);
 

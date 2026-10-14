@@ -7,6 +7,7 @@ const GUIDES = [
   { id: "lichess", title: "Lichess tools", blurb: "Using Lichess apps, bots and libraries with an open-chess server." },
   { id: "boards", title: "Electronic boards", blurb: "DGT, Chessnut, Centaur and DGT Pi boards with open-chess-device." },
   { id: "photos", title: "Boards from photos", blurb: "Read a position from a photo, carry a game online, play on from the board." },
+  { id: "photo-licence", title: "The photo licence", blurb: "What sending a board photo for checking and training means." },
   { id: "engine", title: "The engine", blurb: "Search, odds, explanations and training the engine." },
   { id: "releases", title: "Releases", blurb: "What each release changed." },
 ];
@@ -150,22 +151,28 @@ async function show(id, anchor) {
   }
 }
 
+// The app's pages besides the board: #docs (here) and #review (review.js,
+// told by an "open-chess:page" event).
 function route() {
   const m = /^#docs(?:\/([a-z0-9-]+))?(?:#(.+))?$/i.exec(location.hash);
-  const open = !!m;
-  view().hidden = !open;
-  play().hidden = open;
-  document.documentElement.classList.toggle("reading", open);
-  document.getElementById("openDocs")?.setAttribute("aria-pressed", String(open));
-  if (open) show(m[1] || "", m[2]);
-  else document.title = "Chess lab";
+  const page = m ? "docs" : /^#review\b/.test(location.hash) ? "review" : null;
+  view().hidden = page !== "docs";
+  const review = document.getElementById("reviewView");
+  if (review) review.hidden = page !== "review";
+  play().hidden = !!page;
+  document.documentElement.classList.toggle("reading", !!page);
+  document.getElementById("openDocs")?.setAttribute("aria-pressed", String(page === "docs"));
+  document.getElementById("openReview")?.setAttribute("aria-pressed", String(page === "review"));
+  if (page === "docs") show(m[1] || "", m[2]);
+  else document.title = page === "review" ? "Board photos to check · Chess lab" : "Chess lab";
+  dispatchEvent(new CustomEvent("open-chess:page", { detail: page }));
 }
 
 export function startDocs() {
   addEventListener("hashchange", route);
   // Choosing what to play goes back to the board.
   document.querySelectorAll("[data-mode]").forEach((b) =>
-    b.addEventListener("click", () => { if (location.hash.startsWith("#docs")) location.hash = ""; }),
+    b.addEventListener("click", () => { if (/^#(docs|review)/.test(location.hash)) location.hash = ""; }),
   );
   route();
 }

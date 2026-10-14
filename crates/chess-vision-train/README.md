@@ -7,13 +7,13 @@ options); this crate's `chess-vision-train` is the trainer on its own.
 
 ```sh
 cargo run --release -p open-chess-vision-train --features metal -- \
-    --datasets chessred esl-review --internal --data-root /data/chess \
+    --datasets chessred open-chess-photos --internal --data-root /data/chess \
     --dinov2 dinov2_vits14_pretrain.pth --encoder small --image-size 392 \
     --out runs/small-392
 ```
 
 `--internal` is needed whenever ChessReD is in (its licence is
-noncommercial). Without ChessReD, `--datasets esl-review` trains a model
+noncommercial). Without ChessReD, `--datasets open-chess-photos` trains a model
 you can ship.
 
 The result is `runs/small-392/esl-board-reader-small-392.safetensors` (f16, with
@@ -31,7 +31,8 @@ ChessQueries material are refused; noncommercial data only with `--internal`):
 | Dataset | Format | What |
 |---|---|---|
 | `chessred` | `annotations.json` and images, as published | 10,800 phone photos of 100 games, split by game. **CC BY-NC-SA 4.0** (its DOI record): internal-only models only |
-| `esl-review` | `labels.jsonl` + `photos/` | Our photos a person confirmed: `open-chess photos export --out /data/chess/esl-review` |
+| `open-chess-photos` | `labels.jsonl` + `photos/` | An open-chess server's labelled photos, sent under the open-chess photo licence (any model, commercial or not): `open-chess photos export --out /data/chess/open-chess-photos` (`--reviewed-only`: only labels two people agreed on, or an admin gave) |
+| `open-chess-public` | `labels.jsonl` + `photos/` | The photos their senders also released as **CC0**: `open-chess photos export --public-only --out /data/chess/open-chess-public` |
 
 `labels.jsonl` lines: `{"image": "photos/1.jpg", "placement": "<FEN placement,
 White's side>", "group": "<same game or board>", "split": "train|val|test"}`

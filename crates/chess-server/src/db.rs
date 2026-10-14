@@ -727,6 +727,31 @@ CREATE TABLE chess.position_hints (
     at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (key, player_id));
 ",
+    r"
+-- 6. Photo review by everyone, and the photo licence.
+--
+-- players.photo_terms: the photo licence the player accepted (its version),
+-- and photo_public whether they also release their photos as CC0. A photo
+-- is kept for review only under accepted terms, which it records.
+-- photo_votes: what each reviewer says a photo shows (anyone signed in; the
+-- player who sent it votes by confirming it). Two agreeing votes label it
+-- ('consensus'); an admin's or manager's word is final ('admin').
+ALTER TABLE chess.players ADD COLUMN IF NOT EXISTS photo_terms text;
+ALTER TABLE chess.players ADD COLUMN IF NOT EXISTS photo_terms_at timestamptz;
+ALTER TABLE chess.players ADD COLUMN IF NOT EXISTS photo_public boolean NOT NULL DEFAULT false;
+ALTER TABLE chess.board_photos ADD COLUMN terms text;
+ALTER TABLE chess.board_photos ADD COLUMN public boolean NOT NULL DEFAULT false;
+ALTER TABLE chess.board_photos DROP CONSTRAINT IF EXISTS board_photos_label_source_check;
+ALTER TABLE chess.board_photos ADD CONSTRAINT board_photos_label_source_check
+    CHECK (label_source IN ('player', 'reviewer', 'consensus', 'admin'));
+CREATE TABLE chess.photo_votes (
+    photo_id bigint NOT NULL REFERENCES chess.board_photos ON DELETE CASCADE,
+    player_id bigint NOT NULL,
+    placement text,
+    unreadable boolean NOT NULL DEFAULT false,
+    voted_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (photo_id, player_id));
+",
 ];
 
 #[cfg(test)]

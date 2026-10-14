@@ -249,6 +249,37 @@ export class Api {
     });
     if (!r.ok) throw new Error(`confirming the photo failed (${r.status})`);
   }
+  async postJson(path, body) {
+    const r = await fetch(this.base + path, {
+      method: "POST",
+      headers: this.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(out.error || `${path}: ${r.status}`);
+    return out;
+  }
+  /// The photo licence, and whether I accepted it ({terms, accepted, public}).
+  photoTerms() {
+    return this.json("/api/esl/photo-terms");
+  }
+  setPhotoTerms(accept, isPublic) {
+    return this.postJson("/api/esl/photo-terms", { accept, public: !!isPublic });
+  }
+  /// Board photos waiting for people to say what they show.
+  photos(all = false) {
+    return this.json(`/api/esl/photos${all ? "?all=true" : ""}`);
+  }
+  /// A photo as an object URL (it needs the token, so not a plain <img src>).
+  async photoImage(id) {
+    const r = await fetch(this.base + `/api/esl/photos/${id}/image`, { headers: this.headers() });
+    if (!r.ok) throw new Error(`the photo: ${r.status}`);
+    return URL.createObjectURL(await r.blob());
+  }
+  /// What I say a photo shows: {placement} or {unreadable: true}.
+  labelPhoto(id, body) {
+    return this.postJson(`/api/esl/photos/${id}/label`, body);
+  }
   decline(id) {
     return this.post(`/api/challenge/${id}/decline`);
   }
