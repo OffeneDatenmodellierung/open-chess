@@ -83,6 +83,12 @@ pub struct Config {
     #[arg(long, env = "CHESS_SITE_NAME", default_value = "open-chess")]
     pub site_name: String,
 
+    /// What players know the host site as (esports-lab), when they can sign
+    /// in with it: "Sign in with …", "linked to your … account". The site
+    /// name when unset.
+    #[arg(long, env = "CHESS_HOST_NAME")]
+    pub host_name: Option<String>,
+
     #[arg(long, env = "CHESS_BIND", default_value = "0.0.0.0:8090")]
     pub bind: String,
 
@@ -198,6 +204,11 @@ impl Config {
 
     pub fn public_url(&self) -> &str {
         self.public_url.trim_end_matches('/')
+    }
+
+    /// What players know the host site as.
+    pub fn host_name(&self) -> &str {
+        self.host_name.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&self.site_name)
     }
 
     /// The secret shared with the host site, when signing in with it is on.

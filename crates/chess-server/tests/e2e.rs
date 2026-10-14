@@ -80,6 +80,7 @@ async fn setup_with(pre: &str, tweak: impl FnOnce(&mut Config)) -> Option<Env> {
         esports_secret: Some(SECRET.into()),
         signup: true,
         site_name: "open-chess".into(),
+        host_name: Some("esports-lab".into()),
         bind: "127.0.0.1:0".into(),
         metrics_bind: "127.0.0.1:0".into(),
         lag_comp_ms: 100,
@@ -906,6 +907,19 @@ async fn the_host_site_signs_players_in_and_gets_their_tokens() {
     use open_chess_server::http::web::sign;
     let Some(env) = setup(|_| {}).await else { return };
     let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    // The sign-in page names the host site; the server keeps its own name.
+    let page = http.get(format!("{}/login", env.base[0])).send().await.unwrap().text().await.unwrap();
+    assert!(page.contains("Sign in with esports-lab"), "{page}");
+    let index: serde_json::Value = http
+        .get(format!("{}/", env.base[0]))
+        .header("accept", "application/json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(index["site"], "open-chess");
     // Off to the site, with a nonce to come back with.
     let r = http.get(format!("{}/auth/esports?return=/account", env.base[0])).send().await.unwrap();
     let to = r.headers()["location"].to_str().unwrap().to_owned();

@@ -208,7 +208,7 @@ fn sign_in_form(ctx: &Ctx, ret: &str, error: Option<&str>) -> String {
             body,
             "<p><a class=btn href=\"{base}/auth/esports?return={r}\">Sign in with {site}</a></p><p class=muted>or with an account here:</p>",
             r = urlencoding::encode(ret),
-            site = html_escape(&ctx.cfg.site_name)
+            site = html_escape(ctx.cfg.host_name())
         );
     }
     let _ = write!(
@@ -482,7 +482,7 @@ async fn account_page(ctx: &Ctx, player: i64, session: &str, fresh: Option<&str>
         "<p>Signed in as <b>{}</b>{}.</p>",
         html_escape(&a.username),
         if linked.is_some() {
-            format!(" (linked to your {} account)", html_escape(&ctx.cfg.site_name))
+            format!(" (linked to your {} account)", html_escape(ctx.cfg.host_name()))
         } else {
             String::new()
         }
@@ -665,7 +665,7 @@ pub async fn esports_token(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) ->
         |s| s.split([' ', ',']).filter(|x| !x.is_empty()).map(str::to_owned).collect(),
     );
     let scopes = allowed(&ctx, player, &wanted).await?;
-    let label = f.get("label").map_or_else(|| format!("{} (site)", ctx.cfg.site_name), Clone::clone);
+    let label = f.get("label").map_or_else(|| format!("{} (site)", ctx.cfg.host_name()), Clone::clone);
     let (token, expires) = match f.get("hours").and_then(|h| h.parse::<i64>().ok()) {
         Some(hours) => {
             issue_for(&ctx, player, &label, &scopes, Duration::hours(hours.clamp(1, 24 * 365))).await?
