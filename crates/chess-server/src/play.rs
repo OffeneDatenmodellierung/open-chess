@@ -152,6 +152,19 @@ pub async fn make_move(
         notify(&tx, &ctx.db, &Note::Game(row.id.clone())).await?;
     }
     tx.commit().await?;
+    // Correspondence: the other player may be anywhere; tell their phone.
+    if row.days_per_turn.is_some() && end.is_none() {
+        let me = &row.player(side).username;
+        let them = row.player(side.opposite()).player_id;
+        crate::push::notify(
+            ctx,
+            them,
+            "Your move".into(),
+            format!("{me} played {}.", mv.san),
+            Some(row.id.clone()),
+            Some(row.id.clone()),
+        );
+    }
     debug!(game = id, uci = mv.uci, "move");
     Ok(())
 }
@@ -161,6 +174,21 @@ pub async fn make_move(
 fn timed_out(ctx: &Ctx, row: &GameRow, game: &Game) -> Option<(Status, Option<Side>)> {
     if !row.status.is_ongoing() {
         return None;
+    }
+    if let Some(left) = row.days_left_ms() {
+        // Correspondence: the days run from the first move too.
+        if left > 0 {
+            return None;
+        }
+        if row.ply < 2 {
+            return Some((Status::Aborted, None));
+        }
+        let winner = row.turn().opposite();
+        return Some(if game.cannot_win(winner) {
+            (Status::Outoftime, None)
+        } else {
+            (Status::Outoftime, Some(winner))
+        });
     }
     if row.ply < 2 {
         let limit = i64::try_from(ctx.cfg.first_move_secs * 1000).unwrap_or(i64::MAX);
@@ -403,7 +431,7 @@ pub async fn finish(
     }
     tx.execute(
         &ctx.db.sql(
-            "UPDATE chess.games SET status = $2, winner = $3, finished_at = clock_timestamp(), draw_offer = NULL,
+            "UPDATE chess.games SET status = $2, winner = $3, finished_at = clock_timestamp(), feed_at = clock_timestamp(), draw_offer = NULL,
                     takeback_offer = NULL, analysis = $4, white_rating_diff = $5, black_rating_diff = $6,
                     white_ms = $7, black_ms = $8
               WHERE id = $1",
@@ -496,9 +524,9 @@ pub async fn start_game(ctx: &Ctx, tx: &Transaction<'_>, ch: &ChallengeRow) -> R
         &ctx.db.sql(
             "INSERT INTO chess.games (id, white_id, black_id, variant, initial_fen, rated, source, speed, rules,
                     clock_initial_ms, clock_increment_ms, status, fen, white_ms, black_ms, white_rating, black_rating,
-                    white_provisional, black_provisional, created_at, turn_started_at)
+                    white_provisional, black_provisional, created_at, turn_started_at, days_per_turn)
              VALUES ($1, $2, $3, $4, $5, $6, 'friend', $7, $8, $9, $10, 20, $11, $9, $9, $12, $13, $14, $15,
-                     clock_timestamp(), clock_timestamp())",
+                     clock_timestamp(), clock_timestamp(), $16)",
         ),
         &[
             &ch.id,
@@ -516,6 +544,7 @@ pub async fn start_game(ctx: &Ctx, tx: &Transaction<'_>, ch: &ChallengeRow) -> R
             &br.int(),
             &wr.provisional(),
             &br.provisional(),
+            &ch.days,
         ],
     )
     .await?;
@@ -542,7 +571,9 @@ pub async fn sweep(ctx: &Ctx) -> Result<usize> {
             &ctx.db.sql(
                 "SELECT id FROM chess.games
                   WHERE status = 20 AND (
-                        (ply < 2 AND clock_timestamp() > turn_started_at + make_interval(secs => ($1::float8 + $2::float8) / 1000.0))
+                        (days_per_turn IS NOT NULL AND clock_timestamp() > turn_started_at + make_interval(days => days_per_turn))
+                     OR (days_per_turn IS NULL AND ply < 2
+                         AND clock_timestamp() > turn_started_at + make_interval(secs => ($1::float8 + $2::float8) / 1000.0))
                      OR (ply >= 2 AND clock_initial_ms IS NOT NULL
                          AND clock_timestamp() > turn_started_at
                              + make_interval(secs => ((CASE WHEN fen LIKE '% w %' THEN white_ms ELSE black_ms END) + $2::float8) / 1000.0)))

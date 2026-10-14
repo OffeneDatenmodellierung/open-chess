@@ -28,6 +28,8 @@ pub fn valid_limit(secs: u32) -> bool {
 pub struct Request {
     pub rated: bool,
     pub clock: Option<(u32, u32)>,
+    /// Correspondence: days per move (instead of a clock).
+    pub days: Option<u32>,
     pub color: String,
     pub variant: String,
     pub fen: Option<String>,
@@ -43,8 +45,15 @@ fn truthy(v: &str) -> bool {
 impl Request {
     pub fn parse(form: &HashMap<String, String>) -> ApiResult<Request> {
         let get = |k: &str| form.get(k).map(|s| s.trim()).filter(|s| !s.is_empty());
-        if get("days").is_some() {
-            return Err(ApiError::bad("Correspondence games aren't supported on this server"));
+        let days = match get("days") {
+            None => None,
+            Some(d) => match d.parse::<u32>() {
+                Ok(d @ (1 | 2 | 3 | 5 | 7 | 10 | 14)) => Some(d),
+                _ => return Err(ApiError::bad("days is 1, 2, 3, 5, 7, 10 or 14")),
+            },
+        };
+        if days.is_some() && (get("clock.limit").is_some() || get("clock.increment").is_some()) {
+            return Err(ApiError::bad("send days or a clock, not both"));
         }
         let clock = match (get("clock.limit"), get("clock.increment")) {
             (None, None) => None,
@@ -89,7 +98,7 @@ impl Request {
         if rated && variant == "fromPosition" {
             return Err(ApiError::bad("Games from a position can't be rated"));
         }
-        if rated && clock.is_none() {
+        if rated && clock.is_none() && days.is_none() {
             return Err(ApiError::bad("Unlimited games can't be rated"));
         }
         let rules: Vec<String> = get("rules")
@@ -101,6 +110,7 @@ impl Request {
         Ok(Request {
             rated,
             clock,
+            days,
             color,
             variant,
             fen,
@@ -208,8 +218,8 @@ async fn create_with(
     tx.execute(
         &ctx.db.sql(
             "INSERT INTO chess.challenges (id, challenger_id, dest_id, variant, initial_fen, rated, clock_limit,
-                    clock_increment, color, final_color, rules, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now() + make_interval(secs => $12))",
+                    clock_increment, color, final_color, rules, expires_at, days)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now() + make_interval(secs => $12), $13)",
         ),
         &[
             &id,
@@ -224,6 +234,7 @@ async fn create_with(
             &req.final_color().name(),
             &req.rules,
             &ttl_secs,
+            &req.days.map(|d| d as i32),
         ],
     )
     .await?;
@@ -433,7 +444,12 @@ mod tests {
 
     #[test]
     fn rejects_what_we_dont_play() {
-        assert!(Request::parse(&form(&[("days", "3")])).is_err());
+        assert!(Request::parse(&form(&[("days", "4")])).is_err(), "not a Lichess choice");
+        assert!(
+            Request::parse(&form(&[("days", "3"), ("clock.limit", "180"), ("clock.increment", "0")]))
+                .is_err(),
+            "days or a clock"
+        );
         assert!(Request::parse(&form(&[("variant", "chess960")])).is_err());
         assert!(Request::parse(&form(&[("clock.limit", "180")])).is_err());
         assert!(Request::parse(&form(&[("clock.limit", "100"), ("clock.increment", "0")])).is_err());
@@ -441,6 +457,12 @@ mod tests {
         assert!(Request::parse(&form(&[("rated", "true")])).is_err(), "unlimited can't be rated");
         assert!(Request::parse(&form(&[("rules", "noAbort,bogus")])).is_err());
         assert!(Request::parse(&form(&[("fen", "nonsense")])).is_err());
+    }
+
+    #[test]
+    fn correspondence() {
+        let r = Request::parse(&form(&[("days", "3"), ("rated", "true")])).unwrap();
+        assert_eq!((r.days, r.clock, r.rated), (Some(3), None, true));
     }
 
     #[test]

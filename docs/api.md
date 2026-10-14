@@ -238,7 +238,7 @@ game streams show):
 |---|---|
 | `start` | A game began: the public game description (as the first line of `/api/stream/game/{id}`) |
 | `move` | It moved on: the same description (position, last move, `turns`). While a game is live it runs `CHESS_PUBLIC_DELAY_PLIES` behind, as the public stream does |
-| `end` | It finished: the game as `/game/export/{id}` gives it in JSON (players, ratings and `ratingDiff`, status, winner, moves, clock). Its event id is when it finished (Unix ms) |
+| `end` | It finished: the game as `/game/export/{id}` gives it in JSON (players, ratings and `ratingDiff`, status, winner, moves, clock). Its event id is when the server recorded it finished (Unix ms): the finish for games played here, the upload for games played offline in the iOS app |
 
 A client that reconnects with `Last-Event-ID` (a browser's `EventSource`
 does it itself), or asks with `?since=<Unix ms>`, first gets the `end` of

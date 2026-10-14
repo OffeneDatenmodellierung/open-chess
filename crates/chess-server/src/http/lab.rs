@@ -345,7 +345,7 @@ pub async fn tablebase(
 pub const PHOTO_TERMS: &str = "open-chess-photo-licence-1";
 
 /// The photo terms a player accepted, if the current ones: (terms, public).
-async fn accepted_terms(ctx: &Ctx, player: i64) -> anyhow::Result<Option<bool>> {
+pub(crate) async fn accepted_terms(ctx: &Ctx, player: i64) -> anyhow::Result<Option<bool>> {
     let c = ctx.db.conn().await?;
     let r = c
         .query_opt(

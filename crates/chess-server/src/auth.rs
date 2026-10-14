@@ -254,6 +254,13 @@ impl Auth {
         }
     }
 
+    /// Forget every cached token of a player's (their account closed).
+    pub fn forget_player(&self, player: i64) {
+        if let Ok(mut c) = self.cache.lock() {
+            c.retain(|_, (id, _)| id.as_ref().is_none_or(|i| i.player != player));
+        }
+    }
+
     /// The player signed in with this session cookie.
     pub async fn session(&self, h: &HeaderMap) -> Result<Option<i64>> {
         let Some(token) = cookie(h, SESSION_COOKIE) else {

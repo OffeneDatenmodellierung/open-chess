@@ -204,6 +204,25 @@ pub struct Config {
     /// look").
     #[arg(long, env = "CHESS_APP_THEME")]
     pub app_theme: Option<String>,
+
+    /// Apple push notifications for the iOS app ("your move" in
+    /// correspondence games, results to confirm): the `.p8` signing key
+    /// (its PEM, or the path of the file) from the Apple Developer account.
+    /// Without it, and the three below, nothing is sent.
+    #[arg(long, env = "CHESS_APNS_KEY", hide_env_values = true)]
+    pub apns_key: Option<String>,
+
+    /// The key's id (10 characters, shown with the key).
+    #[arg(long, env = "CHESS_APNS_KEY_ID")]
+    pub apns_key_id: Option<String>,
+
+    /// The Apple Developer team id.
+    #[arg(long, env = "CHESS_APNS_TEAM_ID")]
+    pub apns_team_id: Option<String>,
+
+    /// The app's bundle id, which notifications are addressed to.
+    #[arg(long, env = "CHESS_APNS_TOPIC", default_value = "org.offenedatenmodellierung.openchess")]
+    pub apns_topic: String,
 }
 
 impl Config {
