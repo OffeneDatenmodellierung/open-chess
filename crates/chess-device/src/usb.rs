@@ -95,6 +95,18 @@ mod hidapi_impl {
         io::Error::other(e.to_string())
     }
 
+    /// An open that failed, with what to do about it where we know.
+    fn explain(e: &hidapi::HidError) -> io::Error {
+        let msg = e.to_string();
+        if cfg!(target_os = "macos") && msg.contains("privilege violation") {
+            io::Error::other(format!(
+                "{msg}: macOS refused the board. Allow your terminal under System Settings › Privacy & Security › Input Monitoring, then open a new terminal"
+            ))
+        } else {
+            io::Error::other(msg)
+        }
+    }
+
     /// Chessnut boards on USB.
     pub fn chessnut_boards() -> Vec<Found> {
         let Ok(api) = hidapi::HidApi::new() else { return Vec::new() };
@@ -118,8 +130,13 @@ mod hidapi_impl {
     impl Hid {
         pub fn open(path: &str) -> io::Result<Hid> {
             let api = hidapi::HidApi::new().map_err(err)?;
+            // hidapi seizes devices on macOS by default, which only root
+            // may do: "(iokit/common) privilege violation". Shared access
+            // reads and writes the board just the same.
+            #[cfg(target_os = "macos")]
+            api.set_open_exclusive(false);
             let c = std::ffi::CString::new(path).map_err(io::Error::other)?;
-            Ok(Hid { device: api.open_path(&c).map_err(err)? })
+            Ok(Hid { device: api.open_path(&c).map_err(|e| explain(&e))? })
         }
 
         pub fn write(&mut self, data: &[u8]) -> io::Result<()> {

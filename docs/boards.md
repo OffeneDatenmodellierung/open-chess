@@ -196,6 +196,11 @@ node with a udev rule (or run as root):
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="2d80", MODE="0660", GROUP="plugdev"
 ```
 
+On macOS the board is opened shared, which needs no special rights. If
+macOS still refuses it ("privilege violation"), allow your terminal app
+under System Settings › Privacy & Security › Input Monitoring, then open
+a new terminal window.
+
 **macOS and Windows.** DGT boards on USB, Bluetooth LE boards and Chessnut
 boards on USB all work there; the DGT Pi's clock and the Centaur are Linux
 by nature. Unsigned release binaries need allowing once ([releases.md](releases.md#downloads)).
