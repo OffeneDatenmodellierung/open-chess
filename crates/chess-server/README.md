@@ -133,7 +133,8 @@ Everything is environment (each variable is also a command-line flag:
 | `ESPORTS_PUBLIC_URL` | `http://localhost:8080` | The host site, for "Sign in with the site" |
 | `ESPORTS_LOGIN` | `false` | "Sign in with the site": its players sign in here through it, and its server asks for their tokens (`POST /api/esports/token`). Needs `ESPORTS_SECRET` |
 | `ESPORTS_SECRET` | — | Shared with the host site (32+ characters): it signs sign-ins and token requests with it |
-| `CHESS_SITE_NAME` | `open-chess` | What players know the site as: the consent page, PGN event names, `GET /` (the app shows it) |
+| `CHESS_SITE_NAME` | `open-chess` | What players know this server as: the consent page, PGN event names, `GET /` (the Chess lab shows it) |
+| `CHESS_HOST_NAME` | the site name | What players know the host site as: "Sign in with …" and "linked to your … account" |
 | `CHESS_BIND` / `CHESS_METRICS_BIND` | `0.0.0.0:8090` / `0.0.0.0:9465` | API; `/metrics`, `/healthz`, `/readyz` |
 | `CHESS_POOL_SIZE` | 8 | |
 | `CHESS_SWEEP_MS` | 500 | How often each replica's sweeper looks for flags, unstarted games and lapsed challenges |
