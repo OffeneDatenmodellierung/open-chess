@@ -1288,19 +1288,33 @@ async fn unsure_photos_are_kept_for_review_and_confirmed() {
         http.post(format!("{}{path}", env.base[0])).bearer_auth(token).json(&body).send()
     };
 
+    // Not kept until the sender accepts the photo licence.
+    let r = post("/api/esl/recognise", &token, serde_json::json!({"image": SMALL_PNG})).await.unwrap();
+    let v: serde_json::Value = r.json().await.unwrap();
+    assert_eq!((v["review"].as_bool(), v["termsNeeded"].as_bool()), (Some(false), Some(true)), "{v}");
+    assert!(v["photoId"].is_null());
+    let terms: serde_json::Value =
+        post("/api/esl/photo-terms", &token, serde_json::json!({"accept": true, "public": true}))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!((terms["accepted"].as_bool(), terms["public"].as_bool()), (Some(true), Some(true)));
+
     let r = post("/api/esl/recognise", &token, serde_json::json!({"image": SMALL_PNG})).await.unwrap();
     assert_eq!(r.status(), 200);
     let v: serde_json::Value = r.json().await.unwrap();
     assert_eq!(v["source"], "model");
     assert_eq!(v["squares"].as_array().map(Vec::len), Some(64));
-    assert_eq!(v["review"], true, "{v}");
+    assert_eq!((v["review"].as_bool(), v["termsNeeded"].as_bool()), (Some(true), Some(false)), "{v}");
     let id = v["photoId"].as_i64().expect("kept for review");
 
     let row = env
         .pg
         .query_one(
             &format!(
-                "SELECT player_id, reason, reading->>'placement', label FROM {}.board_photos WHERE id = $1",
+                "SELECT player_id, reason, reading->>'placement', label, terms, public FROM {}.board_photos WHERE id = $1",
                 env.chess
             ),
             &[&id],
@@ -1311,9 +1325,12 @@ async fn unsure_photos_are_kept_for_review_and_confirmed() {
     assert!(["unsure", "implausible"].contains(&row.get::<_, String>(1).as_str()));
     assert_eq!(row.get::<_, Option<String>>(2).as_deref(), v["placement"].as_str());
     assert_eq!(row.get::<_, Option<String>>(3), None);
+    assert_eq!(row.get::<_, Option<String>>(4).as_deref(), Some("open-chess-photo-licence-1"));
+    assert!(row.get::<_, bool>(5));
 
-    // Only the player who sent it can say what it showed, and only a board.
+    // Only the player who sent it can confirm it, and only a board.
     let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    let start_placement = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
     let path = format!("/api/esl/photos/{id}/confirm");
     assert_eq!(post(&path, &other, serde_json::json!({"placement": start})).await.unwrap().status(), 404);
     assert_eq!(post(&path, &token, serde_json::json!({"placement": "8/8/8"})).await.unwrap().status(), 400);
@@ -1337,27 +1354,81 @@ async fn unsure_photos_are_kept_for_review_and_confirmed() {
         (Some(false), Some(true), Some(1)),
         "{queued}"
     );
-    let row = env
-        .pg
-        .query_one(
-            &format!("SELECT label, label_source FROM {}.board_photos WHERE id = $1", env.chess),
-            &[&id],
-        )
+    let label = |id: i64| {
+        let (pg, chess) = (&env.pg, env.chess.clone());
+        async move {
+            let r = pg
+                .query_one(
+                    &format!("SELECT label, label_source FROM {chess}.board_photos WHERE id = $1"),
+                    &[&id],
+                )
+                .await
+                .unwrap();
+            (r.get::<_, Option<String>>(0), r.get::<_, Option<String>>(1))
+        }
+    };
+    assert_eq!(label(id).await, (Some(start_placement.into()), Some("player".into())));
+
+    // Anyone signed in reviews: the photo is in someone else's queue, not
+    // its sender's, and they can see it.
+    let queue = |token: String| {
+        let http = http.clone();
+        let base = env.base[1].clone();
+        async move {
+            let v: serde_json::Value = http
+                .get(format!("{base}/api/esl/photos"))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            v["photos"].as_array().unwrap().iter().map(|p| p["id"].as_i64().unwrap()).collect::<Vec<_>>()
+        }
+    };
+    assert!(queue(other.clone()).await.contains(&id));
+    assert!(!queue(token.clone()).await.contains(&id), "not your own photo");
+    let img = http
+        .get(format!("{}/api/esl/photos/{id}/image", env.base[1]))
+        .bearer_auth(&other)
+        .send()
         .await
         .unwrap();
-    assert_eq!(
-        row.get::<_, Option<String>>(0).as_deref(),
-        Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
-    );
-    assert_eq!(row.get::<_, Option<String>>(1).as_deref(), Some("player"));
+    assert_eq!(img.status(), 200);
+    assert!(!img.bytes().await.unwrap().is_empty());
 
-    // The review API: a site manager's token lists, shows and labels it;
-    // a player's can't.
-    let http = reqwest::Client::new();
+    // Someone disagrees: still open. A third agrees with the sender: two
+    // matching answers label it.
+    let vote = |token: String, body: serde_json::Value| {
+        let http = http.clone();
+        let base = env.base[0].clone();
+        async move {
+            let r = http
+                .post(format!("{base}/api/esl/photos/{id}/label"))
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            r.json::<serde_json::Value>().await.unwrap()
+        }
+    };
+    let v = vote(other.clone(), serde_json::json!({"placement": "4k3/8/8/8/8/8/8/4K3"})).await;
+    assert_eq!(v["settled"], false, "{v}");
+    assert!(!queue(other.clone()).await.contains(&id), "answered: out of their queue");
+    let (_, third) = env.player("third-person", &["board:play"]).await;
+    let v = vote(third.clone(), serde_json::json!({"placement": start})).await;
+    assert_eq!(v["settled"], true, "{v}");
+    assert_eq!(label(id).await, (Some(start_placement.into()), Some("consensus".into())));
+    assert!(!queue(third.clone()).await.contains(&id));
+
+    // An admin or manager settles it alone, and others can't outvote them.
     let t: serde_json::Value = http
         .post(format!("{}/api/esports/token", env.base[0]))
         .bearer_auth(SECRET)
-        .form(&[("sub", "900"), ("name", "Reviewer"), ("roles", "manager"), ("scopes", "chess:fairplay")])
+        .form(&[("sub", "900"), ("name", "Reviewer"), ("roles", "manager"), ("scopes", "board:play")])
         .send()
         .await
         .unwrap()
@@ -1366,7 +1437,7 @@ async fn unsure_photos_are_kept_for_review_and_confirmed() {
         .unwrap();
     let manager = t["token"].as_str().unwrap().to_owned();
     let list: serde_json::Value = http
-        .get(format!("{}/api/esl/photos", env.base[1]))
+        .get(format!("{}/api/esl/photos?all=true", env.base[1]))
         .bearer_auth(&manager)
         .send()
         .await
@@ -1374,50 +1445,19 @@ async fn unsure_photos_are_kept_for_review_and_confirmed() {
         .json()
         .await
         .unwrap();
-    assert!(
-        list["photos"].as_array().unwrap().iter().any(|p| p["id"] == id && p["label_source"] == "player"),
-        "{list}"
-    );
-    let img = http
-        .get(format!("{}/api/esl/photos/{id}/image", env.base[1]))
-        .bearer_auth(&manager)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(img.status(), 200);
-    assert!(!img.bytes().await.unwrap().is_empty());
-    let refused =
-        http.get(format!("{}/api/esl/photos", env.base[1])).bearer_auth(&token).send().await.unwrap();
-    assert_eq!(refused.status(), 403);
-    let r = http
-        .post(format!("{}/api/esl/photos/{id}/label", env.base[0]))
-        .bearer_auth(&manager)
-        .json(&serde_json::json!({"placement": "4k3/8/8/8/8/8/8/4K3 w - - 0 1"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 200);
-    let row = env
-        .pg
-        .query_one(
-            &format!("SELECT label, label_source FROM {}.board_photos WHERE id = $1", env.chess),
-            &[&id],
-        )
-        .await
-        .unwrap();
+    assert_eq!(list["staff"], true);
+    assert!(list["photos"].as_array().unwrap().iter().any(|p| p["id"] == id && p["votes"] == 3), "{list}");
+    let v = vote(manager.clone(), serde_json::json!({"placement": "4k3/8/8/8/8/8/8/4K3 w - - 0 1"})).await;
+    assert_eq!(v["settled"], true);
+    assert_eq!(label(id).await, (Some("4k3/8/8/8/8/8/8/4K3".into()), Some("admin".into())));
+    let (_, fourth) = env.player("fourth-person", &["board:play"]).await;
+    vote(fourth, serde_json::json!({"placement": start})).await;
     assert_eq!(
-        (row.get::<_, Option<String>>(0).as_deref(), row.get::<_, Option<String>>(1).as_deref()),
-        (Some("4k3/8/8/8/8/8/8/4K3"), Some("reviewer"))
+        label(id).await,
+        (Some("4k3/8/8/8/8/8/8/4K3".into()), Some("admin".into())),
+        "the admin's word stands"
     );
-
-    // A reviewer's label isn't overwritten by the player.
-    env.pg
-        .execute(
-            &format!("UPDATE {}.board_photos SET label_source = 'reviewer' WHERE id = $1", env.chess),
-            &[&id],
-        )
-        .await
-        .unwrap();
+    // Nor does the sender's confirmation overwrite it.
     assert_eq!(
         post(&path, &token, serde_json::json!({"placement": "8/8/8/8/8/8/8/8"})).await.unwrap().status(),
         404

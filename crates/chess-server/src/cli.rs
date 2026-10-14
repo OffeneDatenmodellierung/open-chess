@@ -77,19 +77,23 @@ pub enum BotCmd {
 
 #[derive(Subcommand)]
 pub enum PhotosCmd {
-    /// Write the photos a person confirmed as a training set for
-    /// chess-vision-train (dataset `esl-review`): `photos/<id>.<ext>` and `labels.jsonl`
-    /// (dataset `esl-review` in its datasets.toml).
+    /// Write the labelled photos as a training set for chess-vision-train:
+    /// `photos/<id>.<ext>` and `labels.jsonl` (datasets `open-chess-photos`,
+    /// or with `--public-only` `open-chess-public`, in its datasets.toml).
+    /// Only photos kept under the photo licence; each line says its licence.
     Export {
         #[command(flatten)]
         cfg: Config,
         /// Directory to write (created; existing photos are kept).
         #[arg(long)]
         out: std::path::PathBuf,
-        /// Only photos a reviewer confirmed, not ones only the player who
-        /// sent them did.
+        /// Only photos two people agreed on, or an admin labelled, not ones
+        /// only the player who sent them confirmed.
         #[arg(long)]
         reviewed_only: bool,
+        /// Only photos their senders released as CC0 (the public dataset).
+        #[arg(long)]
+        public_only: bool,
     },
 }
 
@@ -167,8 +171,8 @@ async fn dispatch(cmd: Option<Cmd>) -> Result<()> {
         }
         Cmd::Bot { cmd: BotCmd::Create { cfg, name, days } } => bot_create(cfg, &name, days).await,
         Cmd::Bot { cmd: BotCmd::List(cfg) } => bot_list(cfg).await,
-        Cmd::Photos { cmd: PhotosCmd::Export { cfg, out, reviewed_only } } => {
-            photos_export(cfg, &out, reviewed_only).await
+        Cmd::Photos { cmd: PhotosCmd::Export { cfg, out, reviewed_only, public_only } } => {
+            photos_export(cfg, &out, reviewed_only, public_only).await
         }
         Cmd::Healthcheck { metrics_bind } => healthcheck(&metrics_bind),
     }
@@ -264,7 +268,12 @@ async fn bot_list(cfg: Config) -> Result<()> {
     Ok(())
 }
 
-async fn photos_export(cfg: Config, out: &std::path::Path, reviewed_only: bool) -> Result<()> {
+async fn photos_export(
+    cfg: Config,
+    out: &std::path::Path,
+    reviewed_only: bool,
+    public_only: bool,
+) -> Result<()> {
     cfg.validate()?;
     let db = Db::connect(&cfg)?;
     let c = db.conn().await?;
@@ -272,12 +281,14 @@ async fn photos_export(cfg: Config, out: &std::path::Path, reviewed_only: bool) 
     let rows = c
         .query(
             &db.sql(
-                "SELECT id, player_id, created_at, image, mime, label, label_source
+                "SELECT id, player_id, created_at, image, mime, label, label_source, public
                    FROM chess.board_photos
-                  WHERE label IS NOT NULL AND NOT unreadable AND ($1 = false OR label_source = 'reviewer')
+                  WHERE label IS NOT NULL AND NOT unreadable AND terms IS NOT NULL
+                    AND ($1 = false OR label_source IN ('consensus', 'admin', 'reviewer'))
+                    AND ($2 = false OR public)
                   ORDER BY id",
             ),
-            &[&reviewed_only],
+            &[&reviewed_only, &public_only],
         )
         .await?;
     let mut lines = String::new();
@@ -297,6 +308,7 @@ async fn photos_export(cfg: Config, out: &std::path::Path, reviewed_only: bool) 
         let group = format!("player-{}-{}", player.unwrap_or(0), at.format("%Y-%m-%d"));
         lines.push_str(&serde_json::to_string(&serde_json::json!({
             "image": name, "placement": r.get::<_, String>(5), "group": group, "source": r.get::<_, Option<String>>(6),
+            "licence": if r.get::<_, bool>(7) { "CC0-1.0" } else { PHOTO_LICENCE },
         }))?);
         lines.push('\n');
     }
@@ -304,6 +316,10 @@ async fn photos_export(cfg: Config, out: &std::path::Path, reviewed_only: bool) 
     info!(photos = rows.len(), out = %out.display(), "exported");
     Ok(())
 }
+
+/// Photos kept under the photo licence (docs/photo-licence.md), as the
+/// trainer's datasets.toml names it.
+const PHOTO_LICENCE: &str = "LicenseRef-open-chess-photo-licence-1";
 
 fn healthcheck(bind: &str) -> Result<()> {
     use std::io::{Read, Write};

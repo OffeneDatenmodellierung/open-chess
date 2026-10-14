@@ -216,6 +216,7 @@ mod tests {
                 "10+5",
             ],
             &["open-chess", "photo", "move", "board.jpg", "--game", "abc", "--dry-run"],
+            &["open-chess", "photo", "terms", "--accept", "--public"],
         ] {
             Cli::command().try_get_matches_from(args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
         }

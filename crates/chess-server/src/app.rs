@@ -203,6 +203,7 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
             post(lab::recognise).layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)),
         )
         .route("/api/esl/photos/{id}/confirm", post(lab::confirm_photo))
+        .route("/api/esl/photo-terms", get(lab::photo_terms).post(lab::set_photo_terms))
         .route("/api/esl/photos", get(lab::photos))
         .route("/api/esl/photos/{id}/image", get(lab::photo_image))
         .route("/api/esl/photos/{id}/label", post(lab::label_photo))
