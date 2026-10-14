@@ -32,6 +32,8 @@ const PASS_THROUGH = [
   // The Chess lab's look (CSS): `wrangler secret put CHESS_APP_THEME < theme.css`.
   "CHESS_APP_THEME",
   "CHESS_SITE_NAME",
+  // The host site's name on "Sign in with …".
+  "CHESS_HOST_NAME",
   "CHESS_SITE_SCHEMA",
   "CHESS_SCHEMA",
   "CHESS_POOL_SIZE",

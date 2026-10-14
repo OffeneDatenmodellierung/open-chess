@@ -32,7 +32,8 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
    ```
 
 3. Deploy:
-   * `npx wrangler deploy` with Docker running (from this directory).
+   * `npx wrangler deploy` with Docker running (from this directory), or
+   * from GitHub Actions, below.
 4. Point your site at it (its Lichess backend's base URL becomes
    `https://chess.example.com`, with the same `ESPORTS_SECRET`).
    The fair-play screening model is a secret too:
@@ -66,6 +67,33 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
    them the app's photo buttons explain that photo reading isn't set up.
 
 `npm run check` type-checks the Worker and validates the config.
+
+## Deploying from GitHub Actions
+
+`.github/workflows/deploy-cloudflare.yml` deploys each release: once the
+Release workflow for a `v*` tag succeeds, it takes that release's image
+from ghcr.io, pushes it to Cloudflare's registry and deploys this Worker.
+Run it by hand from the Actions tab to deploy any released version again
+(the latest by default), e.g. after changing a secret.
+
+Settings, in the repository or its `cloudflare` environment:
+
+| Kind | Name | |
+|---|---|---|
+| secret | `CLOUDFLARE_API_TOKEN` | Workers Scripts, Containers and Workers Routes: edit |
+| secret | `CLOUDFLARE_ACCOUNT_ID` | only if the token sees several accounts |
+| variable | `CLOUDFLARE_DEPLOY` | `true` to deploy each release (off by default, so forks don't) |
+| variable | `CHESS_WORKER_NAME` | the Worker's name (`open-chess` by default); a new name makes a new Worker |
+| variable | `CHESS_PUBLIC_URL` | where players reach it; its host becomes the route |
+| variable | `CHESS_WORKER_VARS` | JSON of more vars, e.g. `{"ESPORTS_PUBLIC_URL": "https://site.example", "ESPORTS_LOGIN": "true", "CHESS_HOST_NAME": "Site"}` |
+
+The workflow never sets the server's secrets: `DATABASE_URL`,
+`ESPORTS_SECRET`, `CHESS_FAIRPLAY_MODEL`, `CHESS_APP_THEME` and the rest
+stay in Cloudflare, set with `npx wrangler secret put NAME --name <worker>`.
+A tuned fair-play model belongs there rather than in a repository: its
+thresholds tell a player exactly how far engine help goes unflagged. A
+model that doesn't parse stops the fair-play worker at startup with
+`CHESS_FAIRPLAY_MODEL isn't a valid model`.
 
 ## Notes
 

@@ -1,3 +1,4 @@
 node_modules/
 .wrangler/
 wrangler.ci.jsonc
+wrangler.ci.json
