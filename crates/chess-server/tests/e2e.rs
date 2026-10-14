@@ -939,6 +939,27 @@ async fn own_accounts_sign_up_sign_in_and_make_tokens() {
         .await
         .unwrap();
     assert_eq!(elsewhere.headers()["location"], "/account");
+    // A return path can't end the page's script and start another.
+    let page = http
+        .get(format!("{}/login", env.base[0]))
+        .query(&[("return", "/x</script><script>alert(1)</script>")])
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!page.contains("<script>alert"), "{page}");
+    // Changing the password takes the current one (no passkey to confirm with).
+    let pw_csrf = hash_key(&format!("{session}|passkeys"));
+    let change = |current: &'static str| {
+        http.post(format!("{}/account/password", env.base[0]))
+            .header("cookie", format!("oc_session={session}"))
+            .form(&[("csrf", pw_csrf.as_str()), ("current", current), ("password", "another long password")])
+            .send()
+    };
+    assert_eq!(change("wrong guess").await.unwrap().status(), 403);
+    assert!(change("a long enough password").await.unwrap().status().is_redirection());
     env.teardown().await;
 }
 
@@ -1821,6 +1842,31 @@ async fn admins_partners_and_the_staff_check() {
     let t: serde_json::Value =
         site_token("500", "Boss", "Boss@Site.test").await.unwrap().json().await.unwrap();
     let boss = t["token"].as_str().unwrap().to_owned();
+    // Listed and vouched for, but no passkey yet: not an admin.
+    let role: String = env
+        .pg
+        .query_one(&format!("SELECT role FROM {}.players WHERE esports_id = '500'", env.chess), &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(role, "player");
+    let passkey_for = |id_sql: String| {
+        let (pg, chess) = (&env.pg, env.chess.clone());
+        async move {
+            pg.execute(
+                &format!(
+                    "INSERT INTO {chess}.passkeys (player_id, user_handle, credential_id, public_key, alg, name)
+                     SELECT id, '\\x00', decode(md5(random()::text), 'hex'), '\\x00', -7, 'test'
+                       FROM {chess}.players WHERE {id_sql}"
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+        }
+    };
+    passkey_for("esports_id = '500'".into()).await;
+    site_token("500", "Boss", "Boss@Site.test").await.unwrap();
     let me = |token: String| {
         let http = http.clone();
         let url = format!("{}/api/account", env.base[1]);
@@ -1842,7 +1888,7 @@ async fn admins_partners_and_the_staff_check() {
         .await
         .unwrap();
     assert!(r.text().await.unwrap().contains("already has that email"));
-    let (_, gwen) = env.player("Gwen", HUMAN).await;
+    let (gid, gwen) = env.player("Gwen", HUMAN).await;
     assert_eq!(me(gwen.clone()).await["username"], "Gwen");
     let admin_get =
         |path: &str, token: &str| http.get(format!("{}{path}", env.base[0])).bearer_auth(token).send();
@@ -1865,6 +1911,10 @@ async fn admins_partners_and_the_staff_check() {
     let post = |path: String, token: &str, body: serde_json::Value| {
         http.post(format!("{}{path}", env.base[1])).bearer_auth(token).json(&body).send()
     };
+    let r =
+        post("/api/admin/players/gwen".into(), &boss, serde_json::json!({"manager": true})).await.unwrap();
+    assert_eq!(r.status(), 400, "no passkey, no role");
+    passkey_for(format!("id = {gid}")).await;
     let r: serde_json::Value =
         post("/api/admin/players/gwen".into(), &boss, serde_json::json!({"manager": true}))
             .await
@@ -2052,6 +2102,50 @@ async fn passkeys_make_accounts_sign_in_and_check_staff() {
         .await
         .unwrap();
     assert!(page.contains("Signed in as <b>Pia</b>") && page.contains("Set a password"), "{page}");
+    // A session without a passkey check (a stolen cookie, say) can't add a
+    // passkey or set a password on an account that has passkeys.
+    let bare = random_token(40);
+    env.pg
+        .execute(
+            &format!(
+                "INSERT INTO {}.sessions (token_hash, player_id, expires_at)
+                 SELECT $1, player_id, now() + interval '1 day' FROM {}.accounts WHERE username = 'Pia'",
+                env.chess, env.chess
+            ),
+            &[&hash_key(&bare)],
+        )
+        .await
+        .unwrap();
+    let r = http
+        .post(format!("{}/account/passkeys/options", env.base[0]))
+        .header("cookie", format!("oc_session={bare}"))
+        .header("x-csrf", hash_key(&format!("{bare}|passkeys")))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    let r = http
+        .post(format!("{}/account/password", env.base[0]))
+        .header("cookie", format!("oc_session={bare}"))
+        .form(&[
+            ("csrf", hash_key(&format!("{bare}|passkeys")).as_str()),
+            ("password", "a stolen session's password"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    // The passkey-signed session can.
+    let r = http
+        .post(format!("{}/account/passkeys/options", env.base[0]))
+        .header("cookie", format!("oc_session={session}"))
+        .header("x-csrf", hash_key(&format!("{session}|passkeys")))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
     // Another authenticator's answer, or a stale challenge, doesn't sign in.
     let o: serde_json::Value =
         post("/auth/passkey/options", serde_json::json!({})).await.unwrap().json().await.unwrap();

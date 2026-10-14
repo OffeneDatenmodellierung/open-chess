@@ -135,7 +135,7 @@ Everything is environment (each variable is also a command-line flag:
 | `ESPORTS_SECRET` | — | Shared with the host site (32+ characters): it signs sign-ins and token requests with it |
 | `CHESS_SITE_NAME` | `open-chess` | What players know this server as: the consent page, PGN event names, `GET /` (the Chess lab shows it) |
 | `CHESS_HOST_NAME` | the site name | What players know the host site as: "Sign in with …" and "linked to your … account" |
-| `CHESS_ADMIN_EMAILS` | — | Comma-separated: accounts signing in with one of these, confirmed (by a host site's sign-in), become admins. Otherwise `open-chess admin grant <username>` |
+| `CHESS_ADMIN_EMAILS` | — | Comma-separated: accounts signing in with one of these, confirmed (by a host site's sign-in) and with a passkey, become admins. Otherwise `open-chess admin grant <username>` |
 | `CHESS_ADMIN_PASSKEY_HOURS` | `12` | How long an admin's or manager's passkey check lasts |
 | `CHESS_BIND` / `CHESS_METRICS_BIND` | `0.0.0.0:8090` / `0.0.0.0:9465` | API; `/metrics`, `/healthz`, `/readyz` |
 | `CHESS_POOL_SIZE` | 8 | |

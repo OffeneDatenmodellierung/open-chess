@@ -240,24 +240,6 @@ impl Auth {
         .map(|r| Partner { id: Some(r.get(0)), name: r.get(1), scopes: r.get(2) }))
     }
 
-    /// The session behind this cookie: (player, fresh passkey check).
-    pub async fn session_checked(&self, h: &HeaderMap) -> Result<Option<(i64, bool)>> {
-        let Some(token) = cookie(h, SESSION_COOKIE) else {
-            return Ok(None);
-        };
-        let c = self.db.conn().await?;
-        Ok(c.query_opt(
-            &self.db.sql(
-                "SELECT s.player_id, coalesce(s.staff_verified_at > now() - make_interval(hours => $2), false)
-                   FROM chess.sessions s JOIN chess.players p ON p.id = s.player_id
-                  WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND p.disabled_at IS NULL",
-            ),
-            &[&hash_key(&token), &self.staff_hours],
-        )
-        .await?
-        .map(|r| (r.get(0), r.get(1))))
-    }
-
     /// Forget every cached token (after changing someone's roles).
     pub fn forget_all(&self) {
         if let Ok(mut c) = self.cache.lock() {

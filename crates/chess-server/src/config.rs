@@ -91,8 +91,9 @@ pub struct Config {
 
     /// People made admins here, by email (comma-separated): an account gets
     /// the admin role when it signs in with one of these, once the email is
-    /// confirmed (a host site's sign-in vouches for it). Accounts made here
-    /// have unconfirmed emails: make them admins with `open-chess admin grant`.
+    /// confirmed (a host site's sign-in vouches for it) and it has a
+    /// passkey. Accounts made here have unconfirmed emails: make them admins
+    /// with `open-chess admin grant`.
     #[arg(long, env = "CHESS_ADMIN_EMAILS", value_delimiter = ',', default_value = "")]
     pub admin_emails: Vec<String>,
 

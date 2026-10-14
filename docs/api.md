@@ -168,18 +168,25 @@ Roles here are this server's own: a host site's roles don't carry over.
 * **Admins** run the server: accounts and their roles, tokens, partners.
   `CHESS_ADMIN_EMAILS` (comma-separated) makes an account an admin when it
   signs in with a listed email that's confirmed (a host site's sign-in
-  vouches for its emails; one typed into `/signup` isn't confirmed), and
-  `open-chess admin grant <username>` (`--manager` for a manager; `revoke`,
-  `list`) does it from the command line. Admins make others admins or
-  managers in the Chess lab's admin page.
+  vouches for its emails, so this trusts that sign-in; one typed into
+  `/signup` isn't confirmed), and `open-chess admin grant <username>`
+  (`--manager` for a manager; `revoke`, `list`) does it from the command
+  line. Admins make others admins or managers in the Chess lab's admin page.
+  A role only goes to an account that has a passkey.
 * **Managers** review fair play and settle board photos.
 
 Their rights need a **passkey check** as well: until then `/api/account`
-says `"staff": "pending"` and staff endpoints answer 403. Signing in with a
-passkey is the check (and a token made through OAuth from that session
-carries it); otherwise `POST /api/account/passkey/options` then `POST
-/api/account/passkey` (the `navigator.credentials.get` answer) checks the
-token in hand, or the Account page checks the session. A check lasts
+says `"staff": "pending"` and staff endpoints answer 403. `POST
+/api/account/passkey/options` then `POST /api/account/passkey` (the
+`navigator.credentials.get` answer) checks the token in hand (the Chess lab
+does this); signing in with a passkey, or confirming on the Account page,
+checks the session. A token made through OAuth never inherits a check: an
+app approved for `board:play` doesn't get an admin's rights.
+
+On an account with passkeys, adding or removing one, or setting or dropping
+the password, needs that check in the session too, so a stolen password or
+session can't add the thief's passkey. Without passkeys, changing the
+password takes the current one. A check lasts
 `CHESS_ADMIN_PASSKEY_HOURS` (12). `/api/account` adds `"roles": ["admin",
 "manager"]`, `"staff": "checked" | "pending"` and `"passkeys": <count>`.
 

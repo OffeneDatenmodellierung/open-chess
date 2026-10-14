@@ -403,19 +403,33 @@ async fn admin(cmd: AdminCmd) -> Result<()> {
             }
             (true, false) => "UPDATE chess.players SET roles = array_remove(roles, 'manager')",
         };
-        let n = c
-            .execute(
-                &db.sql(&format!(
-                    "{sql} WHERE id = (SELECT player_id FROM chess.accounts WHERE lower(username) = lower($1))"
-                )),
+        let keys: Option<i64> = c
+            .query_opt(
+                &db.sql(
+                    "SELECT (SELECT count(*) FROM chess.passkeys k WHERE k.player_id = a.player_id)
+                       FROM chess.accounts a WHERE lower(a.username) = lower($1)",
+                ),
                 &[username],
             )
-            .await?;
-        anyhow::ensure!(n == 1, "no account here is called {username}");
+            .await?
+            .map(|r| r.get(0));
+        let keys = keys.with_context(|| format!("no account here is called {username}"))?;
+        anyhow::ensure!(
+            !on || keys > 0,
+            "{username} needs a passkey first (their rights will need it): they add one on their account page, then grant again"
+        );
+        c.execute(
+            &db.sql(&format!(
+                "{sql} WHERE id = (SELECT player_id FROM chess.accounts WHERE lower(username) = lower($1))"
+            )),
+            &[username],
+        )
+        .await?;
         let what = if *manager { "a manager" } else { "an admin" };
         println!(
-            "{username} {} {what}. Their rights need a passkey check: they add a passkey on their account page.",
-            if on { "is now" } else { "is no longer" }
+            "{username} {} {what}.{}",
+            if on { "is now" } else { "is no longer" },
+            if on { " Their rights need a passkey check each session." } else { "" }
         );
         return Ok(());
     }

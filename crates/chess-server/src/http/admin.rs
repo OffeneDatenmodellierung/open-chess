@@ -137,6 +137,14 @@ pub async fn change(
     if id == me.player && (ch.admin == Some(false) || ch.disabled == Some(true)) {
         return Err(ApiError::bad("you can't take away your own admin rights or disable yourself"));
     }
+    // A role goes to someone who signs in with a passkey: their rights then
+    // need it, so a password or session alone never carries them.
+    if (ch.admin == Some(true) || ch.manager == Some(true)) && r.get::<_, i64>(13) == 0 {
+        return Err(ApiError::bad(format!(
+            "{} needs a passkey first: they add one on their account page",
+            r.get::<_, String>(1)
+        )));
+    }
     if let Some(a) = ch.admin {
         tx.execute(
             &ctx.db.sql(

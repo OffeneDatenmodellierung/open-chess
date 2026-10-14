@@ -181,9 +181,7 @@ pub async fn decide(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) -> ApiRes
     f.insert("response_type".into(), "code".into());
     f.insert("code_challenge_method".into(), "S256".into());
     let req = parse_request(&f).map_err(ApiError::bad)?;
-    // A session signed in (or checked) with a passkey hands its staff check on.
-    let (player, checked) =
-        ctx.auth.session_checked(&h).await?.ok_or_else(|| ApiError::forbidden("sign in first"))?;
+    let player = ctx.auth.session(&h).await?.ok_or_else(|| ApiError::forbidden("sign in first"))?;
     let session = cookie(&h, crate::auth::SESSION_COOKIE).unwrap_or_default();
     if f.get("csrf").map(String::as_str) != Some(csrf(&session, &req).as_str()) {
         return Err(ApiError::forbidden("this consent form has expired: start again"));
@@ -197,11 +195,10 @@ pub async fn decide(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) -> ApiRes
     let c = ctx.db.conn().await?;
     c.execute(
         &ctx.db.sql(
-            "INSERT INTO chess.oauth_codes (code_hash, player_id, client_id, redirect_uri, code_challenge, scopes, expires_at,
-                                            staff_verified_at)
-             VALUES ($1, $2, $3, $4, $5, $6, now() + interval '2 minutes', CASE WHEN $7 THEN now() END)",
+            "INSERT INTO chess.oauth_codes (code_hash, player_id, client_id, redirect_uri, code_challenge, scopes, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, now() + interval '2 minutes')",
         ),
-        &[&hash_key(&code), &player, &req.client_id, &req.redirect_uri, &req.challenge, &scopes, &checked],
+        &[&hash_key(&code), &player, &req.client_id, &req.redirect_uri, &req.challenge, &scopes],
     )
     .await?;
     Ok(redirect_with(&req.redirect_uri, &[("code", &code), ("state", &state)]))
@@ -225,7 +222,7 @@ pub async fn token(State(ctx): State<Ctx>, body: Bytes) -> ApiResult<Response> {
             &ctx.db.sql(
                 "UPDATE chess.oauth_codes SET used_at = now()
                   WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now()
-                 RETURNING player_id, client_id, redirect_uri, code_challenge, scopes, staff_verified_at",
+                 RETURNING player_id, client_id, redirect_uri, code_challenge, scopes",
             ),
             &[&hash_key(get("code"))],
         )
@@ -235,7 +232,6 @@ pub async fn token(State(ctx): State<Ctx>, body: Bytes) -> ApiResult<Response> {
     };
     let (player, client, redirect, challenge, scopes): (i64, String, String, String, Vec<String>) =
         (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4));
-    let checked: Option<chrono::DateTime<Utc>> = row.get(5);
     // A code is spent by any attempt, right or wrong.
     if get("client_id") != client || get("redirect_uri") != redirect {
         tx.commit().await?;
@@ -251,10 +247,10 @@ pub async fn token(State(ctx): State<Ctx>, body: Bytes) -> ApiResult<Response> {
     let expires = Utc::now() + Duration::days(TOKEN_DAYS);
     tx.execute(
         &ctx.db.sql(
-            "INSERT INTO chess.api_tokens (player_id, name, token_hash, prefix, scopes, expires_at, staff_verified_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO chess.api_tokens (player_id, name, token_hash, prefix, scopes, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6)",
         ),
-        &[&player, &name, &hash_key(&token), &prefix, &scopes, &expires, &checked],
+        &[&player, &name, &hash_key(&token), &prefix, &scopes, &expires],
     )
     .await?;
     tx.commit().await?;

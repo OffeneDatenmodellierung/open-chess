@@ -152,7 +152,8 @@ fn cookie_path(ctx: &Ctx) -> String {
 }
 
 /// `CHESS_ADMIN_EMAILS`: this player becomes an admin if their confirmed
-/// email is listed.
+/// email is listed and they have a passkey (an admin's rights need one).
+/// Their email is as good as the host site's sign-in that vouched for it.
 pub async fn grant_listed(ctx: &Ctx, player: i64) -> ApiResult<()> {
     let emails = ctx.cfg.admin_emails();
     if emails.is_empty() {
@@ -163,7 +164,8 @@ pub async fn grant_listed(ctx: &Ctx, player: i64) -> ApiResult<()> {
         .execute(
             &ctx.db.sql(
                 "UPDATE chess.players SET role = 'admin'
-                  WHERE id = $1 AND role <> 'admin' AND email_verified_at IS NOT NULL AND lower(email) = ANY($2)",
+                  WHERE id = $1 AND role <> 'admin' AND email_verified_at IS NOT NULL AND lower(email) = ANY($2)
+                    AND EXISTS (SELECT 1 FROM chess.passkeys WHERE player_id = $1)",
             ),
             &[&player, &emails],
         )
@@ -198,11 +200,29 @@ async fn start_session(ctx: &Ctx, player: i64, checked: bool) -> ApiResult<Heade
     .map_err(|e| ApiError::from(anyhow::anyhow!("{e}")))
 }
 
+/// A string as a JavaScript literal that's safe inside an inline
+/// `<script>`: no `<`, `>` or `&` survive to end the script or start a
+/// comment.
+fn js_string(s: &str) -> String {
+    serde_json::to_string(s)
+        .unwrap_or_else(|_| "\"\"".into())
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+}
+
 /// Where to go after signing in: a path on this server, or the Account page.
 fn back_to(ctx: &Ctx, want: Option<&str>) -> String {
     let base = ctx.cfg.base_path().unwrap_or_default();
     match want {
-        Some(p) if p.starts_with('/') && !p.starts_with("//") && !p.contains('\\') => p.to_owned(),
+        Some(p)
+            if p.starts_with('/')
+                && !p.starts_with("//")
+                && !p.contains('\\')
+                && p.chars().all(|c| c.is_ascii_graphic() && !matches!(c, '<' | '>' | '"' | '\'' | '`')) =>
+        {
+            p.to_owned()
+        }
         _ => format!("{base}/account"),
     }
 }
@@ -255,7 +275,7 @@ fn sign_in_form(ctx: &Ctx, ret: &str, error: Option<&str>) -> String {
          }});</script>",
         h = hidden("return", ret),
         js = PASSKEY_JS,
-        ret_js = serde_json::to_string(ret).unwrap_or_default(),
+        ret_js = js_string(ret),
     );
     if ctx.cfg.signup {
         let _ = write!(
@@ -341,7 +361,7 @@ fn signup_form(ctx: &Ctx, ret: &str, error: Option<&str>, name: &str, email: &st
         e = html_escape(email),
         r = urlencoding::encode(ret),
         js = PASSKEY_JS,
-        ret_js = serde_json::to_string(ret).unwrap_or_default(),
+        ret_js = js_string(ret),
     );
     body
 }
@@ -602,9 +622,17 @@ async fn account_page(ctx: &Ctx, player: i64, session: &str, fresh: Option<&str>
         } else {
             let _ = write!(
                 body,
-                "<p>You're {what} here. <button type=button id=pkStaff>Check with your passkey</button> to use your rights.</p>"
+                "<p>You're {what} here. Your rights need a passkey check: confirm it's you below.</p>"
             );
         }
+    }
+    // Changing passkeys or the password needs the passkey check first.
+    let locked = !keys.is_empty() && !checked;
+    if locked {
+        body.push_str(
+            "<p class=pk hidden><button type=button class=go id=pkStaff>Confirm it's you with your passkey</button> \
+             <span class=muted>to change your passkeys or password, or use an admin's or manager's rights.</span></p>",
+        );
     }
     if let Some(t) = fresh {
         let _ = write!(
@@ -622,7 +650,7 @@ async fn account_page(ctx: &Ctx, player: i64, session: &str, fresh: Option<&str>
         for k in &keys {
             let id: i64 = k.get(0);
             // The last passkey of an account with no password stays.
-            let removable = has_password || keys.len() > 1;
+            let removable = !locked && (has_password || keys.len() > 1);
             let _ = write!(
                 body,
                 "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
@@ -642,22 +670,32 @@ async fn account_page(ctx: &Ctx, player: i64, session: &str, fresh: Option<&str>
         }
         body.push_str("</table>");
     }
-    body.push_str(
-        "<p class=pk hidden><label>Name for it<input id=pkName maxlength=60 placeholder=\"e.g. my phone\"></label>\
-         <button type=button id=pkAdd>Add a passkey</button></p><p class=err id=pkErr></p>",
-    );
-
-    body.push_str("<h2>Password</h2>");
-    let _ = write!(
-        body,
-        "<form method=post action=\"{base}/account/password\">{c}\
-         <label>{label} (10 or more characters)<input name=password type=password autocomplete=new-password required minlength=10></label>\
-         <button>{verb}</button></form>",
-        c = hidden("csrf", &pk_csrf),
-        label = if has_password { "New password" } else { "A password" },
-        verb = if has_password { "Change the password" } else { "Set a password" },
-    );
-    if has_password && !keys.is_empty() {
+    if !locked {
+        body.push_str(
+            "<p class=pk hidden><label>Name for it<input id=pkName maxlength=60 placeholder=\"e.g. my phone\"></label>\
+             <button type=button id=pkAdd>Add a passkey</button></p>",
+        );
+    }
+    body.push_str("<p class=err id=pkErr></p><h2>Password</h2>");
+    if locked {
+        body.push_str("<p class=muted>Confirm it's you with your passkey (above) to change it.</p>");
+    } else {
+        let _ = write!(
+            body,
+            "<form method=post action=\"{base}/account/password\">{c}{current}\
+             <label>{label} (10 or more characters)<input name=password type=password autocomplete=new-password required minlength=10></label>\
+             <button>{verb}</button></form>",
+            c = hidden("csrf", &pk_csrf),
+            current = if has_password && keys.is_empty() {
+                "<label>Your current password<input name=current type=password autocomplete=current-password required></label>"
+            } else {
+                ""
+            },
+            label = if has_password { "New password" } else { "A password" },
+            verb = if has_password { "Change the password" } else { "Set a password" },
+        );
+    }
+    if has_password && !keys.is_empty() && !locked {
         let _ = write!(
             body,
             "<form method=post action=\"{base}/account/password/remove\">{}<button>Sign in with passkeys only</button></form>",
@@ -708,7 +746,8 @@ async fn account_page(ctx: &Ctx, player: i64, session: &str, fresh: Option<&str>
          <script>{js}\
          const csrf = {pk_csrf_js};\
          if (pkWorks()) document.querySelectorAll('.pk').forEach((e) => (e.hidden = false));\
-         document.getElementById('pkAdd').onclick = () => pkRun(async () => {{\
+         const add = document.getElementById('pkAdd');\
+         if (add) add.onclick = () => pkRun(async () => {{\
            await pkCreate('{base}/account/passkeys/options', {{}}, '{base}/account/passkeys', {{ name: document.getElementById('pkName').value }}, csrf);\
            location.reload();\
          }});\
@@ -719,7 +758,7 @@ async fn account_page(ctx: &Ctx, player: i64, session: &str, fresh: Option<&str>
          }});</script>",
         c = hidden("csrf", &token_csrf),
         js = PASSKEY_JS,
-        pk_csrf_js = serde_json::to_string(&pk_csrf).unwrap_or_default(),
+        pk_csrf_js = js_string(&pk_csrf),
     );
     Ok(page("Your chess account", &body))
 }
@@ -963,7 +1002,8 @@ pub async fn signup_passkey(State(ctx): State<Ctx>, Json(form): Json<SignUp>) ->
 
 /// `POST /account/passkeys/options`: a challenge to add a passkey.
 pub async fn account_passkey_options(State(ctx): State<Ctx>, h: HeaderMap) -> ApiResult<Response> {
-    let (player, _) = session_for(&ctx, &h).await?;
+    let (player, session) = session_for(&ctx, &h).await?;
+    may_change(&ctx, player, &session).await?;
     let c = ctx.db.conn().await?;
     let a = model::ensure_account(&ctx.db, &*c, player).await?;
     let exclude = passkeys::ids(&ctx.db, &*c, player).await?;
@@ -982,7 +1022,8 @@ pub async fn account_passkey_add(
     h: HeaderMap,
     Json(att): Json<passkeys::AttestationJson>,
 ) -> ApiResult<Response> {
-    let (player, _) = session_for(&ctx, &h).await?;
+    let (player, session) = session_for(&ctx, &h).await?;
+    may_change(&ctx, player, &session).await?;
     let c = ctx.db.conn().await?;
     let taken_ch = passkeys::take_challenge(&ctx.db, &*c, att.challenge_id, passkeys::REGISTER)
         .await
@@ -1002,7 +1043,49 @@ pub async fn account_passkey_add(
     passkeys::add(&ctx.db, &*c, player, &passkeys::user_handle(player), &name, &key)
         .await
         .map_err(|e| ApiError::bad(format!("{e:#}")))?;
+    drop(c);
+    grant_listed(&ctx, player).await?;
     Ok(Json(json!({"ok": true})).into_response())
+}
+
+/// Changing how an account signs in (its passkeys, its password) needs a
+/// fresh passkey check in this session when it has passkeys, so a stolen
+/// password or session can't add the thief's own.
+async fn may_change(ctx: &Ctx, player: i64, session: &str) -> ApiResult<()> {
+    let c = ctx.db.conn().await?;
+    let r = c
+        .query_one(
+            &ctx.db.sql(
+                "SELECT EXISTS (SELECT 1 FROM chess.passkeys WHERE player_id = $1),
+                        coalesce((SELECT s.staff_verified_at > now() - make_interval(hours => $3)
+                                    FROM chess.sessions s WHERE s.token_hash = $2), false)",
+            ),
+            &[&player, &hash_key(session), &ctx.cfg.staff_passkey_hours],
+        )
+        .await?;
+    let (has_keys, checked): (bool, bool) = (r.get(0), r.get(1));
+    if has_keys && !checked {
+        return Err(ApiError::forbidden("confirm it's you with one of your passkeys first"));
+    }
+    Ok(())
+}
+
+/// Forget passkey checks made in this player's sessions and tokens (a
+/// passkey went: a check made with it mustn't outlive it).
+async fn forget_checks(ctx: &Ctx, player: i64) -> ApiResult<()> {
+    let c = ctx.db.conn().await?;
+    c.execute(
+        &ctx.db.sql("UPDATE chess.sessions SET staff_verified_at = NULL WHERE player_id = $1"),
+        &[&player],
+    )
+    .await?;
+    c.execute(
+        &ctx.db.sql("UPDATE chess.api_tokens SET staff_verified_at = NULL WHERE player_id = $1"),
+        &[&player],
+    )
+    .await?;
+    ctx.auth.forget_all();
+    Ok(())
 }
 
 fn form_csrf_ok(f: &HashMap<String, String>, session: &str) -> ApiResult<()> {
@@ -1029,30 +1112,59 @@ pub async fn account_passkey_remove(
     let f = form(&body);
     form_csrf_ok(&f, &session)?;
     let id: i64 = f.get("id").and_then(|i| i.parse().ok()).ok_or_else(|| ApiError::bad("which passkey?"))?;
+    may_change(&ctx, player, &session).await?;
     let c = ctx.db.conn().await?;
-    c.execute(
-        &ctx.db.sql(
-            "DELETE FROM chess.passkeys k WHERE k.id = $1 AND k.player_id = $2
+    let n = c
+        .execute(
+            &ctx.db.sql(
+                "DELETE FROM chess.passkeys k WHERE k.id = $1 AND k.player_id = $2
                AND ((SELECT password_hash IS NOT NULL FROM chess.players WHERE id = $2)
                     OR (SELECT count(*) FROM chess.passkeys WHERE player_id = $2) > 1)",
-        ),
-        &[&id, &player],
-    )
-    .await?;
+            ),
+            &[&id, &player],
+        )
+        .await?;
+    drop(c);
+    if n > 0 {
+        forget_checks(&ctx, player).await?;
+    }
     Ok(to_account(&ctx))
 }
 
-/// `POST /account/password` (form `password`): set or change it.
+/// `POST /account/password` (form `password`, and `current`: the password
+/// it replaces, unless a passkey confirmed it's you): set or change it.
 pub async fn account_password(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) -> ApiResult<Response> {
     let (player, session) = signed_in(&ctx, &h).await?.ok_or_else(|| ApiError::forbidden("sign in first"))?;
     let f = form(&body);
     form_csrf_ok(&f, &session)?;
+    may_change(&ctx, player, &session).await?;
     let password = f.get("password").cloned().unwrap_or_default();
     if password.chars().count() < 10 {
         return Err(ApiError::bad("The password needs 10 or more characters."));
     }
-    let hash = hash_password(&password)?;
     let c = ctx.db.conn().await?;
+    let r = c
+        .query_one(
+            &ctx.db.sql(
+                "SELECT password_hash, EXISTS (SELECT 1 FROM chess.passkeys WHERE player_id = $1)
+                   FROM chess.players WHERE id = $1",
+            ),
+            &[&player],
+        )
+        .await?;
+    let (old, has_keys): (Option<String>, bool) = (r.get(0), r.get(1));
+    // Without passkeys (so without a passkey check), the old password says
+    // it's you.
+    if let Some(old) = old.filter(|_| !has_keys) {
+        let current = f.get("current").map_or("", String::as_str);
+        let right = PasswordHash::new(&old)
+            .is_ok_and(|h| Argon2::default().verify_password(current.as_bytes(), &h).is_ok());
+        if !right {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            return Err(ApiError::forbidden("your current password doesn't match"));
+        }
+    }
+    let hash = hash_password(&password)?;
     c.execute(&ctx.db.sql("UPDATE chess.players SET password_hash = $2 WHERE id = $1"), &[&player, &hash])
         .await?;
     Ok(to_account(&ctx))
@@ -1066,6 +1178,7 @@ pub async fn account_password_remove(
 ) -> ApiResult<Response> {
     let (player, session) = signed_in(&ctx, &h).await?.ok_or_else(|| ApiError::forbidden("sign in first"))?;
     form_csrf_ok(&form(&body), &session)?;
+    may_change(&ctx, player, &session).await?;
     let c = ctx.db.conn().await?;
     c.execute(
         &ctx.db.sql(
