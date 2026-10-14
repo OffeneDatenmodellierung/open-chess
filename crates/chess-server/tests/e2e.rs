@@ -2334,8 +2334,12 @@ async fn the_ios_app_uploads_syncs_and_closes_accounts() {
     );
     let exported = env.client(0, &ann).export_game(&g1).await.unwrap();
     assert!(exported.rated && exported.players.black.rating_diff == Some(0), "the computer keeps its rating");
-    let mut feed =
-        sse(http.get(format!("{base}/api/feed?only=end&since={before_upload}")).send().await.unwrap());
+    let mut feed = sse(http
+        .get(format!("{base}/api/feed?only=end&since={before_upload}"))
+        .bearer_auth(&ann)
+        .send()
+        .await
+        .unwrap());
     let (kind, sid, v) = next_sse(&mut feed).await;
     assert_eq!(
         (kind.as_str(), v["id"].as_str()),
@@ -2447,7 +2451,10 @@ async fn the_ios_app_uploads_syncs_and_closes_accounts() {
     let r = http.delete(format!("{base}/api/account")).bearer_auth(&ben).send().await.unwrap();
     assert_eq!(r.status(), 204);
     assert_eq!(get("/api/account", &ben).await.unwrap().status(), 401);
-    assert_eq!(http.get(format!("{base}/api/user/Ben")).send().await.unwrap().status(), 404);
+    assert_eq!(
+        http.get(format!("{base}/api/user/Ben")).bearer_auth(&ann).send().await.unwrap().status(),
+        404
+    );
     let g = ann_c.export_game(&corr).await.unwrap();
     assert_eq!((g.status, g.winner), (Status::Resign, Some(Side::White)));
     env.teardown().await;

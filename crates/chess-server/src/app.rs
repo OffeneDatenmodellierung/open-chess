@@ -209,7 +209,9 @@ async fn cors(req: Request, next: Next) -> Response {
 }
 
 pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
-    use http::{account, admin, app_files, challenges, fairplay, feed, games, lab, mobile, oauth, streams, web};
+    use http::{
+        account, admin, app_files, challenges, fairplay, feed, games, lab, mobile, oauth, streams, web,
+    };
     let api = Router::new()
         // OAuth (PKCE) and tokens
         .route("/oauth", get(oauth::authorize).post(oauth::decide))
