@@ -65,7 +65,14 @@ let package = Package(
     products: [.library(name: "OpenChessCore", targets: ["OpenChessCore"])],
     targets: [
         .binaryTarget(name: "open_chess_mobileFFI", path: "open_chess_mobileFFI.xcframework"),
-        .target(name: "OpenChessCore", dependencies: ["open_chess_mobileFFI"], path: "Sources/OpenChessCore"),
+        .target(
+            name: "OpenChessCore",
+            dependencies: ["open_chess_mobileFFI"],
+            path: "Sources/OpenChessCore",
+            // What the Rust static library calls into: random numbers
+            // (getrandom uses Security's SecRandomCopyBytes) and the system.
+            linkerSettings: [.linkedFramework("Security"), .linkedFramework("SystemConfiguration")]
+        ),
     ]
 )
 SWIFT
