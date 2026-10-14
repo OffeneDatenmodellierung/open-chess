@@ -483,6 +483,62 @@ async fn the_computer_plays_at_a_level() {
 }
 
 #[tokio::test]
+async fn rated_games_against_the_computer_move_only_the_player() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let (_, token) = env.player("Gil", &["board:play"]).await;
+    let http = reqwest::Client::new();
+    let g: serde_json::Value = http
+        .post(format!("{}/api/challenge/ai", env.base[0]))
+        .bearer_auth(&token)
+        .form(&[
+            ("level", "4"),
+            ("color", "white"),
+            ("clock.limit", "600"),
+            ("clock.increment", "5"),
+            ("rated", "true"),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = g["id"].as_str().unwrap().to_owned();
+    let me = env.client(0, &token);
+    me.make_move(Api::Board, &id, "e2e4", false).await.unwrap();
+    // Both sides move before a resignation counts (sooner, it's an abort).
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        if me.export_game(&id).await.unwrap().moves.unwrap_or_default().split(' ').count() >= 2 {
+            break;
+        }
+    }
+    me.resign(Api::Board, &id).await.unwrap();
+    let mut game = me.export_game(&id).await.unwrap();
+    for _ in 0..40 {
+        if game.players.white.rating_diff.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        game = me.export_game(&id).await.unwrap();
+    }
+    assert!(game.rated, "the game was rated");
+    assert!(
+        game.players.white.rating_diff.is_some_and(|d| d < 0),
+        "the player lost points: {:?}",
+        game.players.white
+    );
+    let rapid = |u: &serde_json::Value| u["perfs"]["rapid"]["rating"].as_i64();
+    let ai: serde_json::Value =
+        http.get(format!("{}/api/user/ai-level-4", env.base[0])).send().await.unwrap().json().await.unwrap();
+    assert_eq!(rapid(&ai), Some(1400), "the computer keeps its level's rating");
+    let gil: serde_json::Value =
+        http.get(format!("{}/api/user/gil", env.base[0])).send().await.unwrap().json().await.unwrap();
+    assert!(rapid(&gil).is_some_and(|r| r < 1500), "{gil}");
+    env.teardown().await;
+}
+
+#[tokio::test]
 async fn draws_takebacks_and_claims() {
     let Some(env) = setup(|_| {}).await else { return };
     let (_, a) = env.player("Ann", HUMAN).await;

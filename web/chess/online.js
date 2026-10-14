@@ -191,9 +191,10 @@ export class Api {
       variant: "standard",
     });
   }
-  challengeAi(level, { minutes, increment, color }) {
+  challengeAi(level, { minutes, increment, color, rated }) {
     return this.post("/api/challenge/ai", {
       level: String(level),
+      rated: String(!!rated),
       "clock.limit": String(minutes * 60),
       "clock.increment": String(increment),
       color,

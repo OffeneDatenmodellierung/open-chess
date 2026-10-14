@@ -72,5 +72,5 @@ is the app's own id for it, sent with the upload so a retry is harmless.
   strength is too, and Glicko gives little for beating a bot far below
   you, so it can't be farmed. Games with any help stay unrated.
   `offlineRecordJson` carries the level and its rating for the offline
-  endpoint. The server's own `ai-level-N` games are still unrated today.
+  endpoint. The server rates its own `ai-level-N` games the same way.
 - **The app:** in its own repository, against this package.
