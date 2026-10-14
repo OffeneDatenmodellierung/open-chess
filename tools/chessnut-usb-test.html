@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chessnut USB test</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f7f9; --ink: #18212b; --muted: #5b6672; --panel: #fff; --rule: #d5dbe1; --ok: #1f7a4d; --bad: #b4392f; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #121820; --ink: #e6ebf0; --muted: #9aa7b4; --panel: #19222c; --rule: #2c3845; --ok: #7ee2a8; --bad: #ef8277; } }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 52rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
+  p { margin: 0.5rem 0; }
+  .muted { color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+  button { font: inherit; padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid var(--rule); background: var(--panel); color: inherit; cursor: pointer; }
+  button.primary { background: #2d5e8c; border-color: #2d5e8c; color: #fff; font-weight: 600; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #verdict { font-weight: 600; margin: 1rem 0; }
+  #verdict.ok { color: var(--ok); }
+  #verdict.bad { color: var(--bad); }
+  pre { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 0.75rem; overflow: auto; max-height: 50vh; font: 13px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Chessnut board on USB: browser test</h1>
+  <p>This page talks to a Chessnut board over USB directly from Chrome (WebHID), without open-chess or hidapi. It tells us whether the board sends its position over USB at all.</p>
+  <p class="muted">Use Chrome or Edge. Close open-chess and Chessnut's own app first, so nothing else holds the board.</p>
+  <div class="row">
+    <button class="primary" id="connect">1. Connect the board</button>
+    <button id="start" disabled>2. Start (0b, then 21 01 00)</button>
+    <button id="battery" disabled>Battery (29 01 00)</button>
+    <button id="copy" disabled>Copy the log</button>
+  </div>
+  <p id="verdict"></p>
+  <pre id="log">Not connected.</pre>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+const lines = [];
+let device = null, reports = 0, sentAt = 0;
+function log(text) {
+  const t = new Date().toISOString().slice(11, 23);
+  lines.push(`${t}  ${text}`);
+  $("log").textContent = lines.slice(-400).join("\n");
+  $("log").scrollTop = $("log").scrollHeight;
+}
+function verdict(text, ok) {
+  $("verdict").textContent = text;
+  $("verdict").className = ok ? "ok" : "bad";
+}
+async function send(id, data) {
+  try {
+    await device.sendReport(id, new Uint8Array(data));
+    log(`→ report ${id.toString(16).padStart(2, "0")}: ${hex(data)}`);
+  } catch (e) {
+    log(`→ report ${id.toString(16)} failed: ${e.message}`);
+  }
+}
+if (!("hid" in navigator)) {
+  verdict("This browser has no WebHID: open the page in Chrome or Edge.", false);
+  $("connect").disabled = true;
+}
+$("connect").onclick = async () => {
+  try {
+    const picked = await navigator.hid.requestDevice({ filters: [{ vendorId: 0x2d80 }] });
+    // Every collection of the board: listen on all of them.
+    if (!picked.length) return log("No board picked.");
+    for (const d of picked) {
+      if (!d.opened) await d.open();
+      const ins = d.collections.flatMap((c) => c.inputReports.map((r) => r.reportId));
+      const outs = d.collections.flatMap((c) => c.outputReports.map((r) => r.reportId));
+      log(`opened ${d.productName} (product ${d.productId.toString(16)}): usage pages ${d.collections.map((c) => c.usagePage.toString(16)).join(", ")}; input ids ${ins.map((i) => i.toString(16)).join(" ")}; output ids ${outs.map((i) => i.toString(16)).join(" ")}`);
+      d.addEventListener("inputreport", (e) => {
+        reports++;
+        const bytes = new Uint8Array(e.data.buffer);
+        if (reports <= 30 || reports % 50 === 0) log(`← #${reports} report ${e.reportId.toString(16).padStart(2, "0")}: ${hex(bytes)}`);
+        if (reports === 1) verdict(`The board answers over USB (first report after ${Date.now() - sentAt} ms). Copy the log and send it.`, true);
+      });
+    }
+    device = picked.find((d) => d.collections.some((c) => c.outputReports.some((r) => r.reportId === 0x21))) || picked[0];
+    $("start").disabled = $("battery").disabled = $("copy").disabled = false;
+    verdict("Connected. Press Start.", true);
+  } catch (e) {
+    log(`connect failed: ${e.message}`);
+    verdict(`Couldn't open the board: ${e.message}`, false);
+  }
+};
+$("start").onclick = async () => {
+  sentAt = Date.now();
+  await send(0x0b, [0x04, 0x03, 0xe8, 0x00, 0xc8]);
+  await send(0x21, [0x01, 0x00]);
+  setTimeout(() => {
+    if (!reports) verdict("Nothing from the board in 5 seconds: it doesn't send its position over USB to these commands. Copy the log and send it.", false);
+  }, 5000);
+};
+$("battery").onclick = () => send(0x29, [0x01, 0x00]);
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(lines.join("\n")); verdict("Log copied.", true); } catch { verdict("Select the log and copy it.", false); }
+};
+</script>
+</body>
+</html>
