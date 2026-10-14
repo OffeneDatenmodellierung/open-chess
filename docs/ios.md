@@ -19,9 +19,11 @@ METAL=1 scripts/build-xcframework.sh    # the board reader on the GPU
 
 Add `dist/ios/OpenChessCore` to the Xcode project as a local package and
 `import OpenChessCore`. Release tags build it too (the iOS core workflow)
-and attach `OpenChessCore-vX.Y.Z.zip` to the release; it can also be run
-by hand from the Actions tab. Pull requests don't build it, to save macOS
-minutes: CI tests the crate on Linux like the others.
+and attach `OpenChessCore-vX.Y.Z.zip` to the release; so do pull requests
+that change `crates/chess-mobile`, the build script or the workflow, and
+it can be run by hand from the Actions tab once the workflow is on
+`main`. Other pull requests don't, to save macOS minutes: CI tests the
+crate on Linux like the others.
 
 ## What's in it
 

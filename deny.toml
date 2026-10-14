@@ -40,9 +40,15 @@ crate = "open-chess-centaur"
 allow = ["GPL-3.0-or-later"]
 
 # UniFFI, the Swift bindings for the iOS app's core: MPL-2.0, file-level
-# copyleft (we don't change its files), which the App Store allows.
+# copyleft (we don't change its files), which the App Store allows. The
+# bindgen and UDL crates come with chess-mobile's `bindgen` feature, the
+# program that writes the bindings at build time.
 [[licenses.exceptions]]
 crate = "uniffi"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+crate = "uniffi_bindgen"
 allow = ["MPL-2.0"]
 
 [[licenses.exceptions]]
@@ -63,6 +69,10 @@ allow = ["MPL-2.0"]
 
 [[licenses.exceptions]]
 crate = "uniffi_pipeline"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+crate = "uniffi_udl"
 allow = ["MPL-2.0"]
 
 # Windows COM ports for the device runtime (GPL), file-level copyleft.

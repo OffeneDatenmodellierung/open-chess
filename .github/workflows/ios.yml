@@ -4,14 +4,24 @@ name: iOS core
 # xcframework plus the UniFFI Swift bindings (scripts/build-xcframework.sh).
 #
 # Runs on release tags, attaching OpenChessCore-vX.Y.Z.zip to the release
-# the Release workflow makes, and by hand (Actions › iOS core › Run
-# workflow) to try a branch. Not on pull requests: macOS minutes cost ten
-# times Linux ones, and CI already tests the crate on Linux.
+# the Release workflow makes; on pull requests only when they change the
+# iOS core, its build script or this workflow (macOS minutes cost ten
+# times Linux ones, and CI already tests the crate on Linux); and by hand
+# (Actions › iOS core › Run workflow).
 
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - crates/chess-mobile/**
+      - scripts/build-xcframework.sh
+      - .github/workflows/ios.yml
   workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: write
