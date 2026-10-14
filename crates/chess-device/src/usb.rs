@@ -431,7 +431,7 @@ mod hidapi_impl {
                         }
                         Ok(_) => {}
                         Err(e) => {
-                            crate::log::debug(crate::log::Source::Board, format!("USB {p} GET_REPORT: {e}"))
+                            crate::log::debug(crate::log::Source::Board, format!("USB {p} GET_REPORT: {e}"));
                         }
                     }
                 }
