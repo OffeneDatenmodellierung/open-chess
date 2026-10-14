@@ -90,11 +90,15 @@ Only `GET /`, the app, the guides and the sign-in pages are open.
 `POST /api/challenge/ai` with `level` (1–8) plays open-chess's own engine
 at that level, as Lichess's endpoint does: `clock.limit` and
 `clock.increment` (or neither, for no clock), `color` (`white`, `black`,
-`random`) and `fen`. The game starts at once and is never rated; the answer
+`random`), `fen` and `rated` (with a clock, from the starting position,
+as for any rated game). The game starts at once; the answer
 is the game (`id`, `player`: your colour, `aiLevel`, `source: "ai"` …), and
 it's played through the Board API like any other. The computer is a bot
 account, `ai-level-N`, made on first use, with a fixed rating per level
-(800, 1000 … 2200) so it can't be farmed. Every server replica plays the
+(800, 1000 … 2200). A rated game moves your rating against that, never
+the computer's; Glicko gives little for beating a level far below you, so
+it can't be farmed. The iOS app rates offline games against the same
+levels the same way. Every server replica plays the
 computer's moves, taking each game with a Postgres advisory lock.
 
 ```sh

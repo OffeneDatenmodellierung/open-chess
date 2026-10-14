@@ -1,8 +1,11 @@
 //! Playing the computer: `POST /api/challenge/ai` with `level` 1–8, as on
 //! Lichess. The computer is open-chess's own engine (`chess_analysis::bot`)
 //! at that level, played by the server itself: a game against
-//! `ai-level-N`, a bot account made on first use, with a fixed rating so it
-//! can't be farmed (games against it are never rated).
+//! `ai-level-N`, a bot account made on first use, with the level's fixed
+//! rating (`Level::rating`). A game against it can be rated, as an offline
+//! game against the same level in the iOS app is: the player's rating
+//! moves, the computer's never does, and Glicko gives little for beating a
+//! level far below you, so it can't be farmed.
 //!
 //! Every replica runs [`run`], which finds games where it's the computer's
 //! turn and moves. A game is taken with a Postgres advisory lock, so two
@@ -38,7 +41,7 @@ pub fn level_of(username: &str) -> Option<u8> {
 
 /// Each level's fixed rating (roughly what it plays like).
 pub fn rating(level: u8) -> i32 {
-    [800, 1000, 1200, 1400, 1600, 1800, 2000, 2200][usize::from(level.clamp(1, 8) - 1)]
+    Level::new(level).rating()
 }
 
 const PERFS: &[&str] = &["ultraBullet", "bullet", "blitz", "rapid", "classical", "correspondence"];
@@ -89,7 +92,7 @@ pub async fn challenge(ctx: &Ctx, who: &Identity, level: u8, req: &Request) -> A
         return Err(ApiError::bad("level is 1 to 8"));
     }
     let ai = ensure(ctx, level).await?;
-    let req = Request { rated: false, keep_alive: false, accept_by_token: None, ..req.clone() };
+    let req = Request { keep_alive: false, accept_by_token: None, ..req.clone() };
     let (ch, _) = challenges::create_accepted(ctx, who, &ai.username, &req).await?;
     Ok(ch)
 }

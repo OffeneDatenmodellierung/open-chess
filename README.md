@@ -97,6 +97,7 @@ Packages are named `open-chess-*` (`cargo test -p open-chess-core`).
 | `chess-engine` | Async UCI engine driver (Stockfish) |
 | `chess-analysis` | The engine and training analysis, and Polyglot opening books ([docs/engine.md](docs/engine.md)) |
 | `chess-wasm` | `chess-analysis` for the browser (not published) |
+| `chess-mobile` | The iOS app's core as a Swift package through UniFFI ([docs/ios.md](docs/ios.md); not published) |
 | `chess-fairplay` | Post-game fair-play screening |
 | `chess-server` | The server, `open-chess` ([README](crates/chess-server/README.md)) |
 | `chess-train` | Distributed engine training |
@@ -112,6 +113,7 @@ Packages are named `open-chess-*` (`cargo test -p open-chess-core`).
 
 ## Docs
 
+* [docs/ios.md](docs/ios.md): the iOS app's core, building it, and using it from Swift
 * [docs/boards.md](docs/boards.md): electronic boards, the clock and its menu, PicoChess, Lichess, and the device's APIs
 * [docs/api.md](docs/api.md): the server's API, live game streams, OAuth and scopes
 * [docs/lichess.md](docs/lichess.md): using the server with Lichess clients and bots, and Lichess's DGT connector
