@@ -167,8 +167,10 @@ open-chess train board-reader --datasets open-chess-photos --data-root /data/che
 The macOS downloads train on the Mac's GPU. Elsewhere, build with
 `--features cuda` for an NVIDIA GPU.
 
-Every dataset passes a licence check first. ChessReD's licence is
-noncommercial, so a model trained on it needs `--internal` and is stamped
+Every dataset passes a licence check first. ChessReD is used with its
+author's permission for commercial use; the dataset and paper are credited
+in the model card ([dataset-permissions.md](dataset-permissions.md)).
+Noncommercial data needs `--internal`, and a model trained on it is stamped
 as internal-only. A server's labelled photos make a training set:
 * `open-chess photos export --out /data/chess/open-chess-photos` writes
   the dataset `open-chess-photos`, under the photo licence, usable for any
