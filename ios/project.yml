@@ -14,6 +14,8 @@ settings:
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: minimal
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    # The core's xcframework has Apple-silicon simulator code only.
+    "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
     # Empty for CI simulator builds; set your team for device builds,
     # push and App Attest (see README.md).
     DEVELOPMENT_TEAM: ""
