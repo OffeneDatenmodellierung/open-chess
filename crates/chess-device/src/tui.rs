@@ -60,7 +60,7 @@ struct Connected {
 
 impl Connected {
     fn open(connect: &Connect, found: Found) -> Connected {
-        log::line(Source::Device, format!("connecting to {}", found.describe()));
+        // (The connection itself logs "connecting to …".)
         let stop = Arc::new(AtomicBool::new(false));
         let (games, rx) = mpsc::channel();
         let thread = Some(connect(found.clone(), stop.clone(), rx));
