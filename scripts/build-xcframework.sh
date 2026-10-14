@@ -25,6 +25,10 @@ fi
 features=()
 if [[ "${METAL:-0}" == 1 ]]; then features=(--features metal); fi
 
+# The release profile strips symbols, which would take the library's
+# exported functions with them: keep them (Xcode strips the app).
+export CARGO_PROFILE_RELEASE_STRIP=none
+
 # The oldest iOS the app supports.
 export IPHONEOS_DEPLOYMENT_TARGET=${IPHONEOS_DEPLOYMENT_TARGET:-17.0}
 
