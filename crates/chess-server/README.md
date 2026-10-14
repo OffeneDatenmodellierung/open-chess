@@ -199,7 +199,10 @@ with a secret they share (`ESPORTS_SECRET`, and `ESPORTS_LOGIN=true`):
   `POST /api/esports/revoke` (`label`, optionally `sub`) revokes the
   tokens of that name it asked for, e.g. a match's when it ends;
   `GET /api/esports/players` lists its players linked here
-  (`{"players": [{"sub", "username"}]}`).
+  (`{"players": [{"sub", "username"}]}`);
+  `POST /api/esports/link` (`sub`, `username`) links its player to an
+  account made here before (a manager says it's theirs; 409 when it's
+  another site player's; an empty `username` unlinks).
 * Either way the site's player is linked to a player here (made on first
   use, with a chess account named after them; the site's roles carry
   over, so its managers review fair play).
