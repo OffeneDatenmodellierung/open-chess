@@ -258,7 +258,27 @@ mod hidapi_impl {
             api.set_open_exclusive(false);
             // The board's interfaces: the one named, and its siblings (same
             // product and serial) on the vendor page.
-            let named = api.device_list().find(|d| d.path().to_string_lossy() == path);
+            let mut named = api.device_list().find(|d| d.path().to_string_lossy() == path);
+            let mut path = path.to_owned();
+            // Unplugged and plugged in again, the board has a new path on
+            // macOS: take the Chessnut board that's there now.
+            if named.is_none()
+                && let Some(d) = api.device_list().find(|d| {
+                    d.vendor_id() == VID
+                        && d.usage_page() == USAGE_PAGE
+                        && crate::discover::is_chessnut_hid(&format!(
+                            "0003:{:08X}:{:08X}",
+                            d.vendor_id(),
+                            d.product_id()
+                        ))
+                })
+            {
+                let now = d.path().to_string_lossy().into_owned();
+                crate::log::line(crate::log::Source::Board, format!("USB: the board is now at {now}"));
+                path = now;
+                named = Some(d);
+            }
+            let path = path.as_str();
             let mut paths: Vec<String> = vec![path.to_owned()];
             if let Some(n) = named {
                 for d in api.device_list() {
