@@ -1,0 +1,115 @@
+# XcodeGen spec for the open-chess iOS app: `cd ios && xcodegen`.
+# The core is the local Swift package scripts/build-xcframework.sh writes
+# to dist/ios/OpenChessCore (build it first).
+name: OpenChess
+options:
+  bundleIdPrefix: org.offenedatenmodellierung
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    # Empty for CI simulator builds; set your team for device builds,
+    # push and App Attest (see README.md).
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGN_IDENTITY: ""
+
+packages:
+  OpenChessCore:
+    path: ../dist/ios/OpenChessCore
+
+targets:
+  OpenChess:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: OpenChess
+      # Optional: drop board-reader.safetensors here to bundle the reader.
+      - path: Resources
+        optional: true
+        buildPhase: resources
+    dependencies:
+      - package: OpenChessCore
+        product: OpenChessCore
+    entitlements:
+      path: Support/OpenChess.entitlements
+      properties:
+        aps-environment: development
+        com.apple.developer.devicecheck.appattest-environment: development
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: open-chess
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIUserInterfaceStyle: Automatic
+        NSCameraUsageDescription: open-chess uses the camera to read a chess position from a photo of your board. The photo is read on this device.
+        NSPhotoLibraryUsageDescription: open-chess can read a chess position from a photo of a board you choose.
+        NSBluetoothAlwaysUsageDescription: open-chess connects to your Chessnut board over Bluetooth to follow the moves you make on it.
+        UIBackgroundModes:
+          - fetch
+          - bluetooth-central
+          - remote-notification
+        BGTaskSchedulerPermittedIdentifiers:
+          - org.offenedatenmodellierung.openchess.sync
+        CFBundleURLTypes:
+          - CFBundleURLName: org.offenedatenmodellierung.openchess
+            CFBundleURLSchemes:
+              - org.offenedatenmodellierung.openchess
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_NAME: open-chess
+        PRODUCT_MODULE_NAME: OpenChess
+        PRODUCT_BUNDLE_IDENTIFIER: org.offenedatenmodellierung.openchess
+        TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_FILE: Support/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/OpenChess.entitlements
+        ENABLE_PREVIEWS: YES
+        SUPPORTS_MACCATALYST: NO
+
+  # Logic tests without a host app: they compile the pure-Swift files
+  # (no OpenChessCore) directly, so they never link the Rust library twice.
+  OpenChessTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: OpenChessTests
+      - path: OpenChess/Board/Position.swift
+      - path: OpenChess/Game/GameTypes.swift
+      - path: OpenChess/Game/AnalysisModels.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.offenedatenmodellierung.openchess.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  OpenChess:
+    build:
+      targets:
+        OpenChess: all
+        OpenChessTests: [test]
+    test:
+      targets:
+        - OpenChessTests

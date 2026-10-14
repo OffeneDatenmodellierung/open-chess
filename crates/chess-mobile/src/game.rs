@@ -249,6 +249,21 @@ impl GameSession {
         Ok(())
     }
 
+    /// `side` ("white" or "black") ran out of time. Lichess's rule: a draw
+    /// when the other side couldn't have mated.
+    pub fn flag(&self, side: String) -> Result<(), MobileError> {
+        let side =
+            Side::from_name(&side).ok_or_else(|| MobileError::IllegalMove { message: side.clone() })?;
+        let mut i = self.lock();
+        let winner = side.opposite();
+        i.ended = Some(if i.game.cannot_win(winner) {
+            (Status::Outoftime, None)
+        } else {
+            (Status::Outoftime, Some(winner))
+        });
+        Ok(())
+    }
+
     /// Both players agreed a draw.
     pub fn agree_draw(&self) {
         self.lock().ended = Some((Status::Draw, None));
@@ -544,6 +559,15 @@ mod tests {
         assert_eq!(p.state().winner.as_deref(), Some("white"));
         assert!(p.ratable());
         assert!(p.pgn("A".into(), "B".into(), "Casual".into()).contains("1. e4"));
+
+        let f = GameSession::new(None, GameMode::PassAndPlay).unwrap();
+        f.play("e4".into(), 1).unwrap();
+        f.flag("black".into()).unwrap();
+        assert_eq!((f.state().status.as_str(), f.state().winner.as_deref()), ("outoftime", Some("white")));
+        let bare =
+            GameSession::new(Some("8/8/8/4k3/8/8/8/4K3 w - - 0 1".into()), GameMode::PassAndPlay).unwrap();
+        bare.flag("white".into()).unwrap();
+        assert_eq!(bare.state().winner, None, "a lone king can't win on time");
         let online = GameSession::new(None, GameMode::Online { rated: false }).unwrap();
         assert!(online.offline_record_json("x".into(), "a".into(), "b".into(), "rapid".into(), 0).is_err());
     }
