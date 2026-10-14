@@ -186,9 +186,11 @@ it, which the terminal screen shows.
   with the developer key community drivers publish, with its own lights.
 
 **Chessnut boards on USB.** `--usb /dev/hidraw0` (or pick it on the screen)
-plays a Chessnut Air, Air+, Pro or Go on its USB cable: the same messages
+plays a Chessnut Air, Air+ or Pro on its USB cable: the same messages
 as over Bluetooth, as HID reports, found by Chessnut's USB ids (those in
-Chessnut's EasyLink SDK). On macOS and Windows the screen finds them
+Chessnut's EasyLink SDK). The **Chessnut Go** shows up on USB but sends
+nothing back over it, even to a browser talking to it directly, so play
+it over Bluetooth; its cable charges it. On macOS and Windows the screen finds them
 through hidapi. On Linux, give your user access to the board's `hidraw`
 node with a udev rule (or run as root):
 
@@ -450,7 +452,7 @@ keys the device doesn't use are listed in the log.
 | DGT Pi | Raspberry Pi 3 in a DGT3000 clock; the board on USB or Bluetooth | `--board … --clock dgtpi`. Install: a 64-bit Raspberry Pi OS card with the runtime, like PicoChess v4 |
 | DGT Centaur | Raspberry Pi Zero W (or a Zero 2 W swapped in), board controller on serial, e-paper | `--centaur`: board, lights, buttons, sounds, e-paper screen |
 | DGT Pegasus | Bluetooth LE | `--ble … --ble-board pegasus` |
-| Chessnut Air, Air+, Pro, Go | Bluetooth LE and USB; recognises pieces | `--ble … --ble-board chessnut`, or `--usb` |
+| Chessnut Air, Air+, Pro, Go | Bluetooth LE, and USB except the Go; recognises pieces | `--ble … --ble-board chessnut`, or `--usb` |
 | Raspberry Pi 4 / 5 with any USB or Bluetooth board | — | With the arm64 release; a DGT3000 on a Pi 5's I²C needs a different clock backend |
 
 Nothing here touches a device's own firmware: a DGT Pi or Centaur boots from

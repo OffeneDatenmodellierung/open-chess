@@ -195,6 +195,9 @@ mod hidapi_impl {
         /// GET_REPORT failed (the Go doesn't answer it: each try blocks
         /// five seconds), so it isn't tried again.
         no_get_report: bool,
+        /// A Chessnut Go: it sends nothing over USB (tested with Chrome's
+        /// WebHID too), so a quiet one is pointed at Bluetooth.
+        go: bool,
     }
 
     impl std::fmt::Debug for Hid {
@@ -278,6 +281,10 @@ mod hidapi_impl {
                 path = now;
                 named = Some(d);
             }
+            let go = named
+                .as_ref()
+                .and_then(|d| d.product_string())
+                .is_some_and(|n| n.trim().eq_ignore_ascii_case("Chessnut Go"));
             let path = path.as_str();
             let mut paths: Vec<String> = vec![path.to_owned()];
             if let Some(n) = named {
@@ -330,6 +337,7 @@ mod hidapi_impl {
                 polling: false,
                 hinted: false,
                 no_get_report: false,
+                go,
             })
         }
 
@@ -491,7 +499,9 @@ mod hidapi_impl {
                 self.hinted = true;
                 crate::log::line(
                     crate::log::Source::Board,
-                    if cfg!(target_os = "macos") {
+                    if self.go {
+                        "USB: the Chessnut Go sends nothing over USB (its cable charges it): connect it over Bluetooth instead."
+                    } else if cfg!(target_os = "macos") {
                         "USB: the board still says nothing. Check your terminal app is allowed under System Settings › Privacy & Security › Input Monitoring (then quit and reopen it), close Chessnut's own app, which may hold the board, and unplug and replug the board."
                     } else {
                         "USB: the board still says nothing: close Chessnut's own app, which may hold the board, and unplug and replug it."
