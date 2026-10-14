@@ -561,11 +561,25 @@ async fn rated_games_against_the_computer_move_only_the_player() {
         game.players.white
     );
     let rapid = |u: &serde_json::Value| u["perfs"]["rapid"]["rating"].as_i64();
-    let ai: serde_json::Value =
-        http.get(format!("{}/api/user/ai-level-4", env.base[0])).send().await.unwrap().json().await.unwrap();
+    let ai: serde_json::Value = http
+        .get(format!("{}/api/user/ai-level-4", env.base[0]))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(rapid(&ai), Some(1400), "the computer keeps its level's rating");
-    let gil: serde_json::Value =
-        http.get(format!("{}/api/user/gil", env.base[0])).send().await.unwrap().json().await.unwrap();
+    let gil: serde_json::Value = http
+        .get(format!("{}/api/user/gil", env.base[0]))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert!(rapid(&gil).is_some_and(|r| r < 1500), "{gil}");
     env.teardown().await;
 }
