@@ -82,7 +82,15 @@ struct Manifest {
 
 pub fn load_manifest(path: &Path) -> Result<BTreeMap<String, Dataset>> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let m: Manifest = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    parse_manifest(&text).with_context(|| format!("parsing {}", path.display()))
+}
+
+/// The manifest that comes with this crate (`datasets.toml`).
+pub const BUILT_IN: &str = include_str!("../datasets.toml");
+
+/// A manifest's datasets, by name.
+pub fn parse_manifest(text: &str) -> Result<BTreeMap<String, Dataset>> {
+    let m: Manifest = toml::from_str(text)?;
     Ok(m.dataset
         .into_iter()
         .map(|(k, mut d)| {

@@ -2,8 +2,9 @@ name: Release
 
 # Push a tag `vX.Y.Z` matching [workspace.package] version in Cargo.toml:
 #
-#   1. binaries: one program, `open-chess` (the server and the board
-#      runtime, Cargo features of the `open-chess` crate), for Linux
+#   1. binaries: one program, `open-chess` (the server, the board runtime,
+#      the photo reader and its training: Cargo features of the
+#      `open-chess` crate), for Linux
 #      x86-64 and arm64 (64-bit Raspberry Pi OS too: the DGT Pi, a Centaur
 #      with a Zero 2 W), macOS (Apple silicon and Intel, signed and
 #      notarised when the Apple secrets are set) and Windows; the board
@@ -67,8 +68,9 @@ jobs:
           # The board runtime alone: the server's crypto and photo reader
           # are dead weight on a Pi Zero (and slow to build for it).
           - { target: arm-unknown-linux-gnueabihf, os: ubuntu-22.04, cross: true, features: device }
-          - { target: aarch64-apple-darwin, os: macos-latest }
-          - { target: x86_64-apple-darwin, os: macos-latest }
+          # macOS: the photo reader and its training on the Mac's GPU.
+          - { target: aarch64-apple-darwin, os: macos-latest, extra: metal }
+          - { target: x86_64-apple-darwin, os: macos-latest, extra: metal }
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
     runs-on: ${{ matrix.os }}
     env:
@@ -101,8 +103,10 @@ jobs:
             build --no-default-features --features server
             mkdir -p out/server && cp "target/$TARGET/dist/open-chess" out/server/
           fi
-          features="${{ matrix.features }}"
-          if [ -n "$features" ]; then build --no-default-features --features "$features"; else build; fi
+          features="${{ matrix.features }}" extra="${{ matrix.extra }}"
+          if [ -n "$features" ]; then build --no-default-features --features "$features"
+          elif [ -n "$extra" ]; then build --features "$extra"
+          else build; fi
           cp "target/$TARGET/dist/open-chess$ext" out/
 
       # Signed and notarised when the secrets are set (docs/releases.md).

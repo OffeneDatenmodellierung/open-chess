@@ -21,8 +21,10 @@ each checked by `SHA256SUMS`:
 | `chess-app-vX.Y.Z.tar.gz` | The Chess lab app: static files for any web server, or `--app` / `CHESS_APP_DIR` |
 
 Each `open-chess-…` archive has one program, `open-chess`: the server
-(`open-chess serve`, `analyse`, `migrate` …) and the board runtime
-(`open-chess device …`), and a link to it named `open-chess-device`, which
+(`open-chess serve`, `analyse`, `migrate` …), the board runtime
+(`open-chess device …`), the photo reader (`open-chess photo …`,
+[photos.md](photos.md)) and its training (`open-chess train
+board-reader`; on macOS on the GPU), and a link to it named `open-chess-device`, which
 runs the board runtime straight away (as earlier releases' program did).
 With the board runtime in it, the program is GPL-3.0-or-later (the board
 drivers are); the server alone is MIT or Apache-2.0.
@@ -68,8 +70,7 @@ shows how).
 ## The crates
 
 The libraries and both programs are on crates.io as `open-chess-*`
-(everything but the wasm bindings, the board reader's trainer and the
-conformance checker). In your `Cargo.toml`, for example:
+(everything but the wasm bindings and the conformance checker). In your `Cargo.toml`, for example:
 
 ```toml
 [dependencies]

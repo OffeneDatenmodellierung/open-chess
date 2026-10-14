@@ -6,6 +6,7 @@ const GUIDES = [
   { id: "api", title: "The server API", blurb: "Lichess's API as open-chess speaks it, and what it adds." },
   { id: "lichess", title: "Lichess tools", blurb: "Using Lichess apps, bots and libraries with an open-chess server." },
   { id: "boards", title: "Electronic boards", blurb: "DGT, Chessnut, Centaur and DGT Pi boards with open-chess-device." },
+  { id: "photos", title: "Boards from photos", blurb: "Read a position from a photo, carry a game online, play on from the board." },
   { id: "engine", title: "The engine", blurb: "Search, odds, explanations and training the engine." },
   { id: "releases", title: "Releases", blurb: "What each release changed." },
 ];

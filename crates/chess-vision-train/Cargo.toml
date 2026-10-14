@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-publish = false
+readme = "README.md"
 
 [[bin]]
 name = "chess-vision-train"

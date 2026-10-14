@@ -4,6 +4,7 @@
 
 import init, { Session, checkFen, completeFen, glossary, motifs, openingBook } from "./pkg/open_chess_wasm.js";
 import { Board, GLYPH } from "./board.js";
+import { PositionEditor } from "./position-editor.js";
 import { Api, DEVICE_TOKEN, SERVERS, beginSignIn, finishSignIn, lichessTablebase, loadSiteName } from "./online.js";
 
 const $ = (id) => document.getElementById(id);
@@ -798,52 +799,30 @@ async function maybeBotMove() {
 
 // ---------- board editor and photos
 
-const PALETTE = ["K", "Q", "R", "B", "N", "P", "k", "q", "r", "b", "n", "p", ""];
-
-function gridFromPlacement(placement) {
-  const grid = {};
-  placement.split("/").forEach((row, i) => {
-    let f = 0;
-    for (const c of row) {
-      if (/\d/.test(c)) f += Number(c);
-      else grid[FILES[f++] + (8 - i)] = c;
-    }
-  });
-  return grid;
-}
-
-function placementFromGrid(grid) {
-  const rows = [];
-  for (let r = 8; r >= 1; r--) {
-    let row = "";
-    let empty = 0;
-    for (const f of FILES) {
-      const c = grid[f + r];
-      if (!c) empty++;
-      else {
-        if (empty) row += empty;
-        empty = 0;
-        row += c;
-      }
-    }
-    if (empty) row += empty;
-    rows.push(row);
-  }
-  return rows.join("/");
-}
-
+/// The board editor: a position to correct (after a photo) or set up.
+/// Pieces drag to move (off the board to remove), drag in from the
+/// palette, or change by clicking their square (position-editor.js).
 function startEditor(placement, white = true, unsure = []) {
-  app.editing = { grid: gridFromPlacement(placement), white, unsure: new Set(unsure), pick: "P" };
   board.setArrows([]);
-  board.onEditTap = (sq) => {
-    const e = app.editing;
-    if (e.grid[sq] === e.pick || e.pick === "") delete e.grid[sq];
-    else e.grid[sq] = e.pick;
-    e.unsure.delete(sq);
-    renderEditor();
-  };
+  const editor = new PositionEditor($("editBoard"), {
+    placement,
+    unsure,
+    white: board.white,
+    hint: false, // the status line says how
+    onChange: () => ($("editError").textContent = ""),
+  });
+  app.editing = { editor, white };
+  $("board").hidden = true;
+  $("editBoard").hidden = false;
   renderControls();
   renderEditor();
+}
+
+function closeEditor() {
+  app.editing = null;
+  $("editBoard").hidden = true;
+  $("editBoard").innerHTML = "";
+  $("board").hidden = false;
 }
 
 function renderEditor() {
@@ -854,30 +833,22 @@ function renderEditor() {
   $("opening").textContent = "";
   $("lines").innerHTML = `<p class="hint">Finish setting up the position to see each side's chances and the best moves.</p>`;
   board.setArrows([]);
-  board.marks = e.unsure;
-  board.set({ fen: placementFromGrid(e.grid) + " w - - 0 1", legal: [], last: null, check: null, enabled: false });
-  $("palette").innerHTML = PALETTE.map((c) => {
-    const label = c ? `<span class="piece ${c === c.toUpperCase() ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>` : "Clear";
-    const name = c ? `${c === c.toUpperCase() ? "White" : "Black"} ${{ k: "king", q: "queen", r: "rook", b: "bishop", n: "knight", p: "pawn" }[c.toLowerCase()]}` : "Empty square";
-    return `<button type="button" data-pick="${c}" aria-pressed="${e.pick === c}" aria-label="${name}">${label}</button>`;
-  }).join("");
   $("editWhite").setAttribute("aria-pressed", String(e.white));
   $("editBlack").setAttribute("aria-pressed", String(!e.white));
-  const unsure = e.unsure.size ? `Check the highlighted squares: the photo wasn't clear there. ` : "";
-  showStatus(`${unsure}Tap a piece below, then tap squares to place it. Tap a piece again to remove it.`);
+  const unsure = e.editor.unsure.size ? "Check the ringed squares: the photo wasn't clear there. " : "";
+  showStatus(`${unsure}Drag a piece to move it, or off the board to remove it. Click a square to change its piece.`);
   $("editError").textContent = "";
 }
 
 function finishEditor() {
   const e = app.editing;
-  const fen = completeFen(placementFromGrid(e.grid), e.white);
+  const fen = completeFen(e.editor.placement, e.white);
   const problem = fen ? checkFen(fen) : "the board couldn't be read";
   if (problem) {
     $("editError").textContent = `This isn't a legal position yet: ${explainFenProblem(problem)}`;
     return;
   }
-  board.onEditTap = null;
-  app.editing = null;
+  closeEditor();
   confirmPhoto(fen);
   setMode("analyse", { keepGame: true });
   newGame(fen);
@@ -893,8 +864,7 @@ function explainFenProblem(p) {
 }
 
 function cancelEditor() {
-  board.onEditTap = null;
-  app.editing = null;
+  closeEditor();
   app.photo = null;
   refresh();
 }
@@ -1466,16 +1436,8 @@ function wire() {
     e.target.value = "";
     if (f) fromPhoto(f, e.target.dataset.how);
   });
-  $("palette").addEventListener("click", (e) => {
-    const b = e.target.closest("button");
-    if (!b || !app.editing) return;
-    app.editing.pick = b.dataset.pick;
-    renderEditor();
-  });
   $("editWhite").addEventListener("click", () => ((app.editing.white = true), renderEditor()));
   $("editBlack").addEventListener("click", () => ((app.editing.white = false), renderEditor()));
-  $("editClear").addEventListener("click", () => ((app.editing.grid = {}), app.editing.unsure.clear(), renderEditor()));
-  $("editStart").addEventListener("click", () => ((app.editing.grid = gridFromPlacement(START_PLACEMENT)), app.editing.unsure.clear(), (app.editing.white = true), renderEditor()));
   $("editCancel").addEventListener("click", cancelEditor);
   $("editDone").addEventListener("click", finishEditor);
 

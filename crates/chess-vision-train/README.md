@@ -1,7 +1,9 @@
 # chess-vision-train
 
 Trains the chess board reader (`crates/chess-vision`) with candle, on the CPU,
-an NVIDIA GPU (`--features cuda`) or a Mac's GPU (`--features metal`).
+an NVIDIA GPU (`--features cuda`) or a Mac's GPU (`--features metal`). The
+`open-chess` program runs it as `open-chess train board-reader` (the same
+options); this crate's `chess-vision-train` is the trainer on its own.
 
 ```sh
 cargo run --release -p open-chess-vision-train --features metal -- \
@@ -16,7 +18,7 @@ you can ship.
 
 The result is `runs/small-392/esl-board-reader-small-392.safetensors` (f16, with
 its config and model card inside), for `CHESS_VISION_LOCAL_MODEL`,
-`esports-lab chess read --model` or the offline app's
+`open-chess photo … --weights` ([docs/photos.md](../../docs/photos.md)) or the offline app's
 `web/chess/nets/board-reader.safetensors`. `report.json` has every epoch's
 validation scores and the test scores.
 

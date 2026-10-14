@@ -43,6 +43,8 @@ jobs:
       # The program's builds with one part each.
       - run: cargo clippy -p open-chess --all-targets --no-default-features --features server --locked
       - run: cargo clippy -p open-chess --all-targets --no-default-features --features device --locked
+      - run: cargo clippy -p open-chess --all-targets --no-default-features --features vision --locked
+      - run: cargo clippy -p open-chess --all-targets --no-default-features --features train --locked
       # Online play brings TLS, whose crypto is partly C: cross compilers.
       - name: C cross compilers for the Pi targets
         run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
@@ -86,13 +88,14 @@ jobs:
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then grep -E "(error|warning)" clippy.txt | head -30 | sed 's/^/::error::/'; fi
           exit "$status"
-      # The board reader's training on Apple GPUs (the Metal-only code).
-      - name: cargo clippy, Metal training
+      # The board reader and its training on Apple GPUs (the Metal-only
+      # code), as the macOS downloads build.
+      - name: cargo clippy, Metal
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set +e
-          cargo clippy -p open-chess-vision-train --features metal --all-targets --locked --message-format=short 2>&1 | tee clippy-metal.txt
+          cargo clippy -p open-chess -p open-chess-vision-train --features metal --all-targets --locked --message-format=short 2>&1 | tee clippy-metal.txt
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then grep -E "(error|warning)" clippy-metal.txt | head -30 | sed 's/^/::error::/'; fi
           exit "$status"
