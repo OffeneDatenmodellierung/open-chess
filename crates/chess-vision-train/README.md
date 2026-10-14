@@ -24,7 +24,7 @@ validation scores and the test scores.
 
 ## Data
 
-Two sources, both listed in `datasets.toml`, which the licence gate checks
+The datasets are listed in `datasets.toml`, which the licence gate checks
 before anything is read (`src/licences.rs`: unverified, no-derivatives and
 ChessQueries material are refused; noncommercial data only with `--internal`):
 
@@ -38,6 +38,64 @@ ChessQueries material are refused; noncommercial data only with `--internal`):
 White's side>", "group": "<same game or board>", "split": "train|val|test"}`
 (`split` optional: a stable 80/10/10 split by group). A group never crosses
 splits; the trainer checks.
+
+A third format, `photos`, is a folder of **unlabelled** board photos (jpg, png
+or webp, at any depth). They are training data only, and learn from a teacher
+(`--teacher`, below), so they need one. Like any dataset they need a
+`datasets.toml` entry with a verified licence:
+
+```toml
+[dataset.loose-photos]
+licence = "LicenseRef-esl-internal"
+licence_verified = true
+verified_by = "…"
+verified_on = "…"
+format = "photos"
+path = "loose-photos"
+```
+
+## Learning from a bigger model (distillation)
+
+A big reader (`--encoder base` at 518, say) reads better than the small one
+the app runs, but is too big for a phone. `--teacher` lets the small one learn
+from it: as well as the labels, the student learns to match the teacher's
+reading of every square, its second guesses included ("a bishop, perhaps a
+pawn"), which usually beats the labels alone.
+
+```sh
+# 1. The teacher: big, slow, for training only.
+open-chess train board-reader --datasets esl-review --data-root /data/chess \
+    --dinov2 dinov2_vitb14_pretrain.pth --encoder base --image-size 518 \
+    --micro-batch 8 --out runs/base-518
+
+# 2. The phone's model, taught by it, with unlabelled photos too.
+open-chess train board-reader --datasets esl-review loose-photos --data-root /data/chess \
+    --dinov2 dinov2_vits14_pretrain.pth --encoder small --image-size 392 \
+    --teacher runs/base-518/esl-board-reader-base-518.safetensors \
+    --out runs/small-392-taught
+```
+
+- The teacher reads each training photo **once**, before training, as it is.
+  Augmentation never changes which piece stands where, so that reading is
+  the target for every augmented version of the photo, every epoch: one pass
+  of the big network, not one per step. Its readings are cached under
+  `--out/teacher-cache/` (keyed by the teacher file's hash), so a second run
+  with the same teacher starts training at once.
+- A labelled photo's loss is `(1 − w)` × cross-entropy with its labels plus
+  `w · T²` × the KL divergence from the teacher's reading to the student's,
+  both softened by temperature `T` (`--distill-weight` w, default 0.5;
+  `--distill-temperature` T, default 2). An unlabelled photo has only the
+  teacher's part.
+- Unlabelled photos are kept only if the teacher reads a plausible position
+  (one king each, no pawns on the end ranks…) with a confidence of at least
+  `--teacher-min-confidence` (default 0.5: every square's top probability,
+  multiplied). The run says how many it kept.
+- **Licences carry over.** A teacher trained on noncommercial data (ChessReD)
+  is internal-only, and so is anything it teaches: the trainer refuses
+  without `--internal` and stamps the student internal-only. The teacher's
+  datasets are credited in the student's model card, and its `base` says
+  which model taught it. For a model the app can ship, train the teacher on
+  shippable data only.
 
 ## Internal-only models
 
@@ -73,6 +131,12 @@ licence first.
 with augmentation off, a few photos should be learnt exactly, which is a quick
 check that a change hasn't broken training.
 
+On ChessReD with ViT-S at 392 on Metal, the default decoder rate learnt
+slowly: `--lr-decoder 5e-4` took the full run from about 15 wrong squares a
+board (no better than guessing) to about 4.7 on the test split (8.3% of
+boards exact). A `--limit 30 --no-augment --unfreeze-epoch 1000` run (a few
+minutes) is a quick way to compare rates: the loss should reach about zero.
+
 ## Options
 
 | Option | Default | |
@@ -99,6 +163,10 @@ check that a change hasn't broken training.
 | `--name` / `--version` | `esl-board-reader` / today | The model card's |
 | `--seed N` | `0` | |
 | `--no-augment` | | Train on the photos as they are |
+| `--teacher FILE` | | A trained board reader to learn from as well (distillation); needed for `photos` datasets |
+| `--distill-weight W` | `0.5` | The teacher's share of a labelled photo's loss |
+| `--distill-temperature T` | `2` | How much the readings are softened before they are compared |
+| `--teacher-min-confidence C` | `0.5` | Unlabelled photos the teacher reads less surely are left out |
 
 ## Speed and memory
 

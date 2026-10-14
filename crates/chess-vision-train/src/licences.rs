@@ -64,7 +64,7 @@ pub struct Dataset {
     pub verified_on: String,
     #[serde(default)]
     pub attribution: String,
-    /// `chessred` or `jsonl`.
+    /// `chessred`, `jsonl` or `photos` (unlabelled, for a teacher to read).
     #[serde(default = "jsonl")]
     pub format: String,
     /// Under the data root.

@@ -37,6 +37,48 @@ pub struct Settings {
     pub seed: u64,
     pub augment: bool,
     pub cache_dir: PathBuf,
+    /// Learning from a teacher's readings too (every training sample then
+    /// carries one, `Sample::soft`).
+    pub distill: Option<Distill>,
+}
+
+/// How much the teacher counts, and how much of its uncertainty is passed
+/// on.
+#[derive(Debug, Clone, Copy)]
+pub struct Distill {
+    /// The teacher's share of a labelled photo's loss (the labels get the
+    /// rest); an unlabelled photo learns from the teacher alone.
+    pub weight: f64,
+    /// Softens both readings before they are compared, so the teacher's
+    /// second guesses ("a bishop, perhaps a pawn") count too.
+    pub temperature: f64,
+}
+
+/// The loss when distilling, over rows of squares: cross-entropy with the
+/// labels (where a row has them, `labelled` 1, else 0) weighted `1 − w`,
+/// plus `w · T²` times the KL divergence from the teacher's softened
+/// reading to the student's. The T² keeps the teacher's gradients the same
+/// size whatever the temperature (Hinton et al., 2015).
+///
+/// `logits` `(rows, 13)` f32, `labels` `(rows)` u32, `teacher` `(rows, 13)`
+/// log probabilities, `labelled` `(rows)` f32.
+pub fn distill_loss(
+    logits: &Tensor,
+    labels: &Tensor,
+    teacher: &Tensor,
+    labelled: &Tensor,
+    d: Distill,
+) -> candle_core::Result<Tensor> {
+    use candle_nn::ops::log_softmax;
+    let rows = logits.dim(0)? as f64;
+    let log_p = log_softmax(logits, D::Minus1)?;
+    let nll = log_p.gather(&labels.unsqueeze(1)?, 1)?.squeeze(1)?.neg()?;
+    let ce = ((nll * labelled)?.sum_all()? * ((1.0 - d.weight) / rows))?;
+    let t = d.temperature;
+    let log_s = log_softmax(&(logits / t)?, D::Minus1)?;
+    let log_q = log_softmax(&(teacher / t)?, D::Minus1)?;
+    let kl = (log_q.exp()? * (log_q - log_s)?)?.sum_all()?;
+    ce + (kl * (d.weight * t * t / rows))?
 }
 
 /// Learning-rate multiplier: 0 before `start`, linear warm-up over
@@ -57,7 +99,7 @@ pub fn schedule(step: usize, start: usize, warmup: usize, total: usize) -> f64 {
 /// A photo, decoded upright and scaled down to twice the model's size (what
 /// augmentation and the reader's own scaling need), kept as a JPEG in the
 /// cache so later epochs don't decode 12-megapixel originals again.
-fn load_photo(path: &Path, size: u32, cache: &Path) -> Result<RgbImage> {
+pub(crate) fn load_photo(path: &Path, size: u32, cache: &Path) -> Result<RgbImage> {
     use sha2::{Digest, Sha256};
     let key = Sha256::digest(format!("{}:{size}", path.display()).as_bytes());
     let cached = cache.join(format!("{}.jpg", hex(&key[..12])));
@@ -94,6 +136,9 @@ struct Prepared {
     x: Vec<f32>,
     y: Vec<u32>,
     n: usize,
+    /// When distilling: the teacher's log probabilities `(n·64·13)` and
+    /// whether each square has a label `(n·64)`.
+    soft: Option<(Vec<f32>, Vec<f32>)>,
 }
 
 /// Decode, augment and scale a batch's photos (on every core).
@@ -128,15 +173,37 @@ fn prepare(
         })
         .collect::<Result<_>>()?;
     let y: Vec<u32> = samples.iter().flat_map(|s| s.labels.iter().map(|&l| u32::from(l))).collect();
-    Ok(Prepared { n: inputs.len(), x: inputs.concat(), y })
+    let soft = if train.is_some() && samples.iter().all(|s| s.soft.is_some()) {
+        let t = samples.iter().flat_map(|s| s.soft.as_deref().unwrap_or_default().iter().copied()).collect();
+        let labelled = samples
+            .iter()
+            .flat_map(|s| std::iter::repeat_n(if s.labelled { 1.0 } else { 0.0 }, 64))
+            .collect();
+        Some((t, labelled))
+    } else {
+        None
+    };
+    Ok(Prepared { n: inputs.len(), x: inputs.concat(), y, soft })
 }
 
-/// A prepared batch on the device.
-fn upload(p: Prepared, cfg: &ModelConfig, device: &Device) -> Result<(Tensor, Tensor)> {
+/// When distilling, the teacher's reading `(rows, 13)` and which squares
+/// have labels `(rows)`, on the device.
+type Soft = Option<(Tensor, Tensor)>;
+
+/// A prepared batch on the device: input, labels and [`Soft`].
+fn upload(p: Prepared, cfg: &ModelConfig, device: &Device) -> Result<(Tensor, Tensor, Soft)> {
     let s = cfg.image_size;
+    let rows = p.n * 64;
     let x = Tensor::from_vec(p.x, (p.n, 3, s, s), &Device::Cpu)?.to_device(device)?;
-    let y = Tensor::from_vec(p.y, p.n * 64, &Device::Cpu)?.to_device(device)?;
-    Ok((x, y))
+    let y = Tensor::from_vec(p.y, rows, &Device::Cpu)?.to_device(device)?;
+    let soft = match p.soft {
+        Some((t, l)) => Some((
+            Tensor::from_vec(t, (rows, 13), &Device::Cpu)?.to_device(device)?,
+            Tensor::from_vec(l, rows, &Device::Cpu)?.to_device(device)?,
+        )),
+        None => None,
+    };
+    Ok((x, y, soft))
 }
 
 /// A batch as network input `(n, 3, s, s)` and labels `(n·64)`.
@@ -147,7 +214,8 @@ fn batch(
     cache: &Path,
     device: &Device,
 ) -> Result<(Tensor, Tensor)> {
-    upload(prepare(samples, cfg, train, cache)?, cfg, device)
+    let (x, y, _) = upload(prepare(samples, cfg, train, cache)?, cfg, device)?;
+    Ok((x, y))
 }
 
 fn hash_str(s: &str) -> u64 {
@@ -360,11 +428,18 @@ pub fn run(
                 for p in prepared {
                     let t = Instant::now();
                     let n = p.n;
-                    let (x, y) = upload(p, cfg, device)?;
+                    let (x, y, soft) = upload(p, cfg, device)?;
                     let tokens = net.encode(&x)?;
                     let tokens = if frozen { tokens.detach() } else { tokens };
                     let logits = net.decode(&tokens)?.reshape(((), 13))?;
-                    let loss = candle_nn::loss::cross_entropy(&logits.to_dtype(DType::F32)?, &y)?;
+                    let logits32 = logits.to_dtype(DType::F32)?;
+                    let loss = match (&soft, s.distill) {
+                        (Some((teacher, labelled)), Some(d)) => {
+                            distill_loss(&logits32, &y, teacher, labelled, d)?
+                        }
+                        _ => candle_nn::loss::cross_entropy(&logits32, &y)?,
+                    };
+                    drop((logits32, soft));
                     // Each pass's share of the batch's mean loss.
                     let loss = (loss * (n as f64 / in_batch as f64))?;
                     settle(device, &mut time.peak_bytes)?;
@@ -570,6 +645,51 @@ mod tests {
             .to_scalar::<f32>()
             .unwrap();
         assert!(diff < 1e-4, "{diff}");
+    }
+
+    fn t2(v: &[f32], rows: usize) -> Tensor {
+        Tensor::from_vec(v.to_vec(), (rows, v.len() / rows), &Device::Cpu).unwrap()
+    }
+
+    fn scalar(t: &Tensor) -> f32 {
+        t.to_scalar::<f32>().unwrap()
+    }
+
+    #[test]
+    fn the_distillation_loss() {
+        let logits = t2(&[2.0, 0.5, -1.0, 0.0, 1.0, 3.0], 2);
+        let y = Tensor::from_vec(vec![0u32, 2], 2, &Device::Cpu).unwrap();
+        let all = Tensor::from_vec(vec![1.0f32, 1.0], 2, &Device::Cpu).unwrap();
+        let ce = scalar(&candle_nn::loss::cross_entropy(&logits, &y).unwrap());
+        let teacher =
+            candle_nn::ops::log_softmax(&t2(&[-1.0, 2.0, 0.0, 1.0, 1.0, 1.0], 2), D::Minus1).unwrap();
+        let loss = |w: f64, t: f64, labelled: &Tensor| {
+            scalar(
+                &distill_loss(&logits, &y, &teacher, labelled, Distill { weight: w, temperature: t })
+                    .unwrap(),
+            )
+        };
+        // Weight 0: the labels alone, exactly cross-entropy.
+        assert!((loss(0.0, 2.0, &all) - ce).abs() < 1e-5);
+        // A teacher reading what the student reads adds nothing.
+        let same = candle_nn::ops::log_softmax(&logits, D::Minus1).unwrap();
+        let l = scalar(
+            &distill_loss(&logits, &y, &same, &all, Distill { weight: 0.5, temperature: 3.0 }).unwrap(),
+        );
+        assert!((l - 0.5 * ce).abs() < 1e-5);
+        // A disagreeing teacher adds a positive amount, and an unlabelled
+        // row learns from the teacher alone.
+        assert!(loss(0.5, 2.0, &all) > 0.5 * ce);
+        let none = Tensor::from_vec(vec![0.0f32, 0.0], 2, &Device::Cpu).unwrap();
+        let kd_only = loss(1.0, 2.0, &none);
+        assert!(kd_only > 0.0 && (loss(1.0, 2.0, &all) - kd_only).abs() < 1e-6);
+        // And it trains: gradients reach the logits.
+        let v = candle_core::Var::from_tensor(&logits).unwrap();
+        let g = distill_loss(v.as_tensor(), &y, &teacher, &none, Distill { weight: 0.5, temperature: 2.0 })
+            .unwrap()
+            .backward()
+            .unwrap();
+        assert!(scalar(&g.get(v.as_tensor()).unwrap().abs().unwrap().sum_all().unwrap()) > 0.0);
     }
 
     #[test]
