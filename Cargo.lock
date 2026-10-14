@@ -3163,9 +3163,20 @@ name = "open-chess"
 version = "0.1.3"
 dependencies = [
  "anyhow",
+ "base64 0.23.1",
  "clap",
+ "cozy-chess",
+ "open-chess-analysis",
+ "open-chess-client",
+ "open-chess-core",
  "open-chess-device",
+ "open-chess-proto",
  "open-chess-server",
+ "open-chess-vision",
+ "open-chess-vision-train",
+ "reqwest",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

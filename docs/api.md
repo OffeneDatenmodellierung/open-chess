@@ -35,7 +35,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.incre
 | Games | `GET /game/export/{id}` and `/api/games/export/{id}` (PGN, or JSON with `Accept: application/json`; `pgnInJson`, `clocks`, `moves`) |
 | Fair play (ours) | `GET /api/fairplay/queue` (`limit`, default 50, up to 500; `all=true` for reviewed games too), `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` (scope `chess:fairplay`) |
 | Training app (ours) | see [below](#training-app-endpoints) |
-| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them), `GET /docs` and `/docs/{guide}` (these guides, read in the app: `/app/#docs/{guide}`, or on GitHub when the app isn't installed), `GET /favicon.svg` (`/favicon.ico` too: the logo) |
+| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,photos,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them), `GET /docs` and `/docs/{guide}` (these guides, read in the app: `/app/#docs/{guide}`, or on GitHub when the app isn't installed), `GET /favicon.svg` (`/favicon.ico` too: the logo) |
 | Operations (the metrics port, `CHESS_METRICS_BIND`) | `GET /metrics` (Prometheus), `/healthz` (the process is up), `/readyz` (it can reach Postgres) |
 
 **`GET /`** answers what the server is, for the app and for tools:

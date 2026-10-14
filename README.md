@@ -47,9 +47,12 @@ Or from source: `cargo install --git https://github.com/OffeneDatenmodellierung/
 part: [crates/open-chess](crates/open-chess/README.md)).
 
 `open-chess serve` runs the server, `open-chess device` the board runtime
-(also installed as `open-chess-device`, a link to the same program), and
-`open-chess` alone serves when `DATABASE_URL` is set, otherwise opens the
-board screen.
+(also installed as `open-chess-device`, a link to the same program),
+`open-chess photo read | start | move` reads a board from a photo, starts
+an online game from it or plays the move a new photo shows
+([docs/photos.md](docs/photos.md)), and `open-chess train board-reader`
+trains the reader. `open-chess` alone serves when `DATABASE_URL` is set,
+otherwise opens the board screen.
 
 ## Quick start
 
@@ -98,7 +101,7 @@ Packages are named `open-chess-*` (`cargo test -p open-chess-core`).
 | `chess-server` | The server, `open-chess` ([README](crates/chess-server/README.md)) |
 | `chess-train` | Distributed engine training |
 | `chess-vision` | The board reader ([README](crates/chess-vision/README.md)) |
-| `chess-vision-train` | Training the board reader on licence-checked datasets ([README](crates/chess-vision-train/README.md); not published) |
+| `chess-vision-train` | Training the board reader on licence-checked datasets ([README](crates/chess-vision-train/README.md)): `open-chess train board-reader` |
 | `chess-conformance` | Checks a server against Lichess's API schemas (not published) |
 | `chess-dgt` | The DGT e-board protocol (USB, serial and Bluetooth boards, the Smart Board, the Revelation II, a DGT3000 on the board's cable, the Pegasus), and turning board readings into moves; serial I/O behind the `serial` feature |
 | `chess-ble` | A small Bluetooth LE GATT client over the Linux kernel's sockets (no D-Bus, no system libraries) |

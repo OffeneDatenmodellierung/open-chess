@@ -3,7 +3,7 @@ name = "open-chess"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "open-chess in one program: the Lichess-compatible chess server (feature `server`) and the electronic-board runtime (feature `device`)"
+description = "open-chess in one program: the Lichess-compatible chess server (feature `server`), the electronic-board runtime (`device`), reading a board from a photo (`vision`) and training the board reader (`train`)"
 # This crate's own code; a build with the `device` feature links the GPL
 # board drivers, so that program is distributed under GPL-3.0-or-later.
 license = "MIT OR Apache-2.0"
@@ -17,17 +17,40 @@ name = "open-chess"
 path = "src/main.rs"
 
 [features]
-default = ["server", "device"]
+default = ["server", "device", "vision", "train"]
 # The server: the Lichess-compatible API, the fair-play worker, migrations,
 # bots and photos (Postgres, TLS, the photo reader).
 server = ["dep:chess-server"]
 # The board runtime (DGT, Centaur, Chessnut, Pegasus boards; Bluetooth and
 # USB HID on macOS and Windows).
 device = ["dep:chess-device"]
+# Reading a board from a photo: show it, start an online game from it, or
+# play the move a new photo shows (`open-chess photo …`).
+vision = [
+    "dep:chess-vision", "dep:chess-analysis", "dep:chess-core", "dep:chess-client", "dep:chess-proto",
+    "dep:cozy-chess", "dep:tokio", "dep:reqwest", "dep:base64", "dep:serde_json",
+]
+# Training the board reader (`open-chess train board-reader …`).
+train = ["dep:chess-vision-train"]
+# The board reader (and its training) on a GPU: Apple's, or NVIDIA's (needs
+# the CUDA toolkit to build).
+metal = ["chess-vision?/metal", "chess-vision-train?/metal"]
+cuda = ["chess-vision?/cuda", "chess-vision-train?/cuda"]
 
 [dependencies]
 chess-server = { workspace = true, optional = true }
 chess-device = { workspace = true, optional = true }
+chess-vision = { workspace = true, optional = true, features = ["decode"] }
+chess-vision-train = { workspace = true, optional = true }
+chess-analysis = { workspace = true, optional = true }
+chess-core = { workspace = true, optional = true }
+chess-client = { workspace = true, optional = true }
+chess-proto = { workspace = true, optional = true }
+cozy-chess = { version = "0.3.4", optional = true }
+tokio = { version = "1.53.2", features = ["rt-multi-thread"], optional = true }
+reqwest = { version = "0.13.5", features = ["json"], optional = true }
+base64 = { version = "0.23.1", optional = true }
+serde_json = { version = "1.0.151", optional = true }
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 
