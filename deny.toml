@@ -28,9 +28,8 @@ allow = [
 ]
 confidence-threshold = 0.9
 
-# The device runtime, the DGT Pi's clock driver (a port of DGT's GPL
-# dgtpicom) and the Centaur's controller (from GPL DGTCentaurMods) and Chessnut's
-# boards (from GPL PicoChess). Only
+# The DGT Pi's clock driver (a port of DGT's GPL dgtpicom) and the
+# Centaur's controller (from GPL DGTCentaurMods). Only
 # these of our own crates; nothing else may depend on them.
 [[licenses.exceptions]]
 crate = "open-chess-dgtpi"
@@ -38,10 +37,6 @@ allow = ["GPL-3.0-or-later"]
 
 [[licenses.exceptions]]
 crate = "open-chess-centaur"
-allow = ["GPL-3.0-or-later"]
-
-[[licenses.exceptions]]
-crate = "open-chess-chessnut"
 allow = ["GPL-3.0-or-later"]
 
 # Windows COM ports for the device runtime (GPL), file-level copyleft.

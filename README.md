@@ -105,7 +105,7 @@ Packages are named `open-chess-*` (`cargo test -p open-chess-core`).
 | `chess-conformance` | Checks a server against Lichess's API schemas (not published) |
 | `chess-dgt` | The DGT e-board protocol (USB, serial and Bluetooth boards, the Smart Board, the Revelation II, a DGT3000 on the board's cable, the Pegasus), and turning board readings into moves; serial I/O behind the `serial` feature |
 | `chess-ble` | A small Bluetooth LE GATT client over the Linux kernel's sockets (no D-Bus, no system libraries) |
-| `chess-chessnut` | Chessnut's boards (Air, Air+, Pro, Go) over Bluetooth LE or USB (GPL-3.0-or-later) |
+| `chess-chessnut` | Chessnut's boards (Air, Air+, Pro, Go) over Bluetooth LE or USB |
 | `chess-centaur` | The DGT Centaur's board controller and e-paper screen, and following a game from occupancy alone (GPL-3.0-or-later) |
 | `chess-dgtpi` | The DGT Pi's built-in clock over I²C, a port of DGT's `dgtpicom` (GPL-3.0-or-later) |
 | `chess-device` | `open-chess-device`, the board runtime (GPL-3.0-or-later) |
@@ -152,7 +152,7 @@ are welcome.
 
 MIT or Apache-2.0, at your option, except the device runtime
 (`chess-device`), the DGT Pi clock driver (`chess-dgtpi`), the Centaur
-driver (`chess-centaur`) and the Chessnut driver (`chess-chessnut`), which
+driver (`chess-centaur`), which
 build on GPL code and are GPL-3.0-or-later; nothing else depends on them.
 The app's font (Atkinson Hyperlegible) is under the SIL Open Font License
 (`web/chess/fonts/OFL.txt`). Stockfish, used by the fair-play worker and

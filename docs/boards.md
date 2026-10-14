@@ -472,8 +472,9 @@ The board protocol and the following of games (`chess-dgt`) are MIT or
 Apache-2.0, like the rest of open-chess, and so is the Bluetooth layer
 (`chess-ble`). The DGT Pi clock driver (`chess-dgtpi`) is a port of DGT's
 `dgtpicom` (GPL-3.0); the Centaur's controller (`chess-centaur`) follows the
-protocol as the GPL DGTCentaurMods project worked it out, and the Chessnut
-driver (`chess-chessnut`) PicoChess's (GPL-3.0); the device runtime
+protocol as the GPL DGTCentaurMods project worked it out; the device runtime
 (`chess-device`) uses them and follows PicoChess's web API, menu and
-settings. All four are GPL-3.0-or-later. Nothing MIT/Apache depends on
+settings. All three are GPL-3.0-or-later. The Chessnut driver
+(`chess-chessnut`) is MIT or Apache-2.0: it speaks the same protocol as
+PicoChess but holds none of its code, so the iOS app can link it. Nothing MIT/Apache depends on
 them, and `deny.toml` allows GPL for those crates only.
