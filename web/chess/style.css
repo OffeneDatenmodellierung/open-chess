@@ -367,3 +367,4 @@ dialog.terms h2 { margin-top: 0; }
 dialog.terms a { color: var(--action); }
 dialog.terms .check { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.75rem 0; }
 @media (max-width: 760px) { .review-card { grid-template-columns: 1fr; } }
+.credits-link { margin-right: auto; align-self: center; color: var(--action); }

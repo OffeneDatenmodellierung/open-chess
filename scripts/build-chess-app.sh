@@ -44,7 +44,8 @@ wasm-bindgen --target web --no-typescript --out-dir "$out/pkg" \
   target/wasm32-unknown-unknown/release/open_chess_vision.wasm
 # The guides, served with the app (/app/docs/…) for sites that show them.
 mkdir -p "$out/docs"
-cp docs/api.md docs/boards.md docs/photos.md docs/photo-licence.md docs/lichess.md docs/engine.md docs/releases.md "$out/docs/"
+cp docs/api.md docs/boards.md docs/photos.md docs/photo-licence.md docs/lichess.md docs/engine.md docs/releases.md \
+  docs/credits.md docs/dataset-permissions.md "$out/docs/"
 
 # A new cache for every release: the service worker's name changes when
 # any file of the app does.
