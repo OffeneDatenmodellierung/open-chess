@@ -1,0 +1,78 @@
+name: iOS core
+
+# The iOS app's core (crates/chess-mobile) as a Swift package: an
+# xcframework plus the UniFFI Swift bindings (scripts/build-xcframework.sh).
+#
+# Runs on release tags, attaching OpenChessCore-vX.Y.Z.zip to the release
+# the Release workflow makes; on pull requests only when they change the
+# iOS core, its build script or this workflow (macOS minutes cost ten
+# times Linux ones, and CI already tests the crate on Linux); and by hand
+# (Actions › iOS core › Run workflow).
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - crates/chess-mobile/**
+      - scripts/build-xcframework.sh
+      - .github/workflows/ios.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.97.0"
+
+jobs:
+  xcframework:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ios
+          save-if: false
+      - name: Build the Swift package
+        run: scripts/build-xcframework.sh dist/ios
+      - name: Package
+        id: pkg
+        run: |
+          version=$(awk -F'"' '/^\[workspace.package\]/{p=1} p && /^version/{print $2; exit}' Cargo.toml)
+          zip="OpenChessCore-v$version.zip"
+          (cd dist/ios && zip -qry "../$zip" OpenChessCore)
+          echo "zip=dist/$zip" >> "$GITHUB_OUTPUT"
+          ls -l dist
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: ios-core
+          path: ${{ steps.pkg.outputs.zip }}
+          retention-days: 14
+      # The Release workflow makes the release once every binary is built;
+      # wait for it, then add the package.
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=${GITHUB_REF#refs/tags/}
+          for _ in $(seq 1 60); do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$tag" "${{ steps.pkg.outputs.zip }}" --repo "$GITHUB_REPOSITORY" --clobber
+              exit 0
+            fi
+            sleep 60
+          done
+          echo "::error::no release $tag after an hour; the package is in this run's artifacts"
+          exit 1

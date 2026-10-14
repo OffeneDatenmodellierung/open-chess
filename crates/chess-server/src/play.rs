@@ -459,9 +459,12 @@ async fn rate(
     let nw = w.after_game(&b, sw);
     let nb = b.after_game(&w, sb);
     let mut diffs = [0; 2];
-    for (i, (id, old, new)) in
-        [(row.white.player_id, w, nw), (row.black.player_id, b, nb)].into_iter().enumerate()
-    {
+    for (i, (account, old, new)) in [(&row.white, w, nw), (&row.black, b, nb)].into_iter().enumerate() {
+        // The computer keeps its level's fixed rating.
+        if crate::ai::level_of(&account.username).is_some() {
+            continue;
+        }
+        let id = account.player_id;
         let diff = new.int() - old.int();
         diffs[i] = diff;
         tx.execute(

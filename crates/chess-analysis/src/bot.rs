@@ -25,6 +25,12 @@ impl Level {
         self.0
     }
 
+    /// The level's fixed rating, roughly what it plays like. The server's
+    /// `ai-level-N` accounts and the iOS app's offline games both use it.
+    pub fn rating(self) -> i32 {
+        [800, 1000, 1200, 1400, 1600, 1800, 2000, 2200][usize::from(self.0 - 1)]
+    }
+
     fn settings(self) -> (Limits, i32) {
         let (depth, nodes, lines, margin) = match self.0 {
             1 => (1, 2_000, 6, 300),

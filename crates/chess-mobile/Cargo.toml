@@ -1,0 +1,55 @@
+[package]
+name = "open-chess-mobile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The open-chess core for the iOS app: rules, bot, hints, ratings, the Chessnut board, the board reader and an offline store, as Swift bindings through UniFFI"
+license = "MIT OR Apache-2.0"
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+# staticlib for the xcframework, cdylib for generating the bindings,
+# rlib for tests.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = ["vision"]
+# The board reader (photo → position), on the CPU.
+vision = ["dep:chess-vision"]
+# The board reader on Apple GPUs.
+metal = ["vision", "chess-vision/metal"]
+# The `uniffi-bindgen` program that writes the Swift bindings.
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+chess-core = { workspace = true }
+chess-analysis = { workspace = true }
+chess-chessnut = { workspace = true }
+chess-dgt = { workspace = true }
+chess-vision = { workspace = true, optional = true }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.21"
+uniffi = "0.32.2"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+needless_pass_by_value = "allow"
+missing_panics_doc = "allow"
