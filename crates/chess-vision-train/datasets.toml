@@ -16,16 +16,17 @@
 [dataset.chessred]
 # Masouris & van Gemert, 10,800 smartphone photos of 100 games, game-level
 # 60/20/20 split. https://doi.org/10.4121/99b5c721-280b-450b-b058-b2900b69a90f
-# CC BY-NC-SA 4.0, as its DOI record at 4TU.ResearchData / DataCite says
-# (the MIT licence on the authors' GitHub repo covers their code, not the
-# photos). Noncommercial: internal-only models only (`--internal`). For a
-# model we ship, ask the authors for a commercial licence.
-licence = "CC-BY-NC-SA-4.0"
-licence_url = "https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode"
+# Published as CC BY-NC-SA 4.0. Its author and rights holder, Athanasios
+# Masouris, granted us commercial use on 2026-10-14, on condition that the
+# dataset and the paper are credited (docs/dataset-permissions.md): the
+# attribution line below goes in every model card, and wherever such a model
+# ships the credits name both.
+licence = "LicenseRef-chessred-permission-2026-10-14"
+licence_url = "https://github.com/OffeneDatenmodellierung/open-chess/blob/main/docs/dataset-permissions.md#chessred"
 licence_verified = true
 verified_by = "Mark Olliver"
-verified_on = "2026-10-12"
-attribution = "Chess Recognition Dataset (ChessReD), A. Masouris, 4TU.ResearchData, doi:10.4121/99b5c721-280b-450b-b058-b2900b69a90f, CC BY-NC-SA 4.0"
+verified_on = "2026-10-14"
+attribution = "Chess Recognition Dataset (ChessReD), A. Masouris, 4TU.ResearchData, doi:10.4121/99b5c721-280b-450b-b058-b2900b69a90f; A. Masouris and J. van Gemert, End-to-End Chess Recognition, VISAPP 2024 (arXiv:2310.04086). Used with the author's permission."
 format = "chessred"
 path = "chessred"
 

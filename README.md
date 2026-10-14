@@ -158,3 +158,19 @@ The app's font (Atkinson Hyperlegible) is under the SIL Open Font License
 (`web/chess/fonts/OFL.txt`). Stockfish, used by the fair-play worker and
 installed in the image, is a separate GPL-3.0 program run as a child
 process.
+
+## Credits
+
+The board reader learns from these datasets, and each trained model lists
+the ones it used in its model card:
+
+- **ChessReD:** the Chess Recognition Dataset, A. Masouris, 4TU.ResearchData,
+  doi:10.4121/99b5c721-280b-450b-b058-b2900b69a90f, and the paper by
+  A. Masouris and J. van Gemert, *End-to-End Chess Recognition*, VISAPP
+  2024 (arXiv:2310.04086). Used with the author's permission
+  ([docs/dataset-permissions.md](docs/dataset-permissions.md)).
+- The openly licensed sets in `crates/chess-vision-train/datasets.toml`
+  (samryan18's chess-dataset, the chesscog renders, Felix Fabricius's
+  robot-chess-commentator boards, Fenit) are credited by their attribution
+  lines in the same way.
+- The encoder starts from Meta's DINOv2 (Apache-2.0).

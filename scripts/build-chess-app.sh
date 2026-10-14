@@ -18,8 +18,8 @@ if [[ "$have" != "$want" ]]; then
 fi
 
 # The board reader's weights ship to every browser that opens the app, so
-# never an internal-only model (one trained on noncommercial data, such as
-# ChessReD): its card in the safetensors header says so.
+# never an internal-only model (one trained on noncommercial data): its card
+# in the safetensors header says so.
 weights=web/chess/nets/board-reader.safetensors
 if [[ -f $weights ]]; then
   n=$(od -An -t u8 -N 8 "$weights" | tr -d ' ')

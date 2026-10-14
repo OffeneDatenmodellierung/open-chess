@@ -7,14 +7,16 @@ options); this crate's `chess-vision-train` is the trainer on its own.
 
 ```sh
 cargo run --release -p open-chess-vision-train --features metal -- \
-    --datasets chessred open-chess-photos --internal --data-root /data/chess \
+    --datasets chessred open-chess-photos --data-root /data/chess \
     --dinov2 dinov2_vits14_pretrain.pth --encoder small --image-size 392 \
     --out runs/small-392
 ```
 
-`--internal` is needed whenever ChessReD is in (its licence is
-noncommercial). Without ChessReD, `--datasets open-chess-photos` trains a model
-you can ship.
+ChessReD is published as noncommercial, but its author has given us
+permission for commercial use, provided the dataset and the paper are
+credited ([docs/dataset-permissions.md](../../docs/dataset-permissions.md)).
+The trainer puts that credit in every model card. Wherever such a model ships,
+credit both in its credits as well.
 
 The result is `runs/small-392/esl-board-reader-small-392.safetensors` (f16, with
 its config and model card inside), for `CHESS_VISION_LOCAL_MODEL`,
@@ -30,7 +32,7 @@ ChessQueries material are refused; noncommercial data only with `--internal`):
 
 | Dataset | Format | What |
 |---|---|---|
-| `chessred` | `annotations.json` and images, as published | 10,800 phone photos of 100 games, split by game. **CC BY-NC-SA 4.0** (its DOI record): internal-only models only |
+| `chessred` | `annotations.json` and images, as published | 10,800 phone photos of 100 games, split by game. Published as CC BY-NC-SA 4.0; commercial use by the author's permission, crediting the dataset and paper |
 | `open-chess-photos` | `labels.jsonl` + `photos/` | An open-chess server's labelled photos, sent under the open-chess photo licence (any model, commercial or not): `open-chess photos export --out /data/chess/open-chess-photos` (`--reviewed-only`: only labels two people agreed on, or an admin gave) |
 | `open-chess-public` | `labels.jsonl` + `photos/` | The photos their senders also released as **CC0**: `open-chess photos export --public-only --out /data/chess/open-chess-public` |
 
@@ -90,8 +92,8 @@ open-chess train board-reader --datasets esl-review loose-photos --data-root /da
   (one king each, no pawns on the end ranks…) with a confidence of at least
   `--teacher-min-confidence` (default 0.5: every square's top probability,
   multiplied). The run says how many it kept.
-- **Licences carry over.** A teacher trained on noncommercial data (ChessReD)
-  is internal-only, and so is anything it teaches: the trainer refuses
+- **Licences carry over.** A teacher trained on noncommercial data is
+  internal-only, and so is anything it teaches: the trainer refuses
   without `--internal` and stamps the student internal-only. The teacher's
   datasets are credited in the student's model card, and its `base` says
   which model taught it. For a model the app can ship, train the teacher on
@@ -105,8 +107,7 @@ dataset and its licence listed. Such weights are for our own servers and
 staff: the open-chess server and `esports-lab chess read` load them (the
 server logs that it's internal-only), but `scripts/build-chess-app.sh`
 refuses to put them in the Chess lab app, which every visitor downloads.
-To ship a model trained on ChessReD, ask its authors for a commercial
-licence first.
+ChessReD no longer makes a model internal-only (see above).
 
 ## What it does
 
