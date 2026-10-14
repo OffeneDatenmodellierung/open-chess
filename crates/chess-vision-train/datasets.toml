@@ -53,3 +53,76 @@ verified_by = "open-chess"
 verified_on = "2026-10-14"
 format = "jsonl"
 path = "open-chess-public"
+
+# Openly licensed sets from elsewhere, imported with chess-board-renderer's
+# import_datasets.py (github.com/OffeneDatenmodellierung/chess-board-renderer,
+# DATASETS.md). Each keeps its own licence and attribution.
+
+[dataset.samryan18]
+# 500 real photos from above, FEN in each file name.
+# github.com/samryan18/chess-dataset (LICENSE.md: MIT).
+licence = "MIT"
+licence_url = "https://github.com/samryan18/chess-dataset/blob/master/LICENSE.md"
+licence_verified = true
+verified_by = "Claude for Mark Olliver (LICENSE.md in the repo)"
+verified_on = "2026-10-14"
+attribution = "Chess Board Dataset, (c) 2019 Samuel Ryan, Mukund Venkateswaran, Kurt Convey, Michael Deng, github.com/samryan18/chess-dataset, MIT"
+format = "jsonl"
+path = "samryan18"
+
+[dataset.chesscog]
+# About 5,000 3D renders with FEN labels (Wolflein & Arandjelovic).
+licence = "CC-BY-4.0"
+licence_url = "https://osf.io/xf3ka"
+licence_verified = true
+verified_by = "Mark Olliver"
+verified_on = "2026-10-14"
+attribution = "Chess recognition rendered dataset, G. Wölflein and O. Arandjelović, OSF, doi:10.17605/OSF.IO/XF3KA, CC BY 4.0"
+format = "jsonl"
+path = "chesscog"
+
+[dataset.felix-boards]
+# 371 real boards, straightened top-down, with board_fen (subset "boards").
+# Read the licence on the dataset page, then set licence_verified = true.
+licence = "CC-BY-4.0"
+licence_url = "https://huggingface.co/datasets/felixfabricius/robot-chess-commentator-squares"
+licence_verified = false
+verified_by = ""
+verified_on = ""
+attribution = "robot-chess-commentator-squares (boards), Felix Fabricius, Hugging Face, CC BY 4.0"
+format = "jsonl"
+path = "felix-boards"
+
+[dataset.fenit-photos]
+# Real photos (piece boxes and board corners, not yet turned into FEN):
+# unlabelled, for a teacher (--teacher) to read.
+licence = "CC-BY-4.0"
+licence_url = "https://data.mendeley.com/datasets/wpp9xnbcp6"
+licence_verified = true
+verified_by = "Mark Olliver"
+verified_on = "2026-10-14"
+attribution = "Annotated Image Dataset for Fenit, Binus University, Mendeley Data, doi:10.17632/wpp9xnbcp6.1, CC BY 4.0"
+format = "photos"
+path = "fenit-photos"
+
+[dataset.roboflow-chess-pieces]
+# About 290 real photos from one fixed angle (piece boxes only): unlabelled,
+# for a teacher to read. Read the licence on the page (it said Public Domain,
+# CC0), then set licence_verified = true.
+licence = "CC0-1.0"
+licence_url = "https://universe.roboflow.com/joseph-nelson/chess-pieces-new"
+licence_verified = false
+verified_by = ""
+verified_on = ""
+format = "photos"
+path = "roboflow-chess-pieces"
+
+[dataset.synthetic]
+# Rendered with chess-board-renderer: models, scenes and positions all our
+# own (random games, or Lichess's CC0 database).
+licence = "LicenseRef-esl-internal"
+licence_verified = true
+verified_by = "Mark Olliver"
+verified_on = "2026-10-14"
+format = "jsonl"
+path = "synthetic"
