@@ -101,18 +101,25 @@ pub enum Cmd {
         /// Then wait for the reply and say what to play on the board.
         #[arg(long)]
         wait: bool,
+        /// Play this move (SAN like Nf3, or UCI like g1f3) instead of the
+        /// photo's best match: the photo isn't needed then.
+        #[arg(long = "move", value_name = "MOVE")]
+        play: Option<String>,
     },
 }
 
 #[derive(Args)]
 pub struct PhotoArgs {
     /// The photo (JPEG, PNG or WebP), taken from any side of the board.
-    #[arg(required_unless_present = "placement")]
     photo: Option<PathBuf>,
     /// The position's piece placement (FEN's first field) instead of a
     /// photo: for a board read by eye, or to try things out.
     #[arg(long, conflicts_with = "photo")]
     placement: Option<String>,
+    /// Correct squares the photo got wrong: e4=P (a white pawn), h7=b (a
+    /// black bishop), c3=. (empty). Comma-separated, or the option again.
+    #[arg(long, value_delimiter = ',')]
+    fix: Vec<String>,
 }
 
 #[derive(Args)]
@@ -161,6 +168,8 @@ pub struct Reading {
     /// The server's id for the photo when it kept it for review: the
     /// position played is sent back as its label.
     pub photo_id: Option<i64>,
+    /// Corrected by hand (`--fix`, or at the prompt).
+    pub corrected: bool,
 }
 
 impl Reading {
@@ -180,7 +189,48 @@ impl Reading {
             plausible: chess_vision::plausible(&grid),
             source,
             photo_id: None,
+            corrected: false,
         })
+    }
+}
+
+/// Squares corrected by hand, like "e4=P", "h7=b" or "c3=." (empty).
+pub fn parse_fixes(items: &[String]) -> Result<Vec<(usize, Option<char>)>> {
+    let mut out = Vec::new();
+    for item in items.iter().flat_map(|i| i.split([',', ' '])).map(str::trim).filter(|i| !i.is_empty()) {
+        let bad = || anyhow::anyhow!("{item:?}: a square and what's on it, like e4=P, h7=b or c3=. (empty)");
+        let (sq, what) = item.split_once('=').ok_or_else(bad)?;
+        let sq = sq.trim().to_ascii_lowercase();
+        let b = sq.as_bytes();
+        if b.len() != 2 || !(b'a'..=b'h').contains(&b[0]) || !(b'1'..=b'8').contains(&b[1]) {
+            return Err(bad());
+        }
+        let index = usize::from(b[1] - b'1') * 8 + usize::from(b[0] - b'a');
+        let piece = match what.trim() {
+            "." | "-" | "" | "empty" => None,
+            p if p.len() == 1 && "KQRBNPkqrbnp".contains(p) => p.chars().next(),
+            _ => return Err(bad()),
+        };
+        out.push((index, piece));
+    }
+    Ok(out)
+}
+
+/// Apply corrections to a reading: those squares are then sure.
+pub fn apply_fixes(r: &mut Reading, fixes: &[(usize, Option<char>)]) {
+    let mut grid = r.grid();
+    for &(sq, piece) in fixes {
+        grid[sq] = piece
+            .and_then(|c| chess_analysis::photo::cell_of(CLASSES.iter().position(|&x| x == c).unwrap_or(0)));
+        let mut p = [0.001f32; 13];
+        p[class_of(grid[sq])] = 0.988;
+        r.probs[sq] = p;
+        let name = format!("{}{}", char::from(b"abcdefgh"[sq % 8]), sq / 8 + 1);
+        r.unsure.retain(|u| *u != name);
+    }
+    if !fixes.is_empty() {
+        r.plausible = chess_vision::plausible(&grid);
+        r.corrected = true;
     }
 }
 
@@ -194,8 +244,16 @@ pub fn one_hot(grid: &Grid, p: f32) -> SquareProbs {
     out
 }
 
-/// Read the board: the placement given, the reader here, or the server.
+/// Read the board (the placement given, the reader here, or the server),
+/// with the squares corrected by `--fix`.
 async fn read(photo: &PhotoArgs, reader: &ReaderArgs, server: &ServerArgs) -> Result<Reading> {
+    let fixes = parse_fixes(&photo.fix)?;
+    let mut r = read_board(photo, reader, server).await?;
+    apply_fixes(&mut r, &fixes);
+    Ok(r)
+}
+
+async fn read_board(photo: &PhotoArgs, reader: &ReaderArgs, server: &ServerArgs) -> Result<Reading> {
     if let Some(p) = &photo.placement {
         return Reading::from_placement(p, "placement");
     }
@@ -236,6 +294,7 @@ async fn read_here(weights: &Path, compute: &str, photo: Vec<u8>) -> Result<Read
             plausible: b.plausible,
             source: "reader",
             photo_id: None,
+            corrected: false,
         })
     })
     .await?
@@ -335,18 +394,46 @@ fn describe(r: &Reading) -> String {
     if !r.plausible {
         s.push_str("; not a possible game position as read");
     }
+    if r.corrected {
+        s.push_str("; corrected by hand");
+    }
     s
 }
 
-/// Ask a yes/no question on the terminal (no, when there isn't one).
-fn confirm(question: &str) -> bool {
+/// One line from the terminal, trimmed (None when there's no terminal).
+fn ask(question: &str) -> Option<String> {
     if !std::io::stdin().is_terminal() {
-        return false;
+        return None;
     }
-    eprint!("{question} [y/N] ");
+    eprint!("{question} ");
     let _ = std::io::stderr().flush();
     let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line).is_ok() && matches!(line.trim(), "y" | "Y" | "yes")
+    std::io::stdin().lock().read_line(&mut line).ok()?;
+    Some(line.trim().to_owned())
+}
+
+/// Show the reading and ask whether it's right, taking corrections
+/// ("e4=P h7=.") until it is. False: not confirmed.
+fn confirm_reading(r: &mut Reading, show: &dyn Fn(&Reading) -> Result<String>) -> Result<bool> {
+    loop {
+        let Some(answer) = ask("Is that right? [y = yes, n = no, or corrections like e4=P h7=.]") else {
+            return Ok(false);
+        };
+        match answer.as_str() {
+            "y" | "Y" | "yes" => return Ok(true),
+            "" | "n" | "N" | "no" => return Ok(false),
+            fixes => match parse_fixes(&[fixes.to_owned()]) {
+                Ok(f) => {
+                    apply_fixes(r, &f);
+                    match show(r) {
+                        Ok(text) => print!("{text}"),
+                        Err(e) => eprintln!("{e:#}"),
+                    }
+                }
+                Err(e) => eprintln!("{e:#}"),
+            },
+        }
+    }
 }
 
 /// Run a photo command.
@@ -368,8 +455,9 @@ async fn dispatch(cmd: Cmd) -> Result<()> {
             let position = Position { turn, castling };
             start_cmd(&photo, &reader, &server, &opponent, &position, colour, time.as_deref(), yes).await
         }
-        Cmd::Move { photo, reader, server, game, yes, dry_run, wait } => {
-            move_cmd(&photo, &reader, &server, game, yes, dry_run, wait).await
+        Cmd::Move { photo, reader, server, game, yes, dry_run, wait, play } => {
+            let how = MoveHow { yes, dry_run, wait, play };
+            move_cmd(&photo, &reader, &server, game, &how).await
         }
     }
 }
@@ -430,12 +518,25 @@ async fn start_cmd(
     yes: bool,
 ) -> Result<()> {
     let client = server.client()?;
-    let r = read(photo, reader, server).await?;
+    let mut r = read(photo, reader, server).await?;
+    let show = |r: &Reading| -> Result<String> {
+        let mut text = diagram(&r.grid(), &r.unsure);
+        let fen = start_fen(r, &position.turn, position.castling.as_deref());
+        let _ = writeln!(
+            text,
+            "{}\n{}",
+            fen.as_deref().unwrap_or("(not a position a game can start from yet)"),
+            describe(r)
+        );
+        Ok(text)
+    };
+    print!("{}", show(&r)?);
+    if !yes && !confirm_reading(&mut r, &show)? {
+        bail!("not started (--yes starts without asking; --fix e4=P corrects a square)");
+    }
     let fen = start_fen(&r, &position.turn, position.castling.as_deref())?;
-    print!("{}", diagram(&r.grid(), &r.unsure));
-    println!("{fen}\n{}", describe(&r));
-    if !yes && !confirm("Start the game from this position?") {
-        bail!("not started (--yes starts without asking; --placement sets the position by hand)");
+    if let Some(id) = r.photo_id {
+        label_photo(server, id, &fen).await;
     }
     let (limit_secs, increment_secs) = match time {
         Some(t) => parse_time(t).map(|(l, i)| (Some(l), Some(i)))?,
@@ -464,15 +565,44 @@ async fn start_cmd(
     Ok(())
 }
 
+struct MoveHow {
+    yes: bool,
+    dry_run: bool,
+    wait: bool,
+    play: Option<String>,
+}
+
+/// A legal move in the game named by SAN (Nf3, exd5, O-O, e8=Q) or UCI.
+pub fn find_move(game: &Game, text: &str) -> Option<(String, String)> {
+    let clean =
+        |s: &str| s.trim().trim_end_matches(['+', '#', '!', '?']).replace(['x', '='], "").replace('0', "O");
+    let want = clean(text);
+    game.legal_moves().into_iter().find_map(|uci| {
+        let mut g = game.clone();
+        let played = g.play_uci(&uci).ok()?;
+        (uci == text.trim() || clean(&played.san) == want).then_some((uci, played.san))
+    })
+}
+
+/// The legal moves, in SAN.
+fn legal_sans(game: &Game) -> Vec<String> {
+    game.legal_moves()
+        .iter()
+        .filter_map(|uci| {
+            let mut g = game.clone();
+            g.play_uci(uci).ok().map(|p| p.san)
+        })
+        .collect()
+}
+
 async fn move_cmd(
     photo: &PhotoArgs,
     reader: &ReaderArgs,
     server: &ServerArgs,
     game: Option<String>,
-    yes: bool,
-    dry_run: bool,
-    wait: bool,
+    how: &MoveHow,
 ) -> Result<()> {
+    let (yes, dry_run, wait) = (how.yes, how.dry_run, how.wait);
     let client = server.client()?;
     let me = client.account().await?;
     let id = match game {
@@ -485,6 +615,21 @@ async fn move_cmd(
     }
     if game.turn() != mine {
         bail!("it's your opponent's move in game {id}");
+    }
+    if let Some(text) = &how.play {
+        let Some((uci, san)) = find_move(&game, text) else {
+            bail!("{text} isn't a legal move in game {id} (legal: {})", legal_sans(&game).join(" "));
+        };
+        if dry_run {
+            println!("{san}");
+            return Ok(());
+        }
+        client.make_move(Api::Board, &id, &uci, false).await?;
+        println!("played {san} in game {id}");
+        if wait {
+            wait_for_reply(&client, &id, game.ply() + 1).await?;
+        }
+        return Ok(());
     }
     let r = read(photo, reader, server).await?;
     let candidates = match match_move(&game, &r) {
@@ -503,28 +648,51 @@ async fn move_cmd(
         Match::Move { candidates } => candidates,
     };
     let best = &candidates[0];
-    println!("{} ({:.0}% likely)", best.san, best.probability * 100.0);
-    for alt in candidates.iter().skip(1).take(2).filter(|c| c.probability >= 0.01) {
-        println!("  or {} ({:.0}%)", alt.san, alt.probability * 100.0);
+    let alts: Vec<&ScoredCandidate> =
+        candidates.iter().skip(1).take(2).filter(|c| c.probability >= 0.01).collect();
+    println!("1. {} ({:.0}% likely)", best.san, best.probability * 100.0);
+    for (i, alt) in alts.iter().enumerate() {
+        println!("{}. {} ({:.0}%)", i + 2, alt.san, alt.probability * 100.0);
     }
     if dry_run {
         return Ok(());
     }
-    // On a terminal, ask; otherwise play only a sure match (or with --yes).
-    let play = if yes {
-        true
+    // On a terminal, ask (an alternative's number, or any legal move, will
+    // do); otherwise play only a sure match (or with --yes).
+    let (uci, san, fen) = if yes {
+        (best.uci.clone(), best.san.clone(), best.fen.clone())
     } else if std::io::stdin().is_terminal() {
-        confirm(&format!("Play {}?", best.san))
+        loop {
+            let q = format!("Play {}? [y, n, a number above, or the move played, like Nf3]", best.san);
+            let answer = ask(&q).unwrap_or_default();
+            match answer.as_str() {
+                "y" | "Y" | "yes" | "1" => break (best.uci.clone(), best.san.clone(), best.fen.clone()),
+                "" | "n" | "N" | "no" => bail!("not played"),
+                n if n.parse::<usize>().is_ok_and(|n| (2..alts.len() + 2).contains(&n)) => {
+                    let c = alts[n.parse::<usize>().unwrap_or(2) - 2];
+                    break (c.uci.clone(), c.san.clone(), c.fen.clone());
+                }
+                text => match find_move(&game, text) {
+                    Some((uci, san)) => {
+                        let mut g = game.clone();
+                        g.play_uci(&uci).map_err(|e| anyhow::anyhow!("{e}"))?;
+                        break (uci, san, g.fen());
+                    }
+                    None => eprintln!("{text} isn't a legal move here"),
+                },
+            }
+        }
+    } else if best.probability >= SURE {
+        (best.uci.clone(), best.san.clone(), best.fen.clone())
     } else {
-        best.probability >= SURE
+        bail!(
+            "not played: the match isn't sure enough (--yes plays the best match anyway, --move names the move)"
+        );
     };
-    if !play {
-        bail!("not played: the match isn't sure enough (--yes plays the best match anyway)");
-    }
-    client.make_move(Api::Board, &id, &best.uci, false).await?;
-    println!("played {} in game {id}", best.san);
+    client.make_move(Api::Board, &id, &uci, false).await?;
+    println!("played {san} in game {id}");
     if let Some(photo_id) = r.photo_id {
-        label_photo(server, photo_id, &best.fen).await;
+        label_photo(server, photo_id, &fen).await;
     }
     if wait {
         wait_for_reply(&client, &id, game.ply() + 1).await?;
@@ -813,6 +981,37 @@ mod tests {
         // A language model's answer has no probabilities.
         let r = reading_from_answer(&json!({"placement": "4k3/8/8/8/8/8/8/4K3"})).unwrap();
         assert_eq!(placement(&r.grid()), "4k3/8/8/8/8/8/8/4K3");
+    }
+
+    #[test]
+    fn corrections() {
+        let f = parse_fixes(&["e4=P,h7=b".into(), "c3=.".into()]).unwrap();
+        assert_eq!(f, vec![(28, Some('P')), (55, Some('b')), (18, None)]);
+        assert!(parse_fixes(&["e9=P".into()]).is_err());
+        assert!(parse_fixes(&["e4=X".into()]).is_err());
+        assert!(parse_fixes(&["e4".into()]).is_err());
+        // The photo saw a bishop on h7 and an empty e4: corrected, it matches.
+        let g = game("e2e4 e7e5");
+        let mut r = reading_of("rnbqkbnr/pppp1ppb/8/4p3/8/5N2/PPPP1PPP/RNBQKB1R");
+        r.unsure = vec!["h7".into()];
+        apply_fixes(&mut r, &parse_fixes(&["h7=p".into(), "e4=P".into()]).unwrap());
+        assert_eq!(placement(&r.grid()), "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R");
+        assert!(r.unsure.is_empty() && r.corrected && r.plausible);
+        let Match::Move { candidates } = match_move(&g, &r) else { panic!() };
+        assert_eq!((candidates[0].san.as_str(), candidates[0].distance), ("Nf3", 0));
+    }
+
+    #[test]
+    fn moves_by_name() {
+        let g = game("e2e4 e7e5 g1f3 b8c6");
+        assert_eq!(find_move(&g, "Bb5"), Some(("f1b5".into(), "Bb5".into())));
+        assert_eq!(find_move(&g, "f1c4").map(|m| m.1), Some("Bc4".into()));
+        assert_eq!(find_move(&g, "Nxe5").map(|m| m.0), Some("f3e5".into()));
+        assert_eq!(find_move(&g, "Nf3e5"), None);
+        assert_eq!(find_move(&g, "Ke3"), None);
+        let castle = game("e2e4 e7e5 g1f3 b8c6 f1c4 g8f6");
+        assert_eq!(find_move(&castle, "O-O").map(|m| m.0), Some("e1g1".into()));
+        assert_eq!(find_move(&castle, "0-0").map(|m| m.0), Some("e1g1".into()));
     }
 
     #[test]

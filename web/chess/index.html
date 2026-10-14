@@ -72,6 +72,7 @@
 
       <div class="player" id="playerTop"><span class="who"></span><span class="clock" hidden></span></div>
       <div id="board"></div>
+      <div id="editBoard" hidden></div>
       <div class="player" id="playerBottom"><span class="who"></span><span class="clock" hidden></span></div>
 
       <div class="steps" role="group" aria-label="Step through the game">
@@ -102,16 +103,11 @@
       </div>
 
       <section class="editor" id="editor" hidden aria-label="Board editor">
-        <div class="palette" id="palette"></div>
         <div class="row">
           <div class="seg-pick" role="group" aria-label="Side to move">
             <button type="button" id="editWhite">White to move</button>
             <button type="button" id="editBlack">Black to move</button>
           </div>
-        </div>
-        <div class="row">
-          <button type="button" id="editClear">Empty board</button>
-          <button type="button" id="editStart">Starting position</button>
         </div>
         <p class="error" id="editError" role="alert"></p>
         <div class="row end">

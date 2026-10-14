@@ -13,6 +13,7 @@ const ASSETS = [
   "board.js",
   "online.js",
   "docs.js",
+  "position-editor.js",
   "engine-worker.js",
   "manifest.webmanifest",
   "icon.svg",

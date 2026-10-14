@@ -46,6 +46,29 @@ It prints the board, with squares it was unsure of marked `?`, and the FEN
 (White to move unless you pass `--turn black`). Castling is assumed
 wherever the king and rook are on their home squares.
 
+## Correcting what was read
+
+Every command takes `--fix` for squares the photo got wrong:
+
+```sh
+open-chess photo start board.jpg --computer 4 --fix h7=p,e4=P,c3=.
+```
+
+Each fix is a square, `=`, and what's on it: a FEN letter (`K Q R B N P`
+for White, `k q r b n p` for Black) or `.` for an empty square. Before
+`photo start` begins a game, it asks whether the board is right. Answer
+with corrections (`h7=p e4=.`) to redraw the board, and `y` once it's
+right.
+
+In the Chess lab, a photo's board opens in the editor:
+* drag a piece to move it, or off the board to remove it;
+* drag a piece in from the row below the board;
+* click a square to choose what's on it (right-click works too);
+* with a square selected, type a piece letter (`.` empties it).
+
+The Review page for kept photos uses the same editor. Corrected
+positions are the labels the next reader learns from.
+
 ## A game from the board to online play
 
 ```sh
@@ -79,12 +102,14 @@ open-chess photo move board.jpg --game x4dmA43k --wait
 ```
 
 It prints the move it found, and how likely it is, with any close
-alternatives:
-* **On a terminal**, it asks before playing.
+alternatives (numbered):
+* **On a terminal**, it asks before playing. Answer `y`, an alternative's
+  number, or the move that was really played (`Nf3`, `O-O`, `g1f3`).
 * **Run from a script or a phone shortcut**, it plays only a match that's
   at least 90% likely.
 * `--yes` plays the best match anyway.
 * `--dry-run` only shows it.
+* `--move Nf3` plays that move without a photo (it must be legal).
 
 With `--wait` it then waits for your opponent's reply and says how to make
 it on the board ("Black played Nf6: on the board, move g8 to f6").
