@@ -183,6 +183,12 @@ mod hidapi_impl {
         last_switch: Option<std::time::Instant>,
         wrote: u64,
         read: u64,
+        /// When it first wrote: a board quiet for a while after that is
+        /// asked for its position report directly (GET_REPORT), as some
+        /// systems never pass its interrupt reports on.
+        first_write: Option<std::time::Instant>,
+        polling: bool,
+        hinted: bool,
     }
 
     impl std::fmt::Debug for Hid {
@@ -287,13 +293,29 @@ mod hidapi_impl {
             if devices.is_empty() {
                 return Err(explain(&first_err.unwrap_or(hidapi::HidError::HidApiErrorEmpty)));
             }
-            Ok(Hid { devices, framing: 0, heard: false, last_switch: None, wrote: 0, read: 0 })
+            Ok(Hid {
+                devices,
+                framing: 0,
+                heard: false,
+                last_switch: None,
+                wrote: 0,
+                read: 0,
+                first_write: None,
+                polling: false,
+                hinted: false,
+            })
         }
 
         pub fn write(&mut self, data: &[u8]) -> io::Result<()> {
-            // Quiet for a while after writing: try the next way of framing.
+            // Quiet for a while after writing: try the next way of framing,
+            // unless the board's descriptor settled how (its reports
+            // include this command's).
             let now = std::time::Instant::now();
-            if !self.heard
+            self.first_write.get_or_insert(now);
+            let settled =
+                self.devices.iter().any(|(_, _, r)| r.output.iter().any(|(i, _)| Some(i) == data.first()));
+            if !settled
+                && !self.heard
                 && self.wrote > 0
                 && self.last_switch.is_none_or(|t| now.duration_since(t).as_secs() >= 4)
             {
@@ -377,6 +399,59 @@ mod hidapi_impl {
                     out.push(msg[..msg.len().min(len.max(2))].to_vec());
                     ms = 0;
                 }
+            }
+            // Nothing two seconds after asking: ask for the position report
+            // directly (the board's descriptor has it as input report 0x01).
+            if out.is_empty()
+                && !self.heard
+                && self.first_write.is_some_and(|t| t.elapsed() >= Duration::from_secs(2))
+            {
+                if !self.polling {
+                    self.polling = true;
+                    crate::log::line(
+                        crate::log::Source::Board,
+                        "USB: no reports from the board: asking it for its position instead (GET_REPORT)",
+                    );
+                }
+                for (p, dev, reports) in &self.devices {
+                    let Some(&(_, size)) = reports.input.iter().find(|(i, _)| *i == 0x01) else { continue };
+                    let mut buf = vec![0u8; size + 1];
+                    buf[0] = 0x01;
+                    match dev.get_input_report(&mut buf) {
+                        Ok(n) if n > 1 => {
+                            self.read += 1;
+                            if crate::log::debugging() && (self.read <= 20 || self.read.is_multiple_of(100)) {
+                                crate::log::line(
+                                    crate::log::Source::Board,
+                                    format!("USB {p} ⇐ #{} {}", self.read, hex(&buf[..n])),
+                                );
+                            }
+                            let len = usize::from(buf.get(1).copied().unwrap_or(0)) + 2;
+                            out.push(buf[..n.min(len.max(2))].to_vec());
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            crate::log::debug(crate::log::Source::Board, format!("USB {p} GET_REPORT: {e}"))
+                        }
+                    }
+                }
+                if out.is_empty() {
+                    std::thread::sleep(wait.min(Duration::from_millis(100)));
+                    if !self.hinted
+                        && self.first_write.is_some_and(|t| t.elapsed() >= Duration::from_secs(12))
+                    {
+                        self.hinted = true;
+                        crate::log::line(
+                            crate::log::Source::Board,
+                            if cfg!(target_os = "macos") {
+                                "USB: the board still says nothing. macOS passes on what USB input devices send only to apps allowed under System Settings › Privacy & Security › Input Monitoring: add your terminal app there, quit it and open it again. Also close Chessnut's own app, which may hold the board."
+                            } else {
+                                "USB: the board still says nothing: close Chessnut's own app, which may hold the board, and unplug and replug it."
+                            },
+                        );
+                    }
+                }
+                return Ok(out);
             }
             if !out.is_empty() && !self.heard {
                 self.heard = true;
