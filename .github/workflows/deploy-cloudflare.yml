@@ -1,0 +1,123 @@
+name: Deploy to Cloudflare
+
+# Deploys a release's image to Cloudflare (deploy/cloudflare: a Worker in
+# front of the API containers and the fair-play worker container). It runs
+# after each release (a `v*` tag whose Release workflow succeeded) when the
+# repository variable CLOUDFLARE_DEPLOY is "true", and by hand from the
+# Actions tab (any released version; the latest by default). Forks deploy
+# nothing unless they turn it on.
+#
+# The Worker's code and config come from this branch; the server is the
+# release's image from ghcr.io (amd64, as Cloudflare Containers need),
+# pushed to Cloudflare's registry.
+#
+# Repository settings (environment "cloudflare" or the repository):
+#   secrets   CLOUDFLARE_API_TOKEN    Workers Scripts, Containers and (for the
+#                                     custom domain) Workers Routes: edit
+#             CLOUDFLARE_ACCOUNT_ID   only if the token sees several accounts
+#   variables CLOUDFLARE_DEPLOY       "true": deploy each release
+#             CHESS_WORKER_NAME       the Worker's name (default open-chess)
+#             CHESS_PUBLIC_URL        where players reach it (its host is the route)
+#             CHESS_WORKER_VARS       JSON of more vars, e.g.
+#                                     {"ESPORTS_PUBLIC_URL": "https://site.example",
+#                                      "ESPORTS_LOGIN": "true", "CHESS_HOST_NAME": "Site"}
+# The server's secrets stay in Cloudflare and nothing here changes them:
+# DATABASE_URL, ESPORTS_SECRET, CHESS_FAIRPLAY_MODEL, CHESS_APP_THEME, …
+# (`npx wrangler secret put NAME --name <worker>`, see deploy/cloudflare/README.md).
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to deploy, e.g. 0.1.5 (empty: the latest release)"
+        required: false
+
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.CLOUDFLARE_DEPLOY == 'true' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: cloudflare
+    defaults:
+      run:
+        working-directory: deploy/cloudflare
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CHESS_WORKER_NAME: ${{ vars.CHESS_WORKER_NAME }}
+      CHESS_PUBLIC_URL: ${{ vars.CHESS_PUBLIC_URL }}
+      CHESS_WORKER_VARS: ${{ vars.CHESS_WORKER_VARS }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Which version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.workflow_run.head_branch }}
+          WANT: ${{ inputs.version }}
+        run: |
+          set -eu
+          if [ -n "${WANT:-}" ]; then v=${WANT#v}
+          elif [ -n "${TAG:-}" ]; then v=${TAG#v}
+          else v=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name); v=${v#v}
+          fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "Deploying open-chess $v"
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: deploy/cloudflare/package-lock.json
+      - run: npm ci
+      - name: Check settings
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Add the CLOUDFLARE_API_TOKEN secret (environment cloudflare or the repository)."; exit 1
+          fi
+          npx tsc --noEmit
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: The release's image
+        run: |
+          set -eu
+          src="ghcr.io/${GITHUB_REPOSITORY,,}:$VERSION"
+          docker pull --platform linux/amd64 "$src"
+          docker tag "$src" "open-chess:$VERSION"
+      - name: Push it to Cloudflare
+        shell: bash
+        run: |
+          set -o pipefail
+          npx wrangler containers push "open-chess:$VERSION" 2>&1 | tee push.txt
+          echo "IMAGE=registry.cloudflare.com/open-chess:$VERSION" >> "$GITHUB_ENV"
+      - name: Config
+        run: node ci-config.mjs
+      - name: Deploy
+        shell: bash
+        run: |
+          set -o pipefail
+          npx wrangler deploy -c wrangler.ci.json 2>&1 | tee deploy.txt
+      - name: Annotate deploy errors
+        if: failure()
+        shell: bash
+        run: |
+          cat push.txt deploy.txt 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' > all.txt || true
+          grep -E '\[ERROR\]|Authentication error|Unauthorized|not authorized|\[code: [0-9]+\]' all.txt | head -10 \
+            | sed -E 's/^/::error::/' || true
