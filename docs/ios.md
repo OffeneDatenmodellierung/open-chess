@@ -67,8 +67,10 @@ is the app's own id for it, sent with the upload so a retry is harmless.
   `GET /api/sync?since=`, a contributor photo upload, APNs for "your
   move", and `/api/feed` ids by receipt (a game uploaded late must still
   reach esports). See the ADR.
-- **Bot games and ratings:** the server never rates games against
-  `ai-level-N` (so a bot can't be farmed), while the ADR counts offline
-  bot games at the bot's fixed rating. `offlineRecordJson` carries the
-  bot's level and rating either way; the offline endpoint decides.
+- **Bot games are rated** against the level's fixed rating
+  (`Level::rating`, 800–2200): the level is known, so the opponent's
+  strength is too, and Glicko gives little for beating a bot far below
+  you, so it can't be farmed. Games with any help stay unrated.
+  `offlineRecordJson` carries the level and its rating for the offline
+  endpoint. The server's own `ai-level-N` games are still unrated today.
 - **The app:** in its own repository, against this package.
