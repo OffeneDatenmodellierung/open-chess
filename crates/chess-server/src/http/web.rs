@@ -735,6 +735,56 @@ pub async fn esports_revoke(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) -
     Ok(Json(json!({ "revoked": n })).into_response())
 }
 
+/// `POST /api/esports/link` (bearer the secret; form `sub`, `username`):
+/// a manager on the site says the account `username` here is their player
+/// `sub`'s, made before they signed in with the site. The site player's
+/// link moves to it (an account it was linked to before stays, unlinked,
+/// with its games). Refused (409) when that account is another site
+/// player's. An empty `username` unlinks. Answers `{"username"}`.
+pub async fn esports_link(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) -> ApiResult<Response> {
+    let secret = ctx.cfg.esports().ok_or_else(|| ApiError::not_found("the site's token endpoint"))?;
+    if !bearer(&h).is_some_and(|b| same(b.as_bytes(), secret.as_bytes())) {
+        return Err(ApiError::unauthorized());
+    }
+    let f = form(&body);
+    let sub = f.get("sub").filter(|s| !s.is_empty()).ok_or_else(|| ApiError::bad("sub is required"))?;
+    let username = f.get("username").map(|u| u.trim()).unwrap_or_default();
+    let mut c = ctx.db.conn().await?;
+    let tx = c.transaction().await?;
+    if username.is_empty() {
+        tx.execute(&ctx.db.sql("UPDATE chess.players SET esports_id = NULL WHERE esports_id = $1"), &[sub])
+            .await?;
+        tx.commit().await?;
+        return Ok(Json(json!({ "username": null })).into_response());
+    }
+    let row = tx
+        .query_opt(
+            &ctx.db.sql(
+                "SELECT p.id, p.esports_id, a.username FROM chess.accounts a JOIN chess.players p ON p.id = a.player_id
+                  WHERE lower(a.username) = lower($1)",
+            ),
+            &[&username],
+        )
+        .await?
+        .ok_or_else(|| ApiError::not_found("no account of that name here"))?;
+    let (player, linked, name): (i64, Option<String>, String) = (row.get(0), row.get(1), row.get(2));
+    if linked.as_deref().is_some_and(|l| l != sub) {
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            format!("{name} is another of the site's players' account"),
+        ));
+    }
+    tx.execute(
+        &ctx.db.sql("UPDATE chess.players SET esports_id = NULL WHERE esports_id = $1 AND id <> $2"),
+        &[sub, &player],
+    )
+    .await?;
+    tx.execute(&ctx.db.sql("UPDATE chess.players SET esports_id = $1 WHERE id = $2"), &[sub, &player])
+        .await?;
+    tx.commit().await?;
+    Ok(Json(json!({ "username": name })).into_response())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
