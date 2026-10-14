@@ -169,6 +169,8 @@ mod hidapi_impl {
     use crate::discover::Found;
 
     const VID: u16 = 0x2d80;
+    /// Chessnut's start-up command.
+    const INIT: [u8; 6] = [0x0b, 0x04, 0x03, 0xe8, 0x00, 0xc8];
     const USAGE_PAGE: u16 = 0xff00;
 
     /// An open Chessnut board on USB: every HID interface of it on
@@ -307,6 +309,16 @@ mod hidapi_impl {
         }
 
         pub fn write(&mut self, data: &[u8]) -> io::Result<()> {
+            // Before real-time mode, the start-up command Chessnut's
+            // community libraries send first (output report 0x0b in the
+            // Go's descriptor): some boards say nothing on USB without it.
+            if data.first() == Some(&0x21) {
+                self.send(&INIT)?;
+            }
+            self.send(data)
+        }
+
+        fn send(&mut self, data: &[u8]) -> io::Result<()> {
             // Quiet for a while after writing: try the next way of framing,
             // unless the board's descriptor settled how (its reports
             // include this command's).
