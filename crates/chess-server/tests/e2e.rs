@@ -1030,6 +1030,58 @@ async fn the_host_site_signs_players_in_and_gets_their_tokens() {
 /// A deployment that used the host site's players: they, their chess
 /// tokens and our references to them come across once.
 #[tokio::test]
+async fn the_site_links_an_existing_account() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let (_, token) = env.player("Own-Account", &["board:play"]).await;
+    let me: serde_json::Value =
+        env.client(0, &token).account().await.map(|u| serde_json::json!({"id": u.id})).unwrap();
+    assert!(me["id"].is_string(), "the account exists once used");
+    let http = reqwest::Client::new();
+    let link = |sub: &'static str, username: &'static str| {
+        http.post(format!("{}/api/esports/link", env.base[0]))
+            .bearer_auth(SECRET)
+            .form(&[("sub", sub), ("username", username)])
+            .send()
+    };
+    let r = link("777", "own-account").await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.json::<serde_json::Value>().await.unwrap()["username"], "Own-Account");
+    let players: serde_json::Value = http
+        .get(format!("{}/api/esports/players", env.base[0]))
+        .bearer_auth(SECRET)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        players["players"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["sub"] == "777" && p["username"] == "Own-Account")
+    );
+    // Another site player can't take it; an unknown name isn't there.
+    assert_eq!(link("778", "Own-Account").await.unwrap().status(), 409);
+    assert_eq!(link("777", "nobody-here").await.unwrap().status(), 404);
+    // Linking again is fine; an empty name unlinks.
+    assert_eq!(link("777", "Own-Account").await.unwrap().status(), 200);
+    assert_eq!(link("777", "").await.unwrap().status(), 200);
+    assert_eq!(link("778", "Own-Account").await.unwrap().status(), 200, "free again");
+    // Without the secret: no.
+    let r = http
+        .post(format!("{}/api/esports/link", env.base[0]))
+        .bearer_auth(&token)
+        .form(&[("sub", "1"), ("username", "Own-Account")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+    env.teardown().await;
+}
+
+#[tokio::test]
 async fn the_site_players_are_imported_once() {
     let pre = "
         INSERT INTO {site}.players (id, name, email, roles) VALUES (7, 'Jo', 'jo@site.test', '{manager}'), (8, 'Kim', NULL, '{}'), (9, 'Lee', NULL, '{}');
