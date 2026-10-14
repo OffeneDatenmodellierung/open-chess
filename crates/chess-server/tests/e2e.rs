@@ -81,6 +81,8 @@ async fn setup_with(pre: &str, tweak: impl FnOnce(&mut Config)) -> Option<Env> {
         signup: true,
         site_name: "open-chess".into(),
         host_name: Some("esports-lab".into()),
+        admin_emails: vec!["boss@site.test".into()],
+        staff_passkey_hours: 12,
         bind: "127.0.0.1:0".into(),
         metrics_bind: "127.0.0.1:0".into(),
         lag_comp_ms: 100,
@@ -147,6 +149,26 @@ impl Env {
             .await
             .unwrap();
         (id, token)
+    }
+
+    /// Make a player a manager (or admin) here, with their tokens' passkey
+    /// check done.
+    async fn staff(&self, id: i64, admin: bool) {
+        let set = if admin { "role = 'admin'" } else { "roles = '{manager}'" };
+        self.pg
+            .execute(&format!("UPDATE {}.players SET {set} WHERE id = $1", self.chess), &[&id])
+            .await
+            .unwrap();
+        self.pg
+            .execute(
+                &format!(
+                    "UPDATE {}.api_tokens SET staff_verified_at = now() WHERE player_id = $1",
+                    self.chess
+                ),
+                &[&id],
+            )
+            .await
+            .unwrap();
     }
 
     fn client(&self, replica: usize, token: &str) -> Client {
@@ -406,6 +428,7 @@ async fn two_accounts_play_on_one_board() {
     let http = reqwest::Client::new();
     let found: serde_json::Value = http
         .get(format!("{}/api/player/autocomplete?term=bo&object=true", env.base[0]))
+        .bearer_auth(&ann_token)
         .send()
         .await
         .unwrap()
@@ -415,6 +438,7 @@ async fn two_accounts_play_on_one_board() {
     assert_eq!(found["result"][0]["name"].as_str(), Some("Bob"), "{found}");
     let names: Vec<String> = http
         .get(format!("{}/api/player/autocomplete?term=nn", env.base[0]))
+        .bearer_auth(&ann_token)
         .send()
         .await
         .unwrap()
@@ -457,8 +481,15 @@ async fn the_computer_plays_at_a_level() {
     }
     assert_eq!(moves.split(' ').count(), 2, "the computer replied: {moves}");
     // Its account has the level's fixed rating; bad levels are refused.
-    let u: serde_json::Value =
-        http.get(format!("{}/api/user/ai-level-2", env.base[0])).send().await.unwrap().json().await.unwrap();
+    let u: serde_json::Value = http
+        .get(format!("{}/api/user/ai-level-2", env.base[0]))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(u["perfs"]["rapid"]["rating"].as_i64(), Some(1000));
     let r = http
         .post(format!("{}/api/challenge/ai", env.base[0]))
@@ -530,11 +561,25 @@ async fn rated_games_against_the_computer_move_only_the_player() {
         game.players.white
     );
     let rapid = |u: &serde_json::Value| u["perfs"]["rapid"]["rating"].as_i64();
-    let ai: serde_json::Value =
-        http.get(format!("{}/api/user/ai-level-4", env.base[0])).send().await.unwrap().json().await.unwrap();
+    let ai: serde_json::Value = http
+        .get(format!("{}/api/user/ai-level-4", env.base[0]))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(rapid(&ai), Some(1400), "the computer keeps its level's rating");
-    let gil: serde_json::Value =
-        http.get(format!("{}/api/user/gil", env.base[0])).send().await.unwrap().json().await.unwrap();
+    let gil: serde_json::Value = http
+        .get(format!("{}/api/user/gil", env.base[0]))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert!(rapid(&gil).is_some_and(|r| r < 1500), "{gil}");
     env.teardown().await;
 }
@@ -783,8 +828,12 @@ async fn the_feed_follows_games_and_catches_up() {
     let (_, bob_token) = env.player("Bob", HUMAN).await;
     let (ann, bob) = (env.client(0, &ann_token), env.client(1, &bob_token));
     let http = reqwest::Client::new();
-    let mut feed = sse(http.get(format!("{}/api/feed", env.base[1])).send().await.unwrap());
-    let mut ends = sse(http.get(format!("{}/api/feed?only=end", env.base[0])).send().await.unwrap());
+    // Nobody reads it without a token: a player's, or a partner's.
+    assert_eq!(http.get(format!("{}/api/feed", env.base[1])).send().await.unwrap().status(), 401);
+    let mut feed =
+        sse(http.get(format!("{}/api/feed", env.base[1])).bearer_auth(&ann_token).send().await.unwrap());
+    let mut ends =
+        sse(http.get(format!("{}/api/feed?only=end", env.base[0])).bearer_auth(SECRET).send().await.unwrap());
     tokio::time::sleep(Duration::from_millis(200)).await;
     let req = ChallengeRequest {
         rated: true,
@@ -819,14 +868,19 @@ async fn the_feed_follows_games_and_catches_up() {
     let finished: i64 = sid.unwrap().parse().unwrap();
     let mut again = sse(http
         .get(format!("{}/api/feed", env.base[0]))
+        .bearer_auth(&bob_token)
         .header("last-event-id", (finished - 1).to_string())
         .send()
         .await
         .unwrap());
     let (kind, _, v) = next_sse(&mut again).await;
     assert_eq!((kind.as_str(), v["id"].as_str()), ("end", Some(id.as_str())));
-    let mut later =
-        sse(http.get(format!("{}/api/feed?since={}", env.base[0], finished + 1)).send().await.unwrap());
+    let mut later = sse(http
+        .get(format!("{}/api/feed?since={}", env.base[0], finished + 1))
+        .bearer_auth(&bob_token)
+        .send()
+        .await
+        .unwrap());
     assert!(tokio::time::timeout(Duration::from_millis(500), later.recv()).await.is_err(), "nothing newer");
     env.teardown().await;
 }
@@ -897,7 +951,9 @@ async fn own_accounts_sign_up_sign_in_and_make_tokens() {
         .await
         .unwrap();
     assert!(page.contains("Signed in as <b>Gwen</b>"), "{page}");
-    let csrf = page.split("name=\"csrf\" value=\"").nth(1).unwrap().split('"').next().unwrap().to_owned();
+    let tokens_form = page.split("action=\"/account/tokens\">").nth(1).unwrap();
+    let csrf =
+        tokens_form.split("name=\"csrf\" value=\"").nth(1).unwrap().split('"').next().unwrap().to_owned();
     let page = http
         .post(format!("{}/account/tokens", env.base[1]))
         .header("cookie", format!("oc_session={session}"))
@@ -953,6 +1009,27 @@ async fn own_accounts_sign_up_sign_in_and_make_tokens() {
         .await
         .unwrap();
     assert_eq!(elsewhere.headers()["location"], "/account");
+    // A return path can't end the page's script and start another.
+    let page = http
+        .get(format!("{}/login", env.base[0]))
+        .query(&[("return", "/x</script><script>alert(1)</script>")])
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!page.contains("<script>alert"), "{page}");
+    // Changing the password takes the current one (no passkey to confirm with).
+    let pw_csrf = hash_key(&format!("{session}|passkeys"));
+    let change = |current: &'static str| {
+        http.post(format!("{}/account/password", env.base[0]))
+            .header("cookie", format!("oc_session={session}"))
+            .form(&[("csrf", pw_csrf.as_str()), ("current", current), ("password", "another long password")])
+            .send()
+    };
+    assert_eq!(change("wrong guess").await.unwrap().status(), 403);
+    assert!(change("a long enough password").await.unwrap().status().is_redirection());
     env.teardown().await;
 }
 
@@ -1042,7 +1119,7 @@ async fn the_host_site_signs_players_in_and_gets_their_tokens() {
     assert_eq!(ask("wrong").send().await.unwrap().status(), 401);
     let t: serde_json::Value = ask(SECRET).send().await.unwrap().json().await.unwrap();
     assert_eq!(t["username"], "Hal-Jones");
-    assert_eq!(t["scopes"], serde_json::json!(["board:play", "chess:fairplay"]), "a manager on the site");
+    assert_eq!(t["scopes"], serde_json::json!(["board:play"]), "a manager on the site is a player here");
     let me = env.client(1, t["token"].as_str().unwrap());
     assert_eq!(me.account().await.unwrap().username, "Hal-Jones");
     // A game's tokens last hours, and go together when the site says.
@@ -1171,11 +1248,8 @@ async fn the_site_players_are_imported_once() {
         rows.iter().map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))).collect();
     assert_eq!(
         got,
-        [
-            (7, "Jo".into(), Some("7".into()), vec!["manager".to_owned()]),
-            (8, "Kim".into(), Some("8".into()), vec![])
-        ],
-        "Jo (named in our table) and Kim (a chess token), not Lee"
+        [(7, "Jo".into(), Some("7".into()), vec![]), (8, "Kim".into(), Some("8".into()), vec![])],
+        "Jo (named in our table) and Kim (a chess token), not Lee; the site's roles stay the site's"
     );
     // Kim's token works here, with only its chess scope.
     let kim = env.client(0, "esl_kims-token");
@@ -1214,8 +1288,9 @@ async fn public_stream_runs_behind_live_games() {
     for (t, m) in [(&w, "e2e4"), (&bl, "e7e5"), (&w, "g1f3"), (&bl, "b8c6"), (&w, "f1b5")] {
         env.client(0, t).make_move(Api::Board, &id, m, false).await.unwrap();
     }
-    let anon = Client::new(&env.base[1], None).unwrap();
-    let mut s = anon.stream_moves(&id).await.unwrap();
+    assert!(Client::new(&env.base[1], None).unwrap().stream_moves(&id).await.is_err(), "signed in only");
+    let (_, watcher) = env.player("Wes", HUMAN).await;
+    let mut s = env.client(1, &watcher).stream_moves(&id).await.unwrap();
     let first = tokio::time::timeout(Duration::from_secs(5), s.next()).await.unwrap().unwrap().unwrap();
     assert_eq!(first["id"], id.as_str());
     // The description is as delayed as the moves: five plies played, two shown.
@@ -1245,6 +1320,15 @@ async fn fair_play_screening_and_review() {
         .execute(&format!("UPDATE {}.players SET roles = '{{manager}}' WHERE id = $1", env.chess), &[&mid])
         .await
         .unwrap();
+    // A manager's rights wait on their passkey check.
+    let r = reqwest::Client::new()
+        .get(format!("{}/api/fairplay/queue", env.base[0]))
+        .bearer_auth(&m)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    env.staff(mid, false).await;
     env.client(0, &b).account().await.unwrap();
     let id = start(&env, &a, "ben", &b, Some((600, 5))).await;
     let (w, bl) = colours(&env, &id, ("Ann", &a), ("Ben", &b)).await;
@@ -1558,6 +1642,14 @@ async fn unsure_photos_are_kept_for_review_and_confirmed() {
         .await
         .unwrap();
     let manager = t["token"].as_str().unwrap().to_owned();
+    // The site's roles don't count here: managers are made here.
+    let reviewer: i64 = env
+        .pg
+        .query_one(&format!("SELECT id FROM {}.players WHERE esports_id = '900'", env.chess), &[])
+        .await
+        .unwrap()
+        .get(0);
+    env.staff(reviewer, false).await;
     let list: serde_json::Value = http
         .get(format!("{}/api/esl/photos?all=true", env.base[1]))
         .bearer_auth(&manager)
@@ -1801,4 +1893,365 @@ async fn tablebase_answers_are_fetched_once_and_kept() {
 
 fn chess_core_start() -> &'static str {
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+}
+
+/// Admins here: made by CHESS_ADMIN_EMAILS (an email the host site vouches
+/// for, not one typed into a sign-up), with rights only after a passkey
+/// check. They manage roles and partners; a partner's token reads what its
+/// scopes say, and stops when revoked.
+#[tokio::test]
+async fn admins_partners_and_the_staff_check() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let http = reqwest::Client::new();
+    let site_token = |sub: &'static str, name: &'static str, email: &'static str| {
+        http.post(format!("{}/api/esports/token", env.base[0]))
+            .bearer_auth(SECRET)
+            .form(&[("sub", sub), ("name", name), ("email", email), ("scopes", "board:play")])
+            .send()
+    };
+    let t: serde_json::Value =
+        site_token("500", "Boss", "Boss@Site.test").await.unwrap().json().await.unwrap();
+    let boss = t["token"].as_str().unwrap().to_owned();
+    // Listed and vouched for, but no passkey yet: not an admin.
+    let role: String = env
+        .pg
+        .query_one(&format!("SELECT role FROM {}.players WHERE esports_id = '500'", env.chess), &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(role, "player");
+    let passkey_for = |id_sql: String| {
+        let (pg, chess) = (&env.pg, env.chess.clone());
+        async move {
+            pg.execute(
+                &format!(
+                    "INSERT INTO {chess}.passkeys (player_id, user_handle, credential_id, public_key, alg, name)
+                     SELECT id, '\\x00', decode(md5(random()::text), 'hex'), '\\x00', -7, 'test'
+                       FROM {chess}.players WHERE {id_sql}"
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+        }
+    };
+    passkey_for("esports_id = '500'".into()).await;
+    site_token("500", "Boss", "Boss@Site.test").await.unwrap();
+    let me = |token: String| {
+        let http = http.clone();
+        let url = format!("{}/api/account", env.base[1]);
+        async move {
+            http.get(url).bearer_auth(token).send().await.unwrap().json::<serde_json::Value>().await.unwrap()
+        }
+    };
+    let v = me(boss.clone()).await;
+    assert_eq!(
+        (v["roles"].clone(), v["staff"].as_str()),
+        (serde_json::json!(["admin"]), Some("pending")),
+        "{v}"
+    );
+    // A sign-up naming the same email isn't vouched for.
+    let r = http
+        .post(format!("{}/signup", env.base[0]))
+        .form(&[("name", "Faker"), ("email", "boss@site.test"), ("password", "a long enough password")])
+        .send()
+        .await
+        .unwrap();
+    assert!(r.text().await.unwrap().contains("already has that email"));
+    let (gid, gwen) = env.player("Gwen", HUMAN).await;
+    assert_eq!(me(gwen.clone()).await["username"], "Gwen");
+    let admin_get =
+        |path: &str, token: &str| http.get(format!("{}{path}", env.base[0])).bearer_auth(token).send();
+    let r = admin_get("/api/admin/players", &boss).await.unwrap();
+    assert_eq!(r.status(), 403);
+    assert!(r.text().await.unwrap().contains("passkey"));
+    assert_eq!(admin_get("/api/admin/players", &gwen).await.unwrap().status(), 403);
+    // The passkey check done (passkeys have their own test).
+    env.pg
+        .execute(
+            &format!("UPDATE {}.api_tokens SET staff_verified_at = now() WHERE token_hash = $1", env.chess),
+            &[&hash_key(&boss)],
+        )
+        .await
+        .unwrap();
+    assert_eq!(me(boss.clone()).await["staff"], "checked");
+    let list: serde_json::Value =
+        admin_get("/api/admin/players?q=gw", &boss).await.unwrap().json().await.unwrap();
+    assert_eq!(list["players"][0]["username"], "Gwen", "{list}");
+    let post = |path: String, token: &str, body: serde_json::Value| {
+        http.post(format!("{}{path}", env.base[1])).bearer_auth(token).json(&body).send()
+    };
+    let r =
+        post("/api/admin/players/gwen".into(), &boss, serde_json::json!({"manager": true})).await.unwrap();
+    assert_eq!(r.status(), 400, "no passkey, no role");
+    passkey_for(format!("id = {gid}")).await;
+    let r: serde_json::Value =
+        post("/api/admin/players/gwen".into(), &boss, serde_json::json!({"manager": true}))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!((r["manager"].as_bool(), r["admin"].as_bool()), (Some(true), Some(false)), "{r}");
+    let v = me(gwen.clone()).await;
+    assert_eq!((v["roles"].clone(), v["staff"].as_str()), (serde_json::json!(["manager"]), Some("pending")));
+    let r = post("/api/admin/players/boss".into(), &boss, serde_json::json!({"admin": false})).await.unwrap();
+    assert_eq!(r.status(), 400, "not yourself");
+
+    // Partners: a token that reads, and nothing else.
+    let p: serde_json::Value = post(
+        "/api/admin/partners".into(),
+        &boss,
+        serde_json::json!({"name": "watcher", "scopes": ["read", "nope"]}),
+    )
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let partner = p["token"].as_str().unwrap().to_owned();
+    assert!(partner.starts_with("ocs_"));
+    assert_eq!(admin_get("/api/user/Gwen", &partner).await.unwrap().status(), 200);
+    assert_eq!(admin_get("/api/user/Gwen", "ocs_nonsense").await.unwrap().status(), 401);
+    assert_eq!(http.get(format!("{}/api/user/Gwen", env.base[0])).send().await.unwrap().status(), 401);
+    let r = http
+        .post(format!("{}/api/esports/token", env.base[0]))
+        .bearer_auth(&partner)
+        .form(&[("sub", "501")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403, "not the host site");
+    assert_eq!(
+        admin_get("/api/admin/players", &partner).await.unwrap().status(),
+        401,
+        "no account behind it"
+    );
+    let listed: serde_json::Value =
+        admin_get("/api/admin/partners", &boss).await.unwrap().json().await.unwrap();
+    assert_eq!(listed["partners"][0]["scopes"], serde_json::json!(["read"]));
+    let id = p["id"].as_i64().unwrap();
+    post(format!("/api/admin/partners/{id}/revoke"), &boss, serde_json::json!({})).await.unwrap();
+    assert_eq!(admin_get("/api/user/Gwen", &partner).await.unwrap().status(), 401);
+    // The profile page lives in the Chess lab.
+    let r = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap()
+        .get(format!("{}/@/Gwen", env.base[0]))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.headers()["location"], "/app/#@/Gwen");
+    env.teardown().await;
+}
+
+/// A platform authenticator for the tests: a P-256 key.
+struct Authenticator {
+    key: aws_lc_rs::signature::EcdsaKeyPair,
+    id: Vec<u8>,
+    count: u32,
+}
+
+impl Authenticator {
+    fn new() -> Authenticator {
+        use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair};
+        let rng = aws_lc_rs::rand::SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).unwrap();
+        let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8.as_ref()).unwrap();
+        Authenticator { key, id: random_token(16).into_bytes(), count: 0 }
+    }
+
+    fn b64(b: &[u8]) -> String {
+        use base64::Engine as _;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
+    }
+
+    fn client_data(kind: &str, options: &serde_json::Value) -> Vec<u8> {
+        serde_json::json!({"type": kind, "challenge": options["public_key"]["challenge"], "origin": "http://chess.test"})
+            .to_string()
+            .into_bytes()
+    }
+
+    fn auth_data(&mut self, flags: u8, attested: &[u8]) -> Vec<u8> {
+        use sha2::Digest as _;
+        self.count += 1;
+        [&sha2::Sha256::digest(b"chess.test")[..], &[flags], &self.count.to_be_bytes(), attested].concat()
+    }
+
+    /// `navigator.credentials.create`'s answer to these options.
+    fn create(&mut self, options: &serde_json::Value) -> serde_json::Value {
+        use aws_lc_rs::signature::KeyPair as _;
+        use ciborium::Value as Cbor;
+        let point = self.key.public_key().as_ref().to_vec();
+        let i = |n: i64| Cbor::Integer(n.into());
+        let cose = Cbor::Map(vec![
+            (i(1), i(2)),
+            (i(3), i(-7)),
+            (i(-1), i(1)),
+            (i(-2), Cbor::Bytes(point[1..33].to_vec())),
+            (i(-3), Cbor::Bytes(point[33..].to_vec())),
+        ]);
+        let mut cose_bytes = Vec::new();
+        ciborium::into_writer(&cose, &mut cose_bytes).unwrap();
+        let len = u16::try_from(self.id.len()).unwrap().to_be_bytes();
+        let attested = [&[0u8; 16][..], &len, &self.id, &cose_bytes].concat();
+        let ad = self.auth_data(0x01 | 0x04 | 0x40, &attested);
+        let mut att = Vec::new();
+        ciborium::into_writer(
+            &Cbor::Map(vec![
+                (Cbor::Text("fmt".into()), Cbor::Text("none".into())),
+                (Cbor::Text("attStmt".into()), Cbor::Map(vec![])),
+                (Cbor::Text("authData".into()), Cbor::Bytes(ad)),
+            ]),
+            &mut att,
+        )
+        .unwrap();
+        serde_json::json!({
+            "challenge_id": options["challenge_id"],
+            "client_data_json": Self::b64(&Self::client_data("webauthn.create", options)),
+            "attestation_object": Self::b64(&att),
+        })
+    }
+
+    /// `navigator.credentials.get`'s answer to these options.
+    fn get(&mut self, options: &serde_json::Value) -> serde_json::Value {
+        use sha2::Digest as _;
+        let cd = Self::client_data("webauthn.get", options);
+        let ad = self.auth_data(0x01 | 0x04, &[]);
+        let signed = [&ad[..], &sha2::Sha256::digest(&cd)[..]].concat();
+        let sig = self.key.sign(&aws_lc_rs::rand::SystemRandom::new(), &signed).unwrap();
+        serde_json::json!({
+            "challenge_id": options["challenge_id"],
+            "id": Self::b64(&self.id),
+            "client_data_json": Self::b64(&cd),
+            "authenticator_data": Self::b64(&ad),
+            "signature": Self::b64(sig.as_ref()),
+        })
+    }
+}
+
+/// Passkeys instead of a password: an account made with one, signing in
+/// with it, and the passkey check that turns on an admin's rights.
+#[tokio::test]
+async fn passkeys_make_accounts_sign_in_and_check_staff() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let post =
+        |path: &str, body: serde_json::Value| http.post(format!("{}{path}", env.base[0])).json(&body).send();
+    let mut key = Authenticator::new();
+    let o: serde_json::Value = post("/signup/passkey/options", serde_json::json!({"name": "Pia"}))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(o["public_key"]["rp"]["id"], "chess.test", "{o}");
+    let mut made = key.create(&o);
+    made["return"] = serde_json::json!("/account");
+    let r = post("/signup/passkey", made.clone()).await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(set_cookie(&r, "oc_session").is_some());
+    assert_eq!(r.json::<serde_json::Value>().await.unwrap()["to"], "/account");
+    assert_eq!(post("/signup/passkey", made).await.unwrap().status(), 403, "a challenge is used once");
+    let name_taken = post("/signup/passkey/options", serde_json::json!({"name": "pia"})).await.unwrap();
+    assert_eq!(name_taken.status(), 400);
+    // Signing in with it, without a name.
+    let o: serde_json::Value =
+        post("/auth/passkey/options", serde_json::json!({})).await.unwrap().json().await.unwrap();
+    let r = post("/auth/passkey", key.get(&o)).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let session = set_cookie(&r, "oc_session").unwrap();
+    let page = http
+        .get(format!("{}/account", env.base[1]))
+        .header("cookie", format!("oc_session={session}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(page.contains("Signed in as <b>Pia</b>") && page.contains("Set a password"), "{page}");
+    // A session without a passkey check (a stolen cookie, say) can't add a
+    // passkey or set a password on an account that has passkeys.
+    let bare = random_token(40);
+    env.pg
+        .execute(
+            &format!(
+                "INSERT INTO {}.sessions (token_hash, player_id, expires_at)
+                 SELECT $1, player_id, now() + interval '1 day' FROM {}.accounts WHERE username = 'Pia'",
+                env.chess, env.chess
+            ),
+            &[&hash_key(&bare)],
+        )
+        .await
+        .unwrap();
+    let r = http
+        .post(format!("{}/account/passkeys/options", env.base[0]))
+        .header("cookie", format!("oc_session={bare}"))
+        .header("x-csrf", hash_key(&format!("{bare}|passkeys")))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    let r = http
+        .post(format!("{}/account/password", env.base[0]))
+        .header("cookie", format!("oc_session={bare}"))
+        .form(&[
+            ("csrf", hash_key(&format!("{bare}|passkeys")).as_str()),
+            ("password", "a stolen session's password"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    // The passkey-signed session can.
+    let r = http
+        .post(format!("{}/account/passkeys/options", env.base[0]))
+        .header("cookie", format!("oc_session={session}"))
+        .header("x-csrf", hash_key(&format!("{session}|passkeys")))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    // Another authenticator's answer, or a stale challenge, doesn't sign in.
+    let o: serde_json::Value =
+        post("/auth/passkey/options", serde_json::json!({})).await.unwrap().json().await.unwrap();
+    let mut other = Authenticator::new();
+    assert_eq!(post("/auth/passkey", other.get(&o)).await.unwrap().status(), 403);
+    // An admin's check, made with a token in an app.
+    let pia: i64 = env
+        .pg
+        .query_one(&format!("SELECT player_id FROM {}.accounts WHERE username = 'Pia'", env.chess), &[])
+        .await
+        .unwrap()
+        .get(0);
+    env.pg
+        .execute(&format!("UPDATE {}.players SET role = 'admin' WHERE id = $1", env.chess), &[&pia])
+        .await
+        .unwrap();
+    let token = format!("ocp_{}", random_token(36));
+    env.pg
+        .execute(
+            &format!(
+                "INSERT INTO {}.api_tokens (player_id, name, token_hash, prefix, scopes, expires_at)
+                 VALUES ($1, 'app', $2, 'ocp_xx', '{{}}', now() + interval '1 day')",
+                env.chess
+            ),
+            &[&pia, &hash_key(&token)],
+        )
+        .await
+        .unwrap();
+    let api = |path: &str| http.post(format!("{}{path}", env.base[1])).bearer_auth(&token);
+    let admins = || http.get(format!("{}/api/admin/players", env.base[0])).bearer_auth(&token).send();
+    assert_eq!(admins().await.unwrap().status(), 403);
+    let o: serde_json::Value =
+        api("/api/account/passkey/options").send().await.unwrap().json().await.unwrap();
+    assert_eq!(o["public_key"]["allowCredentials"].as_array().map(Vec::len), Some(1), "{o}");
+    let r = api("/api/account/passkey").json(&key.get(&o)).send().await.unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    assert_eq!(admins().await.unwrap().status(), 200);
+    env.teardown().await;
 }

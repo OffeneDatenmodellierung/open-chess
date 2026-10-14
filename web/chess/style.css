@@ -367,3 +367,30 @@ dialog.terms h2 { margin-top: 0; }
 dialog.terms a { color: var(--action); }
 dialog.terms .check { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.75rem 0; }
 @media (max-width: 760px) { .review-card { grid-template-columns: 1fr; } }
+
+/* ---------- players and admin (#@/<name>, #admin) */
+.people-page { max-width: 60rem; margin: 0 auto; padding: 0.5rem 1rem 3rem; }
+.people .back { color: var(--action); }
+.people h1 { font-size: 1.7rem; margin: 0.5rem 0 0.25rem; overflow-wrap: anywhere; }
+.people h2 { font-size: 1.15rem; margin: 0 0 0.5rem; }
+.people h3 { font-size: 1rem; margin: 1rem 0 0.25rem; }
+.people a { color: var(--action); }
+.people .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.people a.button { display: inline-flex; align-items: center; padding: 0.4rem 0.9rem; border: 1px solid var(--rule); border-radius: 8px; text-decoration: none; color: inherit; background: var(--panel); }
+.player-search { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1rem; }
+.player-search input:not([type=checkbox]) { flex: 1 1 12rem; min-width: 0; padding: 0.45rem 0.6rem; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); }
+.profile-head .online { color: #3a9b5c; font-size: 0.8em; }
+.tag { font-size: 0.7em; font-weight: 700; padding: 0.1rem 0.35rem; border-radius: 4px; background: var(--panel); border: 1px solid var(--rule); vertical-align: middle; }
+.perfs { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: 0.5rem; }
+.perfs li { display: grid; gap: 0.1rem; padding: 0.6rem 0.75rem; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); }
+.perfs b { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+.people .table-wrap { overflow-x: auto; }
+table.games { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+table.games th, table.games td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+table.games td.win { color: #3a9b5c; font-weight: 700; }
+table.games td.loss { color: var(--danger); font-weight: 700; }
+.people .notice { border-color: var(--amber); }
+.people ul.plain { list-style: none; padding: 0; margin: 0.25rem 0; }
+.people ul.plain li { padding: 0.25rem 0; overflow-wrap: anywhere; }
+.people code.token { word-break: break-all; font: 0.9em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.new-partner { margin-top: 0.75rem; border-top: 1px solid var(--rule); padding-top: 0.5rem; }

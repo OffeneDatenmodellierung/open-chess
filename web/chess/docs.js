@@ -151,20 +151,26 @@ async function show(id, anchor) {
   }
 }
 
-// The app's pages besides the board: #docs (here) and #review (review.js,
-// told by an "open-chess:page" event).
+// The app's pages besides the board: #docs (here), and #review
+// (review.js), #@/<name> and #admin (people.js), told by an
+// "open-chess:page" event.
+const PAGES = { docs: "docsView", review: "reviewView", profile: "profileView", admin: "adminView" };
+const BUTTONS = { docs: "openDocs", review: "openReview", profile: "openProfile", admin: "openAdmin" };
+
 function route() {
-  const m = /^#docs(?:\/([a-z0-9-]+))?(?:#(.+))?$/i.exec(location.hash);
-  const page = m ? "docs" : /^#review\b/.test(location.hash) ? "review" : null;
-  view().hidden = page !== "docs";
-  const review = document.getElementById("reviewView");
-  if (review) review.hidden = page !== "review";
+  const h = location.hash;
+  const m = /^#docs(?:\/([a-z0-9-]+))?(?:#(.+))?$/i.exec(h);
+  const page = m ? "docs" : /^#review\b/.test(h) ? "review" : /^#@\//.test(h) ? "profile" : /^#admin\b/.test(h) ? "admin" : null;
+  for (const [p, id] of Object.entries(PAGES)) {
+    const v = document.getElementById(id);
+    if (v) v.hidden = page !== p;
+  }
   play().hidden = !!page;
   document.documentElement.classList.toggle("reading", !!page);
-  document.getElementById("openDocs")?.setAttribute("aria-pressed", String(page === "docs"));
-  document.getElementById("openReview")?.setAttribute("aria-pressed", String(page === "review"));
+  for (const [p, id] of Object.entries(BUTTONS)) document.getElementById(id)?.setAttribute("aria-pressed", String(page === p));
   if (page === "docs") show(m[1] || "", m[2]);
-  else document.title = page === "review" ? "Board photos to check · Chess lab" : "Chess lab";
+  else if (page === "review") document.title = "Board photos to check · Chess lab";
+  else if (!page) document.title = "Chess lab";
   dispatchEvent(new CustomEvent("open-chess:page", { detail: page }));
 }
 
@@ -172,7 +178,7 @@ export function startDocs() {
   addEventListener("hashchange", route);
   // Choosing what to play goes back to the board.
   document.querySelectorAll("[data-mode]").forEach((b) =>
-    b.addEventListener("click", () => { if (/^#(docs|review)/.test(location.hash)) location.hash = ""; }),
+    b.addEventListener("click", () => { if (/^#(docs|review|admin|@\/)/.test(location.hash)) location.hash = ""; }),
   );
   route();
 }

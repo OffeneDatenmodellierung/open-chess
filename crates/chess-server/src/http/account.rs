@@ -7,15 +7,40 @@ use bytes::Bytes;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::app::{Ctx, Who};
+use crate::app::{Ctx, Reader, Who};
 use crate::error::{ApiError, ApiResult};
 use crate::http::{line, ndjson, ok};
 use crate::model;
 
+/// `GET /api/account`: Lichess's, plus what this server adds about you:
+/// `roles` here (admin, manager), whether your passkey check is done
+/// (`staff`: "checked", "pending" or absent) and how many passkeys you have.
 pub async fn me(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
     let c = ctx.db.conn().await?;
     let a = model::ensure_account(&ctx.db, &*c, who.0.player).await?;
-    Ok(Json(model::user_json(&ctx.db, &*c, &a, ctx.cfg.public_url()).await?).into_response())
+    let mut v = serde_json::to_value(model::user_json(&ctx.db, &*c, &a, ctx.cfg.public_url()).await?)
+        .map_err(|e| ApiError::from(anyhow::Error::from(e)))?;
+    let r = c
+        .query_one(
+            &ctx.db.sql(
+                "SELECT role, roles, (SELECT count(*) FROM chess.passkeys WHERE player_id = $1)
+                   FROM chess.players WHERE id = $1",
+            ),
+            &[&who.0.player],
+        )
+        .await?;
+    let (admin, manager) = crate::auth::staff_roles(&r.get::<_, String>(0), &r.get::<_, Vec<String>>(1));
+    let roles: Vec<&str> =
+        [(admin, "admin"), (manager, "manager")].iter().filter(|x| x.0).map(|x| x.1).collect();
+    v["roles"] = json!(roles);
+    v["passkeys"] = json!(r.get::<_, i64>(2));
+    if who.0.admin || who.0.manager {
+        v["staff"] = json!("checked");
+    } else if who.0.pending {
+        v["staff"] = json!("pending");
+    }
+    v["accountUrl"] = json!(format!("{}/account", ctx.cfg.public_url()));
+    Ok(Json(v).into_response())
 }
 
 pub async fn email(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
@@ -45,7 +70,11 @@ pub async fn playing(State(ctx): State<Ctx>, who: Who, Query(q): Query<Nb>) -> A
     Ok(Json(chess_proto::NowPlaying { now_playing: now, nb_my_turn: my_turn as i64 }).into_response())
 }
 
-pub async fn user(State(ctx): State<Ctx>, Path(username): Path<String>) -> ApiResult<Response> {
+pub async fn user(
+    State(ctx): State<Ctx>,
+    _reader: Reader,
+    Path(username): Path<String>,
+) -> ApiResult<Response> {
     let c = ctx.db.conn().await?;
     let a =
         model::account_by_name(&ctx.db, &*c, &username).await?.ok_or_else(|| ApiError::not_found("user"))?;
@@ -77,7 +106,11 @@ pub async fn upgrade(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
 }
 
 /// Bots seen in the last ten minutes, as NDJSON users.
-pub async fn bots_online(State(ctx): State<Ctx>, Query(q): Query<Nb>) -> ApiResult<Response> {
+pub async fn bots_online(
+    State(ctx): State<Ctx>,
+    _reader: Reader,
+    Query(q): Query<Nb>,
+) -> ApiResult<Response> {
     let c = ctx.db.conn().await?;
     let rows = c
         .query(
@@ -112,7 +145,11 @@ pub struct Autocomplete {
 /// `{"result": [{id, name, online}]}`; otherwise a JSON array of names. The
 /// computer's accounts (`ai-level-N`) aren't offered: it's played with
 /// `POST /api/challenge/ai`.
-pub async fn autocomplete(State(ctx): State<Ctx>, Query(q): Query<Autocomplete>) -> ApiResult<Response> {
+pub async fn autocomplete(
+    State(ctx): State<Ctx>,
+    _reader: Reader,
+    Query(q): Query<Autocomplete>,
+) -> ApiResult<Response> {
     let term = q.term.unwrap_or_default().trim().to_lowercase();
     if term.is_empty() {
         return Ok(

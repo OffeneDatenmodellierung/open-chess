@@ -27,15 +27,16 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.incre
 | Area | Endpoints |
 |---|---|
 | OAuth | `GET/POST /oauth` (consent page), `POST /api/token`, `DELETE /api/token`, `POST /api/token/test` |
-| Account | `GET /api/account`, `/api/account/email`, `/api/account/playing` (`nb`), `/api/user/{username}`, `/api/player/autocomplete` (`term`, `object`, `nb`: players whose name starts with, then contains, `term`, for a type-ahead list; no token needed) |
+| Account | `GET /api/account` (Lichess's, plus `roles`, `staff` and `passkeys`, below), `/api/account/email`, `/api/account/playing` (`nb`), `/api/user/{username}`, `/api/player/autocomplete` (`term`, `object`, `nb`: players whose name starts with, then contains, `term`, for a type-ahead list), `POST /api/account/passkey/options` and `POST /api/account/passkey` (the staff passkey check, below) |
 | Bots | `POST /api/bot/account/upgrade`, `GET /api/bot/online` (`nb`) |
 | Streams | `GET /api/stream/event`, `/api/board/game/stream/{id}`, `/api/bot/game/stream/{id}`, `/api/stream/game/{id}` (see [Live games](#live-games)) |
 | Challenges | `POST /api/challenge/ai` (the computer, below), `POST /api/challenge/{username}` (with `keepAliveStream`, `rules` and `acceptByToken`), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline` (`reason`), `…/cancel` |
 | Playing | `/api/board/game/{id}/…` and `/api/bot/game/{id}/…`: `move/{uci}` (`offeringDraw`), `resign`, `abort`, `draw/{yes\|no}`, `takeback/{yes\|no}`, `claim-victory`, `claim-draw`, `chat` (GET, and POST with `room` and `text`, up to 140 characters) |
-| Games | `GET /game/export/{id}` and `/api/games/export/{id}` (PGN, or JSON with `Accept: application/json`; `pgnInJson`, `clocks`, `moves`) |
-| Fair play (ours) | `GET /api/fairplay/queue` (`limit`, default 50, up to 500; `all=true` for reviewed games too), `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` (scope `chess:fairplay`) |
+| Games | `GET /game/export/{id}` and `/api/games/export/{id}` (PGN, or JSON with `Accept: application/json`; `pgnInJson`, `clocks`, `moves`), `GET /api/games/user/{username}` (their games, newest first, NDJSON; `max`, default 20, up to 100; `ongoing=false`) |
+| Fair play (ours) | `GET /api/fairplay/queue` (`limit`, default 50, up to 500; `all=true` for reviewed games too), `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` (managers and admins, below) |
+| Admin (ours) | `GET /api/admin/players` (`q`, `only=staff`), `GET/POST /api/admin/players/{username}`, `POST …/tokens/revoke`, `POST …/passkeys/reset`, `GET/POST /api/admin/partners`, `POST /api/admin/partners/{id}/revoke` (see [Admins](#admins-managers-and-partners)) |
 | Training app (ours) | see [below](#training-app-endpoints) |
-| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,photos,photo-licence,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them), `GET /docs` and `/docs/{guide}` (these guides, read in the app: `/app/#docs/{guide}`, or on GitHub when the app isn't installed), `GET /favicon.svg` (`/favicon.ico` too: the logo) |
+| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,photos,photo-licence,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them), `GET /docs` and `/docs/{guide}` (these guides, read in the app: `/app/#docs/{guide}`, or on GitHub when the app isn't installed), `GET /favicon.svg` (`/favicon.ico` too: the logo), `GET /@/{username}` (a player's profile, in the app: `/app/#@/{username}`) |
 | Operations (the metrics port, `CHESS_METRICS_BIND`) | `GET /metrics` (Prometheus), `/healthz` (the process is up), `/readyz` (it can reach Postgres) |
 
 **`GET /`** answers what the server is, for the app and for tools:
@@ -70,6 +71,11 @@ correspondence games, seeks and the lobby, tournaments, studies, puzzles, the st
 don't exist get an empty 404; unsupported options on paths that do (a
 variant, a correspondence clock) get Lichess's JSON errors. Rated games from
 a position, and rated unlimited games, are refused as on Lichess.
+
+**Signed in only.** Nothing is read anonymously: game export, the move
+streams, `/api/user`, autocomplete, online bots and [the feed](#the-live-feed)
+all need a token, a player's or [a partner's](#admins-managers-and-partners).
+Only `GET /`, the app, the guides and the sign-in pages are open.
 
 **Differences worth knowing**
 * `acceptByToken` (start a game without either player clicking: the
@@ -131,13 +137,21 @@ opens this first and a game stream for each `gameStart`.
 
 ## Accounts, tokens and OAuth
 
-The server has its own accounts. People make one at `/signup` (a username,
-a password of 10 or more characters, and optionally an email; off with
-`CHESS_SIGNUP=false`), sign in at `/login` (username or email), and make and
-revoke API tokens on `/account`. With `ESPORTS_LOGIN`, a host site's
-players sign in with the site instead, and the site's server gets tokens
-for them (see the
+The server has its own accounts, and needs no other site's. People make one
+at `/signup` (a username, optionally an email, and a password of 10 or more
+characters or a passkey; off with `CHESS_SIGNUP=false`), sign in at `/login`
+(username or email and password, or a passkey), and manage passkeys, their
+password and API tokens on `/account`. With `ESPORTS_LOGIN`, a host site's
+players can also sign in with the site; their account here is linked to
+theirs there, and neither site needs an account on the other (see the
 [server README](../crates/chess-server/README.md#plugging-into-a-site)).
+
+**Passkeys** (WebAuthn: a fingerprint, face or device PIN) work instead of a
+password: an account can be made with one and have no password at all, and
+the Account page adds more (or removes them, keeping one when there's no
+password). The server is the relying party for its `CHESS_PUBLIC_URL`'s
+host, so passkeys work on that origin (the Chess lab served at `/app/`),
+not inside another site's frame.
 Bearer tokens start `ocp_` (tokens imported from a host site keep its
 `esl_`), with Lichess's scope names:
 
@@ -150,6 +164,50 @@ Bearer tokens start `ocp_` (tokens imported from a host site keep its
 | `chess:fairplay` | the fair-play review API (reviewers) |
 
 A revoked token stops working within 15 seconds (tokens are cached that long).
+
+## Admins, managers and partners
+
+Roles here are this server's own: a host site's roles don't carry over.
+
+* **Admins** run the server: accounts and their roles, tokens, partners.
+  `CHESS_ADMIN_EMAILS` (comma-separated) makes an account an admin when it
+  signs in with a listed email that's confirmed (a host site's sign-in
+  vouches for its emails, so this trusts that sign-in; one typed into
+  `/signup` isn't confirmed), and `open-chess admin grant <username>`
+  (`--manager` for a manager; `revoke`, `list`) does it from the command
+  line. Admins make others admins or managers in the Chess lab's admin page.
+  A role only goes to an account that has a passkey.
+* **Managers** review fair play and settle board photos.
+
+Their rights need a **passkey check** as well: until then `/api/account`
+says `"staff": "pending"` and staff endpoints answer 403. `POST
+/api/account/passkey/options` then `POST /api/account/passkey` (the
+`navigator.credentials.get` answer) checks the token in hand (the Chess lab
+does this); signing in with a passkey, or confirming on the Account page,
+checks the session. A token made through OAuth never inherits a check: an
+app approved for `board:play` doesn't get an admin's rights.
+
+On an account with passkeys, adding or removing one, or setting or dropping
+the password, needs that check in the session too, so a stolen password or
+session can't add the thief's passkey. Without passkeys, changing the
+password takes the current one. A check lasts
+`CHESS_ADMIN_PASSKEY_HOURS` (12). `/api/account` adds `"roles": ["admin",
+"manager"]`, `"staff": "checked" | "pending"` and `"passkeys": <count>`.
+
+**Partners** are other services' API access: an admin makes one in the admin
+page, or with `open-chess partner create --name esports-lab --scopes
+read,site`, and gives its token (`ocs_…`, shown once) to the service, which
+sends it as a bearer token. Its scopes:
+
+| Scope | For |
+|---|---|
+| `read` | games, players and the live feed (everything a signed-in player reads) |
+| `site` | acting as the host site: `/api/esports/token`, `…/revoke`, `…/players` and `…/link` |
+
+Revoking a partner stops its token at once. A host site's shared secret
+(`ESPORTS_SECRET`) still works as a partner with both scopes, so it can move
+to a partner token at its own pace; the secret also signs its players'
+sign-ins.
 
 **OAuth** works as on Lichess: no client registration, PKCE S256, one-year
 tokens. The consent page (`GET /oauth`) acts for whoever is signed in to
@@ -173,7 +231,8 @@ Bot API and people only through the Board API, as on Lichess. See
 
 `GET /api/feed` sends every game on the server as
 [server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html),
-with no token needed (it shows what the public game streams show):
+to a player's token or a partner's with `read` (it shows what the public
+game streams show):
 
 | Event | Data |
 |---|---|
@@ -188,9 +247,8 @@ consumer that keeps the last id it handled misses nothing. `?game=<id>`
 follows one game; `?only=end` sends only finished games. A comment every
 15 seconds keeps proxies from closing the stream.
 
-```js
-const feed = new EventSource("https://chess.example.com/api/feed?only=end");
-feed.addEventListener("end", (e) => console.log(JSON.parse(e.data)));
+```sh
+curl -N -H "Authorization: Bearer $PARTNER_TOKEN" "https://chess.example.com/api/feed?only=end"
 ```
 
 ## The Chess lab's look
@@ -245,7 +303,7 @@ came from, so existing app installs keep working.
 
 ## Fair-play review
 
-`chess:fairplay` scope. `GET /api/fairplay/queue` lists flagged games waiting
+Managers and admins, with their passkey check. `GET /api/fairplay/queue` lists flagged games waiting
 for a person; `GET /api/fairplay/games/{id}` and `/players/{username}` give
 the screening reports; `POST /api/fairplay/reviews`
 `{username, gameId?, verdict: "engine"|"clean"|"unclear", note?}` records a reviewer's

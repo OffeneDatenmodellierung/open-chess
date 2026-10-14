@@ -284,6 +284,73 @@ export class Api {
   decline(id) {
     return this.post(`/api/challenge/${id}/decline`);
   }
+  // Players and admin (open-chess servers):
+  /// A player's profile (Lichess's user shape).
+  user(name) {
+    return this.json(`/api/user/${encodeURIComponent(name)}`);
+  }
+  /// A player's latest games, newest first.
+  async gamesOf(name, max = 20) {
+    const out = [];
+    const r = await fetch(`${this.base}/api/games/user/${encodeURIComponent(name)}?max=${max}`, { headers: this.headers() });
+    if (!r.ok) throw new Error(`games: ${r.status}`);
+    for (const line of (await r.text()).split("\n")) if (line.trim()) out.push(JSON.parse(line));
+    return out;
+  }
+  /// A game's PGN.
+  async pgn(id) {
+    const r = await fetch(`${this.base}/game/export/${encodeURIComponent(id)}`, { headers: this.headers() });
+    if (!r.ok) throw new Error(`the game: ${r.status}`);
+    return r.text();
+  }
+  autocomplete(term) {
+    return this.json(`/api/player/autocomplete?object=true&term=${encodeURIComponent(term)}`);
+  }
+  /// The staff passkey check for this token (admins and managers).
+  async staffCheck() {
+    const o = await this.postJson("/api/account/passkey/options", {});
+    const pk = o.public_key;
+    const dec = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+    const cred = await navigator.credentials.get({
+      publicKey: { ...pk, challenge: dec(pk.challenge), allowCredentials: (pk.allowCredentials || []).map((c) => ({ ...c, id: dec(c.id) })) },
+    });
+    const r = cred.response;
+    return this.postJson("/api/account/passkey", {
+      challenge_id: o.challenge_id,
+      id: b64url(cred.rawId),
+      client_data_json: b64url(r.clientDataJSON),
+      authenticator_data: b64url(r.authenticatorData),
+      signature: b64url(r.signature),
+      user_handle: r.userHandle ? b64url(r.userHandle) : null,
+    });
+  }
+  fairplayPlayer(name) {
+    return this.json(`/api/fairplay/players/${encodeURIComponent(name)}`);
+  }
+  adminPlayers(q = "", staffOnly = false) {
+    return this.json(`/api/admin/players?q=${encodeURIComponent(q)}${staffOnly ? "&only=staff" : ""}`);
+  }
+  adminPlayer(name) {
+    return this.json(`/api/admin/players/${encodeURIComponent(name)}`);
+  }
+  adminChange(name, change) {
+    return this.postJson(`/api/admin/players/${encodeURIComponent(name)}`, change);
+  }
+  adminRevokeTokens(name, id) {
+    return this.postJson(`/api/admin/players/${encodeURIComponent(name)}/tokens/revoke`, id ? { id } : {});
+  }
+  adminResetPasskeys(name) {
+    return this.postJson(`/api/admin/players/${encodeURIComponent(name)}/passkeys/reset`, {});
+  }
+  partners() {
+    return this.json("/api/admin/partners");
+  }
+  newPartner(name, scopes) {
+    return this.postJson("/api/admin/partners", { name, scopes });
+  }
+  revokePartner(id) {
+    return this.postJson(`/api/admin/partners/${id}/revoke`, {});
+  }
   // open-chess board devices only:
   /// The device's settings and what it's doing.
   device() {

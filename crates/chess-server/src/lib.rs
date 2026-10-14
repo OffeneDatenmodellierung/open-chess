@@ -13,6 +13,7 @@ pub mod error;
 pub mod http;
 pub mod metrics;
 pub mod model;
+pub mod passkeys;
 pub mod play;
 pub mod vision;
 

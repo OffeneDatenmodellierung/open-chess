@@ -9,7 +9,7 @@ use axum::response::{IntoResponse, Response};
 use chess_core::{Game, PgnGame, PgnPlayer, Side, pgn};
 use chess_proto as p;
 
-use crate::app::Ctx;
+use crate::app::{Ctx, Reader};
 use crate::config::Config;
 use crate::error::{ApiError, ApiResult};
 use crate::model::{self, GameRow};
@@ -91,6 +91,7 @@ pub(crate) fn json(row: &GameRow, game: &Game, q: &HashMap<String, String>, cfg:
 
 pub async fn export(
     State(ctx): State<Ctx>,
+    _reader: Reader,
     h: HeaderMap,
     Path(id): Path<String>,
     Query(q): Query<HashMap<String, String>>,
@@ -109,4 +110,39 @@ pub async fn export(
     let mut r = pgn_text(&row, &game, &ctx.cfg, flag(&q, "clocks", false)).into_response();
     r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/x-chess-pgn"));
     Ok(r)
+}
+
+/// `GET /api/games/user/{username}`: a player's games, newest first, as
+/// NDJSON (Lichess's shape; `max`, default 20, up to 100; `ongoing=false`
+/// leaves out games in progress).
+pub async fn by_user(
+    State(ctx): State<Ctx>,
+    _reader: Reader,
+    Path(username): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> ApiResult<Response> {
+    let c = ctx.db.conn().await?;
+    let a =
+        model::account_by_name(&ctx.db, &*c, &username).await?.ok_or_else(|| ApiError::not_found("user"))?;
+    let max: i64 = q.get("max").and_then(|m| m.parse().ok()).unwrap_or(20).clamp(1, 100);
+    let ongoing = flag(&q, "ongoing", true);
+    let rows = c
+        .query(
+            &ctx.db.sql(&format!(
+                "{} WHERE (g.white_id = $1 OR g.black_id = $1) AND ($2 OR g.status NOT IN (10, 20))
+                 ORDER BY g.created_at DESC LIMIT $3",
+                model::GAME_SELECT
+            )),
+            &[&a.player_id, &ongoing, &max],
+        )
+        .await?;
+    drop(c);
+    let (tx, rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(rows.len().max(1));
+    for r in &rows {
+        let row = GameRow::from_row(r);
+        let Ok(game) = Game::from_moves(row.initial_fen.as_deref(), &row.moves) else { continue };
+        let _ = tx.try_send(crate::http::line(&json(&row, &game, &q, &ctx.cfg)));
+    }
+    drop(tx);
+    Ok(crate::http::ndjson(rx))
 }

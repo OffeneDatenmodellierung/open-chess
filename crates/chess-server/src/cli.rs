@@ -5,6 +5,8 @@
 //!   open-chess analyse    the fair-play worker (needs Stockfish)
 //!   open-chess migrate    create or update the chess schema, then exit
 //!   open-chess bot create --name esl-stockfish-1800   a bot account and its token
+//!   open-chess admin grant mark            make an account an admin (or --manager)
+//!   open-chess partner create --name esports-lab --scopes read,site   a partner token
 //!   open-chess healthcheck   for container health checks
 
 use std::time::Duration;
@@ -50,6 +52,16 @@ pub enum Cmd {
         #[command(subcommand)]
         cmd: BotCmd,
     },
+    /// Admins and managers here.
+    Admin {
+        #[command(subcommand)]
+        cmd: AdminCmd,
+    },
+    /// Partners: other services' API access.
+    Partner {
+        #[command(subcommand)]
+        cmd: PartnerCmd,
+    },
     /// Exit 0 if the local server answers /healthz.
     Healthcheck {
         #[arg(long, env = "CHESS_METRICS_BIND", default_value = "0.0.0.0:9465")]
@@ -73,6 +85,51 @@ pub enum BotCmd {
     },
     /// List bot accounts.
     List(Config),
+}
+
+#[derive(Subcommand)]
+pub enum AdminCmd {
+    /// Make an account an admin (or, with --manager, a manager).
+    Grant {
+        #[command(flatten)]
+        cfg: Config,
+        username: String,
+        #[arg(long)]
+        manager: bool,
+    },
+    /// Take an admin's (or, with --manager, a manager's) role away.
+    Revoke {
+        #[command(flatten)]
+        cfg: Config,
+        username: String,
+        #[arg(long)]
+        manager: bool,
+    },
+    /// List admins and managers.
+    List(Config),
+}
+
+#[derive(Subcommand)]
+pub enum PartnerCmd {
+    /// Make a partner and its token (printed once).
+    Create {
+        #[command(flatten)]
+        cfg: Config,
+        #[arg(long)]
+        name: String,
+        /// What it may do: read (games, players, the feed), site (act as
+        /// the host site: its players' tokens and links).
+        #[arg(long, value_delimiter = ',', default_value = "read")]
+        scopes: Vec<String>,
+    },
+    /// List partners.
+    List(Config),
+    /// Stop a partner's token working.
+    Revoke {
+        #[command(flatten)]
+        cfg: Config,
+        id: i64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -174,6 +231,8 @@ async fn dispatch(cmd: Option<Cmd>) -> Result<()> {
         Cmd::Photos { cmd: PhotosCmd::Export { cfg, out, reviewed_only, public_only } } => {
             photos_export(cfg, &out, reviewed_only, public_only).await
         }
+        Cmd::Admin { cmd } => admin(cmd).await,
+        Cmd::Partner { cmd } => partner(cmd).await,
         Cmd::Healthcheck { metrics_bind } => healthcheck(&metrics_bind),
     }
 }
@@ -320,6 +379,134 @@ async fn photos_export(
 /// Photos kept under the photo licence (docs/photo-licence.md), as the
 /// trainer's datasets.toml names it.
 const PHOTO_LICENCE: &str = "LicenseRef-open-chess-photo-licence-1";
+
+async fn admin(cmd: AdminCmd) -> Result<()> {
+    let (cfg, grant) = match &cmd {
+        AdminCmd::Grant { cfg, .. } => (cfg, Some(true)),
+        AdminCmd::Revoke { cfg, .. } => (cfg, Some(false)),
+        AdminCmd::List(cfg) => (cfg, None),
+    };
+    cfg.validate()?;
+    let db = Db::connect(cfg)?;
+    db.migrate().await?;
+    let c = db.conn().await?;
+    if let (
+        Some(on),
+        AdminCmd::Grant { username, manager, .. } | AdminCmd::Revoke { username, manager, .. },
+    ) = (grant, &cmd)
+    {
+        let sql = match (manager, on) {
+            (false, true) => "UPDATE chess.players SET role = 'admin'",
+            (false, false) => "UPDATE chess.players SET role = 'player'",
+            (true, true) => {
+                "UPDATE chess.players SET roles = array_append(array_remove(roles, 'manager'), 'manager')"
+            }
+            (true, false) => "UPDATE chess.players SET roles = array_remove(roles, 'manager')",
+        };
+        let keys: Option<i64> = c
+            .query_opt(
+                &db.sql(
+                    "SELECT (SELECT count(*) FROM chess.passkeys k WHERE k.player_id = a.player_id)
+                       FROM chess.accounts a WHERE lower(a.username) = lower($1)",
+                ),
+                &[username],
+            )
+            .await?
+            .map(|r| r.get(0));
+        let keys = keys.with_context(|| format!("no account here is called {username}"))?;
+        anyhow::ensure!(
+            !on || keys > 0,
+            "{username} needs a passkey first (their rights will need it): they add one on their account page, then grant again"
+        );
+        c.execute(
+            &db.sql(&format!(
+                "{sql} WHERE id = (SELECT player_id FROM chess.accounts WHERE lower(username) = lower($1))"
+            )),
+            &[username],
+        )
+        .await?;
+        let what = if *manager { "a manager" } else { "an admin" };
+        println!(
+            "{username} {} {what}.{}",
+            if on { "is now" } else { "is no longer" },
+            if on { " Their rights need a passkey check each session." } else { "" }
+        );
+        return Ok(());
+    }
+    for r in c
+        .query(
+            &db.sql(
+                "SELECT a.username, p.role, p.roles, p.email, (SELECT count(*) FROM chess.passkeys k WHERE k.player_id = p.id)
+                   FROM chess.players p JOIN chess.accounts a ON a.player_id = p.id
+                  WHERE p.role = 'admin' OR 'manager' = ANY(p.roles) ORDER BY lower(a.username)",
+            ),
+            &[],
+        )
+        .await?
+    {
+        let (admin, manager) = auth::staff_roles(&r.get::<_, String>(1), &r.get::<_, Vec<String>>(2));
+        let roles = [(admin, "admin"), (manager, "manager")].iter().filter(|x| x.0).map(|x| x.1).collect::<Vec<_>>();
+        println!(
+            "{:<24} {:<16} {:<32} {} passkey(s)",
+            r.get::<_, String>(0),
+            roles.join(","),
+            r.get::<_, Option<String>>(3).unwrap_or_default(),
+            r.get::<_, i64>(4)
+        );
+    }
+    Ok(())
+}
+
+async fn partner(cmd: PartnerCmd) -> Result<()> {
+    let cfg = match &cmd {
+        PartnerCmd::Create { cfg, .. } | PartnerCmd::Revoke { cfg, .. } | PartnerCmd::List(cfg) => cfg,
+    };
+    cfg.validate()?;
+    let db = Db::connect(cfg)?;
+    db.migrate().await?;
+    let c = db.conn().await?;
+    match &cmd {
+        PartnerCmd::Create { name, scopes, .. } => {
+            let (id, token) = crate::http::admin::make_partner(&db, &*c, name, scopes, None).await?;
+            println!("partner {name} made (id {id}); its token, shown once:\n{token}");
+        }
+        PartnerCmd::Revoke { id, .. } => {
+            let n = c
+                .execute(
+                    &db.sql(
+                        "UPDATE chess.partners SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+                    ),
+                    &[id],
+                )
+                .await?;
+            anyhow::ensure!(n == 1, "no partner {id} (or already revoked)");
+            println!("partner {id} revoked");
+        }
+        PartnerCmd::List(_) => {
+            for r in c
+                .query(
+                    &db.sql(
+                        "SELECT id, name, prefix, scopes, last_used_at FROM chess.partners
+                          WHERE revoked_at IS NULL ORDER BY id",
+                    ),
+                    &[],
+                )
+                .await?
+            {
+                let used: Option<chrono::DateTime<chrono::Utc>> = r.get(4);
+                println!(
+                    "{:<4} {:<24} {}… {:<12} last used {}",
+                    r.get::<_, i64>(0),
+                    r.get::<_, String>(1),
+                    r.get::<_, String>(2),
+                    r.get::<_, Vec<String>>(3).join(","),
+                    used.map_or_else(|| "never".into(), |t| t.to_rfc3339())
+                );
+            }
+        }
+    }
+    Ok(())
+}
 
 fn healthcheck(bind: &str) -> Result<()> {
     use std::io::{Read, Write};

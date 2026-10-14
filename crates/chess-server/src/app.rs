@@ -10,7 +10,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 
-use crate::auth::{Auth, Identity, bearer};
+use crate::auth::{Auth, Identity, Partner, bearer};
 use crate::config::Config;
 use crate::db::Db;
 use crate::error::ApiError;
@@ -53,7 +53,7 @@ impl Drop for Slot {
 impl Ctx {
     pub fn new(db: Db, cfg: Config) -> Ctx {
         Ctx {
-            auth: Auth::new(db.clone()),
+            auth: Auth::new(db.clone(), cfg.staff_passkey_hours),
             db,
             cfg: Arc::new(cfg),
             metrics: Metrics::new(),
@@ -113,7 +113,67 @@ impl FromRequestParts<Ctx> for Who {
     }
 }
 
+/// Someone allowed to read games and players: a signed-in player (any of
+/// their tokens) or a partner with the `read` scope. Nothing here is open
+/// without one.
+pub enum Reader {
+    Player(Identity),
+    Partner(Partner),
+}
+
+impl Reader {
+    pub fn player(&self) -> Option<&Identity> {
+        match self {
+            Reader::Player(id) => Some(id),
+            Reader::Partner(_) => None,
+        }
+    }
+}
+
+impl FromRequestParts<Ctx> for Reader {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, ctx: &Ctx) -> Result<Reader, ApiError> {
+        let t = bearer(&parts.headers).ok_or_else(ApiError::unauthorized)?;
+        if let Some(id) = ctx.auth.token(t).await? {
+            return Ok(Reader::Player(id));
+        }
+        match ctx.auth.partner(t, ctx.cfg.esports()).await? {
+            Some(p) if p.has(crate::auth::PARTNER_READ) => Ok(Reader::Partner(p)),
+            Some(_) => Err(ApiError::forbidden("this partner token can't read games")),
+            None => Err(ApiError::unauthorized()),
+        }
+    }
+}
+
+/// The host site (a partner with the `site` scope, or its shared secret).
+pub struct Site(pub Partner);
+
+impl FromRequestParts<Ctx> for Site {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, ctx: &Ctx) -> Result<Site, ApiError> {
+        let t = bearer(&parts.headers).ok_or_else(ApiError::unauthorized)?;
+        match ctx.auth.partner(t, ctx.cfg.esports()).await? {
+            Some(p) if p.has(crate::auth::PARTNER_SITE) => Ok(Site(p)),
+            Some(_) => Err(ApiError::forbidden("this partner token can't act as the host site")),
+            None => Err(ApiError::unauthorized()),
+        }
+    }
+}
+
 impl Who {
+    /// An admin, with a fresh passkey check.
+    pub fn admin(&self) -> Result<&Identity, ApiError> {
+        if self.0.admin {
+            Ok(&self.0)
+        } else if self.0.pending {
+            Err(ApiError::forbidden("admin rights need a passkey check first"))
+        } else {
+            Err(ApiError::forbidden("admins only"))
+        }
+    }
+
     /// The token must carry one of `scopes`.
     pub fn need(&self, scopes: &[&str]) -> Result<&Identity, ApiError> {
         if self.0.has_any(scopes) { Ok(&self.0) } else { Err(ApiError::missing_scope(scopes)) }
@@ -142,7 +202,7 @@ async fn cors(req: Request, next: Next) -> Response {
 }
 
 pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
-    use http::{account, app_files, challenges, fairplay, feed, games, lab, oauth, streams, web};
+    use http::{account, admin, app_files, challenges, fairplay, feed, games, lab, oauth, streams, web};
     let api = Router::new()
         // OAuth (PKCE) and tokens
         .route("/oauth", get(oauth::authorize).post(oauth::decide))
@@ -185,7 +245,29 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         // playing: Board API (people) and Bot API (bot accounts)
         .merge(play_routes("board"))
         .merge(play_routes("bot"))
+        // accounts: passkeys (pages and the staff check), admins
+        .route("/auth/passkey/options", post(web::passkey_signin_options))
+        .route("/auth/passkey", post(web::passkey_signin))
+        .route("/signup/passkey/options", post(web::signup_passkey_options))
+        .route("/signup/passkey", post(web::signup_passkey))
+        .route("/account/passkeys/options", post(web::account_passkey_options))
+        .route("/account/passkeys", post(web::account_passkey_add))
+        .route("/account/passkeys/remove", post(web::account_passkey_remove))
+        .route("/account/password", post(web::account_password))
+        .route("/account/password/remove", post(web::account_password_remove))
+        .route("/account/staff/options", post(web::account_staff_options))
+        .route("/account/staff", post(web::account_staff))
+        .route("/api/account/passkey/options", post(web::api_staff_options))
+        .route("/api/account/passkey", post(web::api_staff))
+        .route("/api/admin/players", get(admin::players))
+        .route("/api/admin/players/{username}", get(admin::player).post(admin::change))
+        .route("/api/admin/players/{username}/tokens/revoke", post(admin::revoke_tokens))
+        .route("/api/admin/players/{username}/passkeys/reset", post(admin::reset_passkeys))
+        .route("/api/admin/partners", get(admin::partners).post(admin::new_partner))
+        .route("/api/admin/partners/{id}/revoke", post(admin::revoke_partner))
+        .route("/@/{username}", get(http::profile))
         // games
+        .route("/api/games/user/{username}", get(games::by_user))
         .route("/game/export/{id}", get(games::export))
         .route("/api/games/export/{id}", get(games::export))
         // fair play (our own, for reviewers)

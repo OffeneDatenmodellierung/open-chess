@@ -1,6 +1,7 @@
 //! HTTP handlers, grouped as Lichess's API docs group them.
 
 pub mod account;
+pub mod admin;
 pub mod app_files;
 pub mod challenges;
 pub mod fairplay;
@@ -67,6 +68,15 @@ pub async fn docs(State(ctx): State<Ctx>, guide: Option<axum::extract::Path<Stri
         }
     };
     axum::response::Redirect::to(&to).into_response()
+}
+
+/// `GET /@/{username}`: a player's profile, in the Chess lab.
+pub async fn profile(
+    State(ctx): State<Ctx>,
+    axum::extract::Path(username): axum::extract::Path<String>,
+) -> Response {
+    let base = ctx.cfg.base_path().unwrap_or_default();
+    axum::response::Redirect::to(&format!("{base}/app/#@/{}", urlencoding::encode(&username))).into_response()
 }
 
 /// `GET /`: what this is. Browsers go to the training app when it's

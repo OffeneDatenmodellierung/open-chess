@@ -20,7 +20,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use crate::app::{Ctx, Who};
+use crate::app::{Ctx, Reader, Who};
 use crate::db::Note;
 use crate::error::{ApiError, ApiResult};
 use crate::http::{line, ndjson};
@@ -336,7 +336,7 @@ fn strip_clock(mut s: p::GameState) -> p::GameState {
 
 // ─── /api/stream/game/{id} (public, delayed while live) ───
 
-pub async fn moves(State(ctx): State<Ctx>, Path(id): Path<String>) -> ApiResult<Response> {
+pub async fn moves(State(ctx): State<Ctx>, _reader: Reader, Path(id): Path<String>) -> ApiResult<Response> {
     let notes = ctx.db.subscribe();
     let c = ctx.db.conn().await?;
     let row = model::game(&ctx.db, &*c, &id).await?.ok_or_else(|| ApiError::not_found("game"))?;
