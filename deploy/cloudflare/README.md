@@ -85,7 +85,7 @@ Settings, in the repository or its `cloudflare` environment:
 | variable | `CLOUDFLARE_DEPLOY` | `true` to deploy each release (off by default, so forks don't) |
 | variable | `CHESS_WORKER_NAME` | the Worker's name (`open-chess` by default); a new name makes a new Worker |
 | variable | `CHESS_PUBLIC_URL` | where players reach it; its host becomes the route |
-| variable | `CHESS_WORKER_VARS` | JSON of more vars, e.g. `{"ESPORTS_PUBLIC_URL": "https://site.example", "ESPORTS_LOGIN": "true", "CHESS_HOST_NAME": "Site", "CHESS_APP_THEME": "esports-lab"}` (a bundled theme by name) |
+| variable | `CHESS_WORKER_VARS` | JSON of more vars, e.g. `{"ESPORTS_PUBLIC_URL": "https://site.example", "ESPORTS_LOGIN": "true", "CHESS_HOST_NAME": "Site"}`; `CHESS_APP_THEME` is `esports-lab` unless set (`none`, another bundled theme's name, or CSS as a secret) |
 
 The workflow never sets the server's secrets: `DATABASE_URL`,
 `ESPORTS_SECRET`, `CHESS_FAIRPLAY_MODEL` and the rest

@@ -7,6 +7,10 @@ renames that heading to the version and date.
 
 ## Unreleased
 
+- The Chess lab has the esports-lab look unless `CHESS_APP_THEME` says
+  otherwise (`none` for the app's own), so a deployment can't lose it by
+  leaving the setting out.
+
 ## 0.1.6 — 2026-10-15
 
 - **The iOS app's server side.** Games played offline in the app upload and

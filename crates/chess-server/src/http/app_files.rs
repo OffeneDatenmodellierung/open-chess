@@ -79,7 +79,8 @@ fn theme_source(t: &str) -> Theme<'_> {
 }
 
 /// `GET /app/theme.css`: the deployment's look (`CHESS_APP_THEME`: a
-/// bundled theme's name, CSS, or a file of it), empty when there is none.
+/// bundled theme's name, CSS, or a file of it; `esports-lab` unless set),
+/// empty for `none`.
 pub async fn theme(State(ctx): State<Ctx>) -> Response {
     let read = |path: PathBuf, t: &str| {
         let t = t.to_owned();
@@ -90,7 +91,13 @@ pub async fn theme(State(ctx): State<Ctx>) -> Response {
             })
         }
     };
-    let css = match ctx.cfg.app_theme.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+    let css = match ctx
+        .cfg
+        .app_theme
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("none"))
+    {
         None => String::new(),
         Some(t) => match theme_source(t) {
             Theme::Css(css) => css.to_owned(),
