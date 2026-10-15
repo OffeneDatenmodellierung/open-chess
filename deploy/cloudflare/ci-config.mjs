@@ -8,7 +8,7 @@
 //   CHESS_WORKER_VARS   JSON object of more vars (ESPORTS_PUBLIC_URL, …)
 //
 // Secrets (DATABASE_URL, ESPORTS_SECRET, CHESS_FAIRPLAY_MODEL,
-// CHESS_APP_THEME, …) stay in Cloudflare: `wrangler secret put`.
+// …) stay in Cloudflare: `wrangler secret put`.
 import { readFileSync, writeFileSync } from "node:fs";
 
 /** JSONC to JSON: drops comments outside strings, then trailing commas. */

@@ -11,3 +11,5 @@ web/chess/nets/*.safetensors
 /dist/
 # A deployment's tuned fair-play model stays private.
 fairplay-model*.json
+deny.ci.toml
+advisory-ignores.txt

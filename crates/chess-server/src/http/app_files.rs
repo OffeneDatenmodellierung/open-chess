@@ -59,16 +59,51 @@ pub async fn file(State(ctx): State<Ctx>, UrlPath(tail): UrlPath<String>) -> Res
     serve(&ctx, &tail).await
 }
 
-/// `GET /app/theme.css`: the deployment's look (`CHESS_APP_THEME`: CSS, or
-/// a file of it), empty when there is none.
+/// Where `CHESS_APP_THEME` points: CSS itself, a theme the app bundles
+/// (`themes/{name}.css` in the app, by name), or a .css file.
+#[derive(Debug, PartialEq)]
+enum Theme<'a> {
+    Css(&'a str),
+    Bundled(&'a str),
+    File(&'a str),
+}
+
+fn theme_source(t: &str) -> Theme<'_> {
+    if t.contains('{') {
+        Theme::Css(t)
+    } else if !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        Theme::Bundled(t)
+    } else {
+        Theme::File(t)
+    }
+}
+
+/// `GET /app/theme.css`: the deployment's look (`CHESS_APP_THEME`: a
+/// bundled theme's name, CSS, or a file of it), empty when there is none.
 pub async fn theme(State(ctx): State<Ctx>) -> Response {
+    let read = |path: PathBuf, t: &str| {
+        let t = t.to_owned();
+        async move {
+            tokio::fs::read_to_string(&path).await.unwrap_or_else(|e| {
+                tracing::warn!("CHESS_APP_THEME {t} ({}): {e}", path.display());
+                String::new()
+            })
+        }
+    };
     let css = match ctx.cfg.app_theme.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
         None => String::new(),
-        Some(t) if !t.contains('{') => tokio::fs::read_to_string(t).await.unwrap_or_else(|e| {
-            tracing::warn!("CHESS_APP_THEME {t}: {e}");
-            String::new()
-        }),
-        Some(css) => css.to_owned(),
+        Some(t) => match theme_source(t) {
+            Theme::Css(css) => css.to_owned(),
+            Theme::File(f) => read(PathBuf::from(f), t).await,
+            Theme::Bundled(name) => {
+                if let Some(dir) = ctx.cfg.app_dir.as_deref().filter(|d| !d.is_empty()) {
+                    read(Path::new(dir).join("themes").join(format!("{name}.css")), t).await
+                } else {
+                    tracing::warn!("CHESS_APP_THEME {name}: a bundled theme needs the app (CHESS_APP_DIR)");
+                    String::new()
+                }
+            }
+        },
     };
     let mut h = HeaderMap::new();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/css; charset=utf-8"));
@@ -142,6 +177,23 @@ mod tests {
         assert_eq!(resolve(d, "pkg/../../x"), None);
         assert_eq!(resolve(d, ".git/config"), None);
         assert_eq!(resolve(d, "/etc/passwd"), Some(PathBuf::from("/srv/app/etc/passwd")));
+    }
+
+    #[test]
+    fn theme_sources() {
+        assert_eq!(theme_source("esports-lab"), Theme::Bundled("esports-lab"));
+        assert_eq!(theme_source(":root { --ink: #000 }"), Theme::Css(":root { --ink: #000 }"));
+        assert_eq!(theme_source("/etc/chess/theme.css"), Theme::File("/etc/chess/theme.css"));
+        assert_eq!(theme_source("theme.css"), Theme::File("theme.css"));
+        // No way out of themes/ by name.
+        assert_eq!(theme_source("../x"), Theme::File("../x"));
+    }
+
+    #[test]
+    fn bundled_themes_exist() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/chess/themes");
+        let css = std::fs::read_to_string(dir.join("esports-lab.css")).unwrap();
+        assert!(css.contains("--paper"));
     }
 
     #[test]

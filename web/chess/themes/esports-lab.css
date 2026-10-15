@@ -1,0 +1,63 @@
+/* esports-lab: royal navy and orange, dark by default (the training site's
+   look). Choose it with CHESS_APP_THEME=esports-lab; the server serves it
+   as /app/theme.css, after the app's own styles.
+   `:root:not([data-theme])` is spelled out: the app's own dark-mode rule
+   uses it, and without it here a system in dark mode would win over these
+   colours when the app is opened on its own. */
+:root,
+:root:not([data-theme]),
+:root[data-theme="dark"] {
+  --paper: #06114a;
+  --panel: #0d1e6a;
+  --ink: #ffffff;
+  --muted: #a9bdee;
+  --rule: #253f9c;
+  --sq-light: #c9d4ee;
+  --sq-dark: #5b77c9;
+  --amber: #ffc233;
+  --action: #ff7a1a;
+  --action-ink: #06114a;
+  --danger: #ff5577;
+  --w-seg: #ffffff;
+  --b-seg: #020825;
+  --d-seg: #8294c6;
+  --arrow-best: #ff7a1a;
+  --arrow-reply: #ff5577;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --paper: #eef2fb;
+  --panel: #ffffff;
+  --ink: #06114a;
+  --muted: #4d5f8b;
+  --rule: #c9d4ee;
+  --sq-light: #e3eafa;
+  --sq-dark: #7b8bb0;
+  --amber: #b67d00;
+  --action: #d94a00;
+  --action-ink: #ffffff;
+  --danger: #c4232d;
+  --w-seg: #ffffff;
+  --b-seg: #06114a;
+  --d-seg: #a7b7dc;
+  --arrow-best: #d94a00;
+  --arrow-reply: #c4232d;
+  color-scheme: light;
+}
+body {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 500;
+  -webkit-font-smoothing: antialiased;
+}
+header.top {
+  background: linear-gradient(90deg, var(--panel) 0%, var(--paper) 100%);
+  border-bottom: 2px solid var(--action);
+}
+/* The site's square corners. */
+button,
+input,
+select,
+.card,
+dialog {
+  border-radius: 2px;
+}

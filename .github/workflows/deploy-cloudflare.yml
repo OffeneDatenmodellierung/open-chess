@@ -22,7 +22,7 @@ name: Deploy to Cloudflare
 #                                     {"ESPORTS_PUBLIC_URL": "https://site.example",
 #                                      "ESPORTS_LOGIN": "true", "CHESS_HOST_NAME": "Site"}
 # The server's secrets stay in Cloudflare and nothing here changes them:
-# DATABASE_URL, ESPORTS_SECRET, CHESS_FAIRPLAY_MODEL, CHESS_APP_THEME, …
+# DATABASE_URL, ESPORTS_SECRET, CHESS_FAIRPLAY_MODEL, …
 # (`npx wrangler secret put NAME --name <worker>`, see deploy/cloudflare/README.md).
 
 on:

@@ -254,8 +254,10 @@ curl -N -H "Authorization: Bearer $PARTNER_TOKEN" "https://chess.example.com/api
 ## The Chess lab's look
 
 A deployment can give the app (`/app/`) its own colours and fonts:
-`CHESS_APP_THEME` holds CSS (or the path of a `.css` file), served as
-`/app/theme.css` after the app's styles. The app's colours are CSS
+`CHESS_APP_THEME` names a theme the app bundles (`esports-lab`, from
+`web/chess/themes/`), or holds CSS (or the path of a `.css` file), served
+as `/app/theme.css` after the app's styles. A bundled theme ships with
+each release; add yours to `web/chess/themes/` to have it bundled too. The app's colours are CSS
 variables, for light (`:root`) and dark (`:root[data-theme="dark"]`, or the
 system's dark mode when nothing chose):
 
