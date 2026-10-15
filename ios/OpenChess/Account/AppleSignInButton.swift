@@ -9,22 +9,30 @@ struct AppleSignInButton: View {
     var link = false
 
     @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var settings: AppSettings
     @State private var origin = UUID()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SignInWithAppleButton(link ? .continue : .signIn) { request in
-                auth.prepareApple(request)
-            } onCompletion: { result in
-                let o = origin
-                let l = link
-                Task { await auth.completeApple(result, link: l, origin: o) }
+            if !settings.hasServer {
+                Text(AuthManager.needServer)
+                    .font(OCFont.text(13))
+                    .foregroundStyle(Color.ocMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                SignInWithAppleButton(link ? .continue : .signIn) { request in
+                    auth.prepareApple(request)
+                } onCompletion: { result in
+                    let o = origin
+                    let l = link
+                    Task { await auth.completeApple(result, link: l, origin: o) }
+                }
+                .signInWithAppleButtonStyle(.white)
+                .frame(maxWidth: 375)
+                .frame(height: 50)
+                .disabled(auth.appleBusy)
+                .accessibilityLabel(link ? "Link your Apple ID" : "Sign in with Apple")
             }
-            .signInWithAppleButtonStyle(.white)
-            .frame(maxWidth: 375)
-            .frame(height: 50)
-            .disabled(auth.appleBusy)
-            .accessibilityLabel(link ? "Link your Apple ID" : "Sign in with Apple")
             if auth.appleBusy {
                 ProgressView().controlSize(.small)
             }

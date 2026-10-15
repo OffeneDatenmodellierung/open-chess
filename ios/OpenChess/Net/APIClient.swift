@@ -5,7 +5,7 @@ struct APIError: Error {
     let message: String
 
     static func transport(_ e: Error) -> APIError {
-        APIError(status: 0, message: e.localizedDescription)
+        APIError(status: 0, message: (e as? URLError).map(networkMessage) ?? e.localizedDescription)
     }
 }
 

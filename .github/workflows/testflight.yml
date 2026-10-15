@@ -18,6 +18,8 @@ name: TestFlight
 #
 # Signing is automatic: Xcode makes the certificate and profile in the
 # team with the key ("cloud-managed"), so no certificates are kept here.
+# Optional: the repository variable (not secret) CHESS_SERVER_URL, the
+# server the app starts with (https://…); without it the app asks for one.
 # Optional: BOARD_READER_URL, where to download weights to bundle (a
 # model card that isn't internal-only; the app refuses those anyway).
 
@@ -100,12 +102,14 @@ jobs:
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
       - name: Archive and export
         env:
+          SERVER: ${{ vars.CHESS_SERVER_URL }}
           TEAM: ${{ secrets.APPLE_TEAM_ID }}
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
         run: |
           set -euo pipefail
+          [ -n "$SERVER" ] || echo "::notice::no CHESS_SERVER_URL variable: the app asks for its server (Account › Server)"
           KEY_ID="$(printf '%s' "$KEY_ID" | tr -d '[:space:]')"
           ISSUER="$(printf '%s' "$ISSUER" | tr -d '[:space:]')"
           key="$RUNNER_TEMP/AuthKey_$KEY_ID.p8"
@@ -130,6 +134,7 @@ jobs:
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/OpenChess.xcarchive" \
             DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Development" CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
             MARKETING_VERSION="${{ steps.v.outputs.version }}" CURRENT_PROJECT_VERSION="${{ steps.v.outputs.build }}" \
+            CHESS_SERVER_URL="$SERVER" \
             "${auth[@]}" archive > "$RUNNER_TEMP/archive.log" 2>&1 || fail archive
           tail -40 "$RUNNER_TEMP/archive.log"
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/OpenChess.xcarchive" \

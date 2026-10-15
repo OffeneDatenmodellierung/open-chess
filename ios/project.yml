@@ -99,9 +99,12 @@ targets:
             CFBundleURLSchemes:
               - org.offenedatenmodellierung.openchess
         ITSAppUsesNonExemptEncryption: false
+        OCDefaultServer: $(CHESS_SERVER_URL)
     settings:
       base:
         PRODUCT_NAME: open-chess
+        # The server the app starts with; empty asks the player (Account › Server).
+        CHESS_SERVER_URL: ""
         PRODUCT_MODULE_NAME: OpenChess
         PRODUCT_BUNDLE_IDENTIFIER: org.offenedatenmodellierung.openchess
         TARGETED_DEVICE_FAMILY: "1,2"

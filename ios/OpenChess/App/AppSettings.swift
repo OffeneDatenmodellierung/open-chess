@@ -5,8 +5,22 @@ import UIKit
 /// The app's settings, kept in the core's store (`setting` / `setSetting`).
 @MainActor
 final class AppSettings: ObservableObject {
-    static let defaultServer = "https://chess.example.com"
+    /// The server this build was made for (`CHESS_SERVER_URL` when it was
+    /// built, as Info.plist's `OCDefaultServer`), or "" when it wasn't given
+    /// one: then the player enters it under Account › Server.
+    static let defaultServer: String = {
+        let s = (Bundle.main.object(forInfoDictionaryKey: "OCDefaultServer") as? String)?.trimmed ?? ""
+        return AppSettings.isServerAddress(s) ? s : ""
+    }()
+    /// Where requests would go with no server: never reached, as nothing
+    /// is sent until `hasServer`.
+    static let noServer = URL(string: "https://localhost")!
     static let syncChoices: [Int] = [0, 1, 5, 10, 30, 60]
+
+    nonisolated static func isServerAddress(_ s: String) -> Bool {
+        guard let u = URL(string: s.trimmed), let host = u.host, !host.isEmpty else { return false }
+        return u.scheme == "https" || u.scheme == "http"
+    }
 
     private let store: Store
 
@@ -70,7 +84,9 @@ final class AppSettings: ObservableObject {
             return n
         }
         appearance = read("appearance") ?? "dark"
-        serverURL = read("serverURL") ?? AppSettings.defaultServer
+        let saved = read("serverURL")
+        // "chess.example.com" was an earlier build's stand-in, never a server.
+        serverURL = (saved == nil || saved == "https://chess.example.com") ? AppSettings.defaultServer : saved!
         lowDataOverride = read("lowData") ?? "auto"
         syncMinutes = int("syncMinutes", 5)
         photoUploads = bool("photoUploads", true)
@@ -132,12 +148,15 @@ final class AppSettings: ObservableObject {
         return .dark
     }
 
+    /// Whether a server is set (from the build or by the player).
+    var hasServer: Bool { AppSettings.isServerAddress(serverURL) }
+
     var serverBase: URL {
         let s = serverURL.trimmed
-        if let u = URL(string: s), u.scheme == "https" || u.scheme == "http" {
+        if AppSettings.isServerAddress(s), let u = URL(string: s) {
             return u
         }
-        return URL(string: AppSettings.defaultServer)!
+        return AppSettings.noServer
     }
 
     /// Low-data mode as it applies now: the override, else what the

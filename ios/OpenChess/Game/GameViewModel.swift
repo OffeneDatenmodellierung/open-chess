@@ -752,7 +752,7 @@ final class GameViewModel: ObservableObject, Identifiable {
     // MARK: Online games (Board API)
 
     private func client(for link: OnlineLink) -> APIClient {
-        guard let app else { return APIClient(base: URL(string: AppSettings.defaultServer)!, token: nil) }
+        guard let app else { return APIClient(base: AppSettings.noServer, token: nil) }
         return link.site == "lichess" ? app.auth.lichess : app.auth.server
     }
 

@@ -132,6 +132,11 @@ signed release and uploads it to App Store Connect. Once:
    `APP_STORE_CONNECT_KEY` (the `.p8`, as text or base64), plus
    `APPLE_TEAM_ID`, which the macOS release already has. Optional:
    `BOARD_READER_URL` (weights to bundle).
+5. **The server** the app starts with: the repository *variable*
+   `CHESS_SERVER_URL` (Settings › Secrets and variables › Actions ›
+   Variables), e.g. `https://chess.your-domain`. Without it the app asks
+   for its server before signing in; players can change it under
+   Account › Server either way.
 
    The macOS release's secrets ([releases.md](releases.md#secrets)) stay
    as they are: its Developer ID certificate signs the Mac binary, and its
