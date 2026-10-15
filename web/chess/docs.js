@@ -13,6 +13,8 @@ const GUIDES = [
   { id: "ios", title: "The iPhone and iPad app", blurb: "The app's core, building it, and what it does." },
   { id: "engine", title: "The engine", blurb: "Search, odds, explanations and training the engine." },
   { id: "releases", title: "Releases", blurb: "Downloads, the image, the crates, and cutting a release." },
+  { id: "credits", title: "Credits", blurb: "The datasets, research and software Chess lab builds on." },
+  { id: "dataset-permissions", title: "Dataset permissions", blurb: "Permissions we were given beyond a dataset's licence." },
 ];
 
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -118,6 +120,65 @@ export function markdown(src) {
   return out.join("\n");
 }
 
+// The first `length` bytes of a file, without downloading the rest: a Range
+// request where the server allows it, and the stream cut off once there's
+// enough either way.
+async function prefix(url, length) {
+  const r = await fetch(url, { headers: { Range: `bytes=0-${length - 1}` } });
+  if (!r.ok) throw new Error(`${r.status}`);
+  const reader = r.body.getReader();
+  const out = new Uint8Array(length);
+  let got = 0;
+  while (got < length) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    out.set(value.subarray(0, length - got), got);
+    got += Math.min(value.length, length - got);
+  }
+  reader.cancel().catch(() => {});
+  if (got < length) throw new Error("the file is shorter than its header says");
+  return out;
+}
+
+// The model card of the board reader that ships with the app, from its
+// safetensors header (metadata "chess_vision.card"): which model, and the
+// datasets it learnt from with their credit lines.
+async function readerCard() {
+  const url = "nets/board-reader.safetensors";
+  const n = Number(new DataView((await prefix(url, 8)).buffer).getBigUint64(0, true));
+  if (!(n > 0 && n < 16 << 20)) throw new Error("not a safetensors file");
+  const header = JSON.parse(new TextDecoder().decode((await prefix(url, 8 + n)).subarray(8)));
+  const card = header.__metadata__?.["chess_vision.card"];
+  return card ? JSON.parse(card) : null;
+}
+
+async function showReaderCard(article) {
+  const part = document.createElement("div");
+  part.className = "reader-card";
+  part.innerHTML = '<p class="hint">Reading the model card…</p>';
+  article.append(part);
+  let card;
+  try {
+    card = await readerCard();
+  } catch {
+    part.innerHTML =
+      "<p>No board reader came with this copy of the app, so photos are read by the chess server. " +
+      "Its model card lists the datasets it learnt from.</p>";
+    return;
+  }
+  if (!card) {
+    part.innerHTML = "<p>This app's board reader has no model card.</p>";
+    return;
+  }
+  const sets = (card.datasets || [])
+    .map((d) => `<li><strong>${esc(d.name)}</strong>${d.attribution ? `: ${esc(d.attribution)}` : ` (${esc(d.licence || "")})`}</li>`)
+    .join("");
+  part.innerHTML =
+    `<p><strong>${esc(card.name || "Board reader")}</strong> ${esc(card.version || "")}, ` +
+    `licensed ${esc(card.licence || "as stated")}. It starts from ${esc(card.base || "an unnamed base")}.</p>` +
+    (sets ? `<p>It learnt from:</p><ul>${sets}</ul>` : "<p>Its card lists no datasets.</p>");
+}
+
 const view = () => document.getElementById("docsView");
 
 // This build's version (version.json, written by the build); none when the
@@ -168,6 +229,7 @@ async function show(id, anchor) {
       const ver = await appVersion();
       if (ver) v.querySelector(".docs-body h2")?.insertAdjacentHTML("afterend", `<p class="docs-version">This is Chess lab ${esc(ver)}.</p>`);
     }
+    if (id === "credits") showReaderCard(v.querySelector(".docs-body"));
     const target = anchor && document.getElementById(anchor);
     if (target) target.scrollIntoView({ block: "start" });
     else scrollTo(0, 0);
@@ -203,6 +265,10 @@ function route() {
 
 export function startDocs() {
   addEventListener("hashchange", route);
+  // A guide linked from a dialog (Settings → Credits) closes the dialog.
+  document.querySelectorAll('dialog a[href^="#docs"]').forEach((a) =>
+    a.addEventListener("click", () => a.closest("dialog")?.close()),
+  );
   // Choosing what to play goes back to the board.
   document.querySelectorAll("[data-mode]").forEach((b) =>
     b.addEventListener("click", () => { if (/^#(docs|review|admin|@\/)/.test(location.hash)) location.hash = ""; }),

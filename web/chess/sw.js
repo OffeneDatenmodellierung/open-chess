@@ -73,7 +73,10 @@ self.addEventListener("fetch", (e) => {
       (hit) =>
         hit ||
         fetch(e.request).then((res) => {
-          if (res.ok && res.type === "basic") {
+          // Not a part of a file (a Range request, such as the credits
+          // page reading the board reader's header): the cache wants whole
+          // files.
+          if (res.ok && res.status !== 206 && res.type === "basic") {
             const copy = res.clone();
             caches.open(CACHE).then((c) => c.put(e.request, copy));
           }

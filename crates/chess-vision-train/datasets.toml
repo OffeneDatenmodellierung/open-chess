@@ -84,13 +84,14 @@ path = "chesscog"
 
 [dataset.felix-boards]
 # 371 real boards, straightened top-down, with board_fen (subset "boards").
-# Read the licence on the dataset page, then set licence_verified = true.
+# The dataset card: "CC-BY-4.0. Copyright 2026 Felix Fabricius" (the code
+# that made it is GPL-3.0-or-later; we use only the data).
 licence = "CC-BY-4.0"
 licence_url = "https://huggingface.co/datasets/felixfabricius/robot-chess-commentator-squares"
-licence_verified = false
-verified_by = ""
-verified_on = ""
-attribution = "robot-chess-commentator-squares (boards), Felix Fabricius, Hugging Face, CC BY 4.0"
+licence_verified = true
+verified_by = "Mark Olliver"
+verified_on = "2026-10-14"
+attribution = "robot-chess-commentator-squares (boards), (c) 2026 Felix Fabricius, Hugging Face, CC BY 4.0"
 format = "jsonl"
 path = "felix-boards"
 
@@ -108,13 +109,13 @@ path = "fenit-photos"
 
 [dataset.roboflow-chess-pieces]
 # About 290 real photos from one fixed angle (piece boxes only): unlabelled,
-# for a teacher to read. Read the licence on the page (it said Public Domain,
-# CC0), then set licence_verified = true.
+# for a teacher to read. The project page's licence: Public Domain.
 licence = "CC0-1.0"
 licence_url = "https://universe.roboflow.com/joseph-nelson/chess-pieces-new"
-licence_verified = false
-verified_by = ""
-verified_on = ""
+licence_verified = true
+verified_by = "Mark Olliver"
+verified_on = "2026-10-14"
+attribution = "Chess Pieces Dataset, Roboflow (joseph-nelson), Roboflow Universe, 2021, public domain"
 format = "photos"
 path = "roboflow-chess-pieces"
 

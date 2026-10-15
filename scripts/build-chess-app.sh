@@ -44,7 +44,8 @@ wasm-bindgen --target web --no-typescript --out-dir "$out/pkg" \
   target/wasm32-unknown-unknown/release/open_chess_vision.wasm
 # The guides, served with the app (/app/docs/…) for sites that show them.
 mkdir -p "$out/docs"
-cp docs/api.md docs/boards.md docs/photos.md docs/photo-licence.md docs/privacy.md docs/ios.md docs/lichess.md docs/engine.md docs/releases.md "$out/docs/"
+cp docs/api.md docs/boards.md docs/photos.md docs/photo-licence.md docs/privacy.md docs/ios.md docs/lichess.md docs/engine.md docs/releases.md \
+  docs/credits.md docs/dataset-permissions.md "$out/docs/"
 # What's new (CHANGELOG.md), and the version the app shows beside it.
 cp CHANGELOG.md "$out/docs/changelog.md"
 version=$(awk '/^\[workspace.package\]/{p=1; next} /^\[/{p=0} p && $1 == "version" {gsub(/"/, "", $3); print $3; exit}' Cargo.toml)
