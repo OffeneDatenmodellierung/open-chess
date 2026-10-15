@@ -60,6 +60,79 @@ jobs:
             echo "::error::missing secrets:$missing (see the top of .github/workflows/testflight.yml)"
             exit 1
           fi
+      # Ask App Store Connect directly, before the long build, whether it
+      # takes the key: a minute instead of ten when it doesn't, and Apple's
+      # own answer instead of xcodebuild's. Prints nothing secret.
+      - name: Check the key with App Store Connect
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+          BUNDLE_ID: org.offenedatenmodellierung.openchess
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/asc" && "$RUNNER_TEMP/asc/bin/pip" -q install "pyjwt[crypto]==2.10.1"
+          "$RUNNER_TEMP/asc/bin/python" - <<'PY'
+          import base64, json, os, re, time, urllib.error, urllib.request
+          import jwt
+          from cryptography.hazmat.primitives.serialization import load_pem_private_key
+          from cryptography.hazmat.primitives.asymmetric import ec
+
+          problems = []
+          def note(msg): print(f"::notice::{msg}")
+          def err(msg): problems.append(msg); print(f"::error::{msg}")
+          def warn(msg): print(f"::warning::{msg}")
+
+          raw_id, raw_issuer, raw_key = os.environ["KEY_ID"], os.environ["ISSUER"], os.environ["KEY"]
+          key_id, issuer = raw_id.strip(), raw_issuer.strip()
+          if raw_id != key_id: warn("APP_STORE_CONNECT_KEY_ID has spaces or a newline around it (now trimmed)")
+          if raw_issuer != issuer: warn("APP_STORE_CONNECT_ISSUER_ID has spaces or a newline around it (now trimmed)")
+          if not re.fullmatch(r"[A-Z0-9]{10}", key_id):
+              err(f"APP_STORE_CONNECT_KEY_ID should be 10 capital letters and digits; it is {len(key_id)} characters")
+          if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", issuer):
+              err("APP_STORE_CONNECT_ISSUER_ID should look like 57246542-96fe-1a63-e053-0824d011072a (lower case, with dashes)")
+
+          if "BEGIN PRIVATE KEY" in raw_key:
+              pem, form = raw_key.strip().replace("\\n", "\n").encode(), "PEM text"
+          else:
+              try:
+                  pem, form = base64.b64decode(raw_key.strip()), "base64"
+              except Exception:
+                  err("APP_STORE_CONNECT_KEY is neither the .p8 text nor base64 of it"); raise SystemExit(1)
+          try:
+              key = load_pem_private_key(pem, None)
+          except Exception as e:
+              err(f"APP_STORE_CONNECT_KEY ({form}) isn't a readable private key: {e}"); raise SystemExit(1)
+          if not (isinstance(key, ec.EllipticCurvePrivateKey) and key.curve.name == "secp256r1"):
+              err("APP_STORE_CONNECT_KEY isn't an App Store Connect key (P-256)")
+          else:
+              note(f"APP_STORE_CONNECT_KEY: a P-256 key, given as {form}")
+
+          now = int(time.time())
+          token = jwt.encode({"iss": issuer, "iat": now, "exp": now + 600, "aud": "appstoreconnect-v1"},
+                             key, algorithm="ES256", headers={"kid": key_id, "typ": "JWT"})
+          url = f"https://api.appstoreconnect.apple.com/v1/apps?filter[bundleId]={os.environ['BUNDLE_ID']}&fields[apps]=name,bundleId"
+          req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+          try:
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  apps = json.load(r)["data"]
+              if apps:
+                  note(f"App Store Connect takes the key, and has the app: {apps[0]['attributes']['name']}")
+              else:
+                  err(f"App Store Connect takes the key but has no app with bundle id {os.environ['BUNDLE_ID']}: add it under Apps › +")
+          except urllib.error.HTTPError as e:
+              body = e.read().decode(errors="replace")
+              try:
+                  details = "; ".join(f"{x.get('title')}: {x.get('detail')}" for x in json.loads(body)["errors"])
+              except Exception:
+                  details = body[:300]
+              hint = {401: "the key id, issuer id and .p8 don't belong together, or the key was revoked, or it is an Individual key (needs a Team key)",
+                      403: "the key's role can't read apps (use Admin or App Manager), or an agreement is waiting in App Store Connect › Business"}.get(e.code, "")
+              err(f"App Store Connect answered {e.code}: {details}" + (f" — likely {hint}" if hint else ""))
+          except urllib.error.URLError as e:
+              err(f"couldn't reach App Store Connect: {e.reason}")
+          raise SystemExit(1 if problems else 0)
+          PY
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
@@ -94,11 +167,23 @@ jobs:
           KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
         run: |
           set -euo pipefail
+          KEY_ID="$(printf '%s' "$KEY_ID" | tr -d '[:space:]')"
+          ISSUER="$(printf '%s' "$ISSUER" | tr -d '[:space:]')"
           key="$RUNNER_TEMP/AuthKey_$KEY_ID.p8"
           case "$KEY" in
             *"BEGIN PRIVATE KEY"*) printf '%s\n' "$KEY" > "$key" ;;
             *) printf '%s' "$KEY" | base64 --decode > "$key" ;;
           esac
+          # On failure: xcodebuild's errors as annotations (on the run's
+          # summary page) and the end of its log, then stop.
+          fail() {
+            log="$RUNNER_TEMP/$1.log"
+            grep -E "error:|Error Domain|❌|No profiles|No signing certificate|requires a provisioning profile|doesn't (support|include)|not available|Failed|failed" "$log" \
+              | grep -v "^note:" | sort -u | head -30 | while IFS= read -r line; do echo "::error title=xcodebuild $1::$line"; done
+            tail -80 "$log"
+            rm -f "$key"
+            exit 1
+          }
           auth=(-allowProvisioningUpdates -authenticationKeyPath "$key" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER")
           brew install xcodegen
           cd ios && xcodegen
@@ -106,9 +191,11 @@ jobs:
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/OpenChess.xcarchive" \
             DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Development" CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
             MARKETING_VERSION="${{ steps.v.outputs.version }}" CURRENT_PROJECT_VERSION="${{ steps.v.outputs.build }}" \
-            "${auth[@]}" archive | tail -40
+            "${auth[@]}" archive > "$RUNNER_TEMP/archive.log" 2>&1 || fail archive
+          tail -40 "$RUNNER_TEMP/archive.log"
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/OpenChess.xcarchive" \
             -exportOptionsPlist Support/ExportOptions.plist -exportPath "$RUNNER_TEMP/export" \
-            "${auth[@]}" | tail -40
+            "${auth[@]}" > "$RUNNER_TEMP/export.log" 2>&1 || fail export
+          tail -40 "$RUNNER_TEMP/export.log"
           rm -f "$key"
           echo "::notice::uploaded ${{ steps.v.outputs.version }} (${{ steps.v.outputs.build }}): it shows in App Store Connect › TestFlight once processed"
