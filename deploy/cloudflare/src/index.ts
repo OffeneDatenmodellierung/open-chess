@@ -16,6 +16,7 @@ interface Env {
   CHESS: DurableObjectNamespace<Chess>;
   ANALYSE: DurableObjectNamespace<Analyse>;
   CHESS_INSTANCES?: string;
+  CHESS_DEPLOY_ID?: string;
   ANALYSE_ENABLED?: string;
   [key: string]: unknown;
 }
@@ -129,7 +130,14 @@ export default {
     const headers = new Headers(request.headers);
     const ip = request.headers.get("cf-connecting-ip");
     if (ip) headers.set("x-forwarded-for", ip);
-    const container = await getRandom(env.CHESS, instances);
+    // A container keeps the settings it started with, so each deploy has
+    // its own instances (CHESS_DEPLOY_ID, set by the deploy): they start
+    // with this deploy's settings, and the last deploy's go to sleep.
+    const deploy = env.CHESS_DEPLOY_ID ?? "";
+    const n = Math.floor(Math.random() * instances);
+    const container = deploy
+      ? getContainer(env.CHESS, `${deploy}-${n}`)
+      : await getRandom(env.CHESS, instances);
     return container.fetch(new Request(request, { headers }));
   },
 
@@ -139,7 +147,7 @@ export default {
       console.error(NO_DATABASE);
       return;
     }
-    const worker = getContainer(env.ANALYSE, "fairplay");
+    const worker = getContainer(env.ANALYSE, env.CHESS_DEPLOY_ID ? `fairplay-${env.CHESS_DEPLOY_ID}` : "fairplay");
     ctx.waitUntil(worker.fetch(new Request("http://analyse/healthz")).then(() => undefined));
   },
 };

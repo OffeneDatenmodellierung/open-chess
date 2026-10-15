@@ -18,6 +18,8 @@ renames that heading to the version and date.
   repository variable or secret named like one of them (`DATABASE_URL`,
   `CHESS_APPLE_KEY`, `CHESS_APP_THEME`, …) goes on the Worker as a var or
   secret with each deploy.
+- Each deploy to Cloudflare starts fresh server containers, so changed
+  settings take effect at once instead of when the running ones sleep.
 
 ## 0.1.6 — 2026-10-15
 
