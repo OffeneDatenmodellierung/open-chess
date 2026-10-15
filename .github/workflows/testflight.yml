@@ -99,6 +99,16 @@ jobs:
             *"BEGIN PRIVATE KEY"*) printf '%s\n' "$KEY" > "$key" ;;
             *) printf '%s' "$KEY" | base64 --decode > "$key" ;;
           esac
+          # On failure: xcodebuild's errors as annotations (on the run's
+          # summary page) and the end of its log, then stop.
+          fail() {
+            log="$RUNNER_TEMP/$1.log"
+            grep -E "error:|Error Domain|❌|No profiles|No signing certificate|requires a provisioning profile|doesn't (support|include)|not available|Failed|failed" "$log" \
+              | grep -v "^note:" | sort -u | head -30 | while IFS= read -r line; do echo "::error title=xcodebuild $1::$line"; done
+            tail -80 "$log"
+            rm -f "$key"
+            exit 1
+          }
           auth=(-allowProvisioningUpdates -authenticationKeyPath "$key" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER")
           brew install xcodegen
           cd ios && xcodegen
@@ -106,9 +116,11 @@ jobs:
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/OpenChess.xcarchive" \
             DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Development" CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
             MARKETING_VERSION="${{ steps.v.outputs.version }}" CURRENT_PROJECT_VERSION="${{ steps.v.outputs.build }}" \
-            "${auth[@]}" archive | tail -40
+            "${auth[@]}" archive > "$RUNNER_TEMP/archive.log" 2>&1 || fail archive
+          tail -40 "$RUNNER_TEMP/archive.log"
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/OpenChess.xcarchive" \
             -exportOptionsPlist Support/ExportOptions.plist -exportPath "$RUNNER_TEMP/export" \
-            "${auth[@]}" | tail -40
+            "${auth[@]}" > "$RUNNER_TEMP/export.log" 2>&1 || fail export
+          tail -40 "$RUNNER_TEMP/export.log"
           rm -f "$key"
           echo "::notice::uploaded ${{ steps.v.outputs.version }} (${{ steps.v.outputs.build }}): it shows in App Store Connect › TestFlight once processed"
