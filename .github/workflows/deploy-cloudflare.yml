@@ -32,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to deploy, e.g. 0.1.5 (empty: the latest release)"
+        description: "Version to deploy, e.g. 0.1.6 (empty: the latest release)"
         required: false
 
 concurrency:
