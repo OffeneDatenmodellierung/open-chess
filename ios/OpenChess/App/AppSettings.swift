@@ -31,6 +31,18 @@ final class AppSettings: ObservableObject {
     @Published var botLevel: Int { didSet { save("botLevel", String(botLevel)) } }
     /// The APNs device token last sent to the server (hex).
     @Published var pushToken: String { didSet { save("pushToken", pushToken) } }
+    @Published var sounds: Bool { didSet { save("sounds", sounds) } }
+    @Published var haptics: Bool { didSet { save("haptics", haptics) } }
+    /// Speak the opponent's or computer's moves (and every move recorded on a real board).
+    @Published var speakMoves: Bool { didSet { save("speakMoves", speakMoves) } }
+    /// Streaming: "twitch", "youtube" or "custom".
+    @Published var streamService: String { didSet { save("streamService", streamService) } }
+    /// The custom service's RTMP URL (without the key).
+    @Published var streamURL: String { didSet { save("streamURL", streamURL) } }
+    /// Video bitrate in kbit/s.
+    @Published var streamKbps: Int { didSet { save("streamKbps", String(streamKbps)) } }
+    @Published var streamRecord: Bool { didSet { save("streamRecord", streamRecord) } }
+    @Published var streamPortrait: Bool { didSet { save("streamPortrait", streamPortrait) } }
 
     init(store: Store) {
         self.store = store
@@ -66,6 +78,14 @@ final class AppSettings: ObservableObject {
         syncSince = u64("syncSince")
         botLevel = int("botLevel", 3)
         pushToken = read("pushToken") ?? ""
+        sounds = bool("sounds", true)
+        haptics = bool("haptics", true)
+        speakMoves = bool("speakMoves", false)
+        streamService = read("streamService") ?? "twitch"
+        streamURL = read("streamURL") ?? ""
+        streamKbps = int("streamKbps", 4000)
+        streamRecord = bool("streamRecord", false)
+        streamPortrait = bool("streamPortrait", false)
     }
 
     private func save(_ key: String, _ value: String) {
@@ -107,6 +127,11 @@ final class AppSettings: ObservableObject {
     }
 
     var photoConsentGiven: Bool { photoConsent == "accepted" }
+
+    static let streamBitrates: [Int] = [2500, 4000, 6000]
+
+    /// The stream key lives in the Keychain, not the store.
+    static let streamKeyAccount = "stream-key"
 
     static func syncLabel(_ minutes: Int) -> String {
         minutes == 0 ? "Manual" : (minutes == 60 ? "Every hour" : "Every \(minutes) min")

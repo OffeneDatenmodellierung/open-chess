@@ -92,6 +92,17 @@ final class ChessnutManager: NSObject, ObservableObject {
         flushWrites()
     }
 
+    func lightsOff() {
+        board?.lightsOff()
+        flushWrites()
+    }
+
+    /// What the board shows now (for labelling frames, and for spotting a
+    /// position the game can't reach).
+    func boardNow() -> BoardNow? {
+        board?.boardNow()
+    }
+
     // MARK: Scanning and connecting
 
     func startScan() {
