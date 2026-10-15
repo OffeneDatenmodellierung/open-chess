@@ -7,6 +7,18 @@ renames that heading to the version and date.
 
 ## Unreleased
 
+- The Chess lab has the esports-lab look unless `CHESS_APP_THEME` says
+  otherwise (`none` for the app's own), so a deployment can't lose it by
+  leaving the setting out.
+- The Cloudflare Worker hands the containers the Sign in with Apple and
+  push notification settings (and the other settings it had missed: admin
+  emails, the tablebase, photo review, analysis threads), so setting them
+  in Cloudflare takes effect.
+- The deploy to Cloudflare sets the server's settings from GitHub: a
+  repository variable or secret named like one of them (`DATABASE_URL`,
+  `CHESS_APPLE_KEY`, `CHESS_APP_THEME`, …) goes on the Worker as a var or
+  secret with each deploy.
+
 ## 0.1.6 — 2026-10-15
 
 - **The iOS app's server side.** Games played offline in the app upload and

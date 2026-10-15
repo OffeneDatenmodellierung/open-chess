@@ -21,9 +21,13 @@ name: Deploy to Cloudflare
 #             CHESS_WORKER_VARS       JSON of more vars, e.g.
 #                                     {"ESPORTS_PUBLIC_URL": "https://site.example",
 #                                      "ESPORTS_LOGIN": "true", "CHESS_HOST_NAME": "Site"}
-# The server's secrets stay in Cloudflare and nothing here changes them:
-# DATABASE_URL, ESPORTS_SECRET, CHESS_FAIRPLAY_MODEL, …
-# (`npx wrangler secret put NAME --name <worker>`, see deploy/cloudflare/README.md).
+#
+# The server's own settings can live here too: a repository (or environment)
+# variable or secret named like one of them (DATABASE_URL, CHESS_APP_THEME,
+# CHESS_APPLE_KEY, …: the list is PASS_THROUGH in deploy/cloudflare/src/
+# index.ts) is set on the Worker with each deploy, variables as vars and
+# secrets as secrets. Secrets set only in Cloudflare (`npx wrangler secret
+# put NAME --name <worker>`) stay as they are.
 
 on:
   workflow_run:
@@ -63,6 +67,7 @@ jobs:
       CHESS_WORKER_NAME: ${{ vars.CHESS_WORKER_NAME }}
       CHESS_PUBLIC_URL: ${{ vars.CHESS_PUBLIC_URL }}
       CHESS_WORKER_VARS: ${{ vars.CHESS_WORKER_VARS }}
+      GH_VARS: ${{ toJSON(vars) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Which version
@@ -108,16 +113,36 @@ jobs:
           npx wrangler containers push "open-chess:$VERSION" 2>&1 | tee push.txt
           echo "IMAGE=registry.cloudflare.com/open-chess:$VERSION" >> "$GITHUB_ENV"
       - name: Config
+        env:
+          GH_SECRETS: ${{ toJSON(secrets) }}
         run: node ci-config.mjs
+      # GitHub's secrets for the server go on the Worker before the deploy,
+      # so the new containers start with them (a first deploy has no Worker
+      # yet: then right after it).
+      - name: Secrets
+        shell: bash
+        run: |
+          set -o pipefail
+          if [ "$(cat secrets.json)" = "{}" ]; then echo "no server secrets in GitHub"; rm -f secrets.json; exit 0; fi
+          if npx wrangler secret bulk secrets.json -c wrangler.ci.json 2>&1 | tee secrets.txt; then
+            rm -f secrets.json
+          else
+            echo "::notice::the Worker isn't there yet: its secrets go on after the deploy"
+          fi
       - name: Deploy
         shell: bash
         run: |
           set -o pipefail
           npx wrangler deploy -c wrangler.ci.json 2>&1 | tee deploy.txt
+          if [ -f secrets.json ]; then
+            npx wrangler secret bulk secrets.json -c wrangler.ci.json 2>&1 | tee -a deploy.txt
+            rm -f secrets.json
+          fi
       - name: Annotate deploy errors
         if: failure()
         shell: bash
         run: |
-          cat push.txt deploy.txt 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' > all.txt || true
+          rm -f secrets.json
+          cat push.txt secrets.txt deploy.txt 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' > all.txt || true
           grep -E '\[ERROR\]|Authentication error|Unauthorized|not authorized|\[code: [0-9]+\]' all.txt | head -10 \
             | sed -E 's/^/::error::/' || true

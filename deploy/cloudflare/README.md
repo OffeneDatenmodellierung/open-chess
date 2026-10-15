@@ -18,8 +18,9 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
    host, e.g. `chess.example.com`; its zone must be in this Cloudflare
    account), `CHESS_PUBLIC_URL` to match, `ESPORTS_PUBLIC_URL`,
    `ESPORTS_LOGIN` (`"true"` to let that site's players sign in with it),
-   `CHESS_SITE_NAME` and `CHESS_INSTANCES`. To give the Chess lab
-   your colours, `npx wrangler secret put CHESS_APP_THEME < theme.css`
+   `CHESS_SITE_NAME` and `CHESS_INSTANCES`. The Chess lab has the
+   esports-lab look unless you give it yours:
+   `npx wrangler secret put CHESS_APP_THEME < theme.css`
    ([docs/api.md](../../docs/api.md#the-chess-labs-look)).
 2. Set the secrets:
 
@@ -66,6 +67,23 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
    key a secret.) Then redeploy so new containers pick them up. Without
    them the app's photo buttons explain that photo reading isn't set up.
 
+7. **The iOS app** (optional): Sign in with Apple, in the app and on the
+   sign-in page, and "your move" notifications. The ids are plain values
+   (vars in `wrangler.jsonc` or `CHESS_WORKER_VARS`), the keys secrets;
+   [docs/ios.md](../../docs/ios.md#publishing-to-the-app-store) says where
+   each comes from in the Apple Developer account:
+
+   ```sh
+   npx wrangler secret put CHESS_APPLE_KEY   # the Sign in with Apple key's .p8
+   npx wrangler secret put CHESS_APNS_KEY    # the push key's .p8 (may be the same key)
+   # vars: CHESS_APPLE_KEY_ID, CHESS_APPLE_TEAM_ID, CHESS_APPLE_SERVICES_ID,
+   #       CHESS_APNS_KEY_ID, CHESS_APNS_TEAM_ID
+   ```
+
+   Or keep them in GitHub (Deploying from GitHub Actions, below). Then
+   redeploy. Without them the app and the sign-in page leave Sign in with
+   Apple out, and nothing is pushed.
+
 `npm run check` type-checks the Worker and validates the config.
 
 ## Deploying from GitHub Actions
@@ -85,15 +103,28 @@ Settings, in the repository or its `cloudflare` environment:
 | variable | `CLOUDFLARE_DEPLOY` | `true` to deploy each release (off by default, so forks don't) |
 | variable | `CHESS_WORKER_NAME` | the Worker's name (`open-chess` by default); a new name makes a new Worker |
 | variable | `CHESS_PUBLIC_URL` | where players reach it; its host becomes the route |
-| variable | `CHESS_WORKER_VARS` | JSON of more vars, e.g. `{"ESPORTS_PUBLIC_URL": "https://site.example", "ESPORTS_LOGIN": "true", "CHESS_HOST_NAME": "Site", "CHESS_APP_THEME": "esports-lab"}` (a bundled theme by name) |
+| variable | `CHESS_WORKER_VARS` | JSON of more vars, e.g. `{"ESPORTS_PUBLIC_URL": "https://site.example", "ESPORTS_LOGIN": "true"}` (optional: plain variables below do the same) |
 
-The workflow never sets the server's secrets: `DATABASE_URL`,
-`ESPORTS_SECRET`, `CHESS_FAIRPLAY_MODEL` and the rest
-stay in Cloudflare, set with `npx wrangler secret put NAME --name <worker>`.
-A tuned fair-play model belongs there rather than in a repository: its
-thresholds tell a player exactly how far engine help goes unflagged. A
-model that doesn't parse stops the fair-play worker at startup with
-`CHESS_FAIRPLAY_MODEL isn't a valid model`.
+**The server's own settings** can live in GitHub too. A variable or secret
+named like one of them (every name in `PASS_THROUGH` in `src/index.ts`,
+plus `CHESS_INSTANCES` and `ANALYSE_ENABLED`) is set on the Worker by each
+deploy: variables as vars, secrets as Cloudflare secrets. For example:
+
+| Kind | Name | |
+|---|---|---|
+| secret | `DATABASE_URL`, `ESPORTS_SECRET` | the database, and the secret shared with the site |
+| variable | `ESPORTS_PUBLIC_URL`, `ESPORTS_LOGIN`, `CHESS_HOST_NAME` | the site, and signing in with it |
+| variable | `CHESS_APP_THEME` | `esports-lab` unless set (`none`, another bundled theme, or CSS) |
+| secret | `CHESS_APPLE_KEY`, `CHESS_APNS_KEY` | the Sign in with Apple and push keys (`.p8`) |
+| variable | `CHESS_APPLE_KEY_ID`, `CHESS_APPLE_TEAM_ID`, `CHESS_APPLE_SERVICES_ID`, `CHESS_APNS_KEY_ID`, `CHESS_APNS_TEAM_ID` | their ids |
+| secret | `CHESS_FAIRPLAY_MODEL` | the fair-play model |
+
+Other names are left alone, and so are secrets set only in Cloudflare
+(`npx wrangler secret put NAME --name <worker>`): GitHub's value wins for a
+name both have. A tuned fair-play model is better kept in one of the two
+than in the repository: its thresholds tell a player exactly how far
+engine help goes unflagged. A model that doesn't parse stops the fair-play
+worker at startup with `CHESS_FAIRPLAY_MODEL isn't a valid model`.
 
 ## Notes
 

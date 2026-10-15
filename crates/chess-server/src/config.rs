@@ -202,8 +202,8 @@ pub struct Config {
     /// (`esports-lab`: web/chess/themes), CSS, or the path of a .css file;
     /// served as `/app/theme.css`, after the app's own styles, so it can set
     /// the app's colour and font variables (docs/api.md, "The Chess lab's
-    /// look").
-    #[arg(long, env = "CHESS_APP_THEME")]
+    /// look"). `esports-lab` unless set; `none` for the app's own look.
+    #[arg(long, env = "CHESS_APP_THEME", default_value = "esports-lab")]
     pub app_theme: Option<String>,
 
     /// Apple push notifications for the iOS app ("your move" in
@@ -384,5 +384,31 @@ impl AnalyseConfig {
         }
         model.validate().map_err(|e| anyhow::anyhow!("fair-play model: {e}"))?;
         Ok((model, configured))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::Config;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        cfg: Config,
+    }
+
+    #[test]
+    fn the_esports_look_unless_set() {
+        if std::env::var_os("CHESS_APP_THEME").is_some() {
+            return; // set where the tests run: the default can't show
+        }
+        let cli = Cli::try_parse_from(["chess-server", "--database-url", "postgres://x"]).unwrap();
+        assert_eq!(cli.cfg.app_theme.as_deref(), Some("esports-lab"));
+        let cli =
+            Cli::try_parse_from(["chess-server", "--database-url", "postgres://x", "--app-theme", "none"])
+                .unwrap();
+        assert_eq!(cli.cfg.app_theme.as_deref(), Some("none"));
     }
 }
