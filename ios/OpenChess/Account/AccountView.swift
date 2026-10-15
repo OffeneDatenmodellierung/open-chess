@@ -12,6 +12,8 @@ struct AccountView: View {
     @State var confirmDelete = false
     @State var showLicence = false
     @State var deleted = false
+    @State var confirmUnlink = false
+    @State var appleNote: String?
 
     var body: some View {
         Form {
@@ -26,12 +28,32 @@ struct AccountView: View {
                     Button("Sign out") {
                         Task { await auth.signOut() }
                     }
+                    if auth.appleLinked {
+                        HStack {
+                            Image(systemName: "apple.logo")
+                            Text("Apple ID")
+                            Spacer()
+                            Text("Linked").foregroundStyle(Color.ocMuted)
+                        }
+                        Button("Unlink Apple ID", role: .destructive) { confirmUnlink = true }
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Link Apple ID").font(OCFont.text(15, weight: .semibold))
+                            Text("Then you can also sign in with Apple.")
+                                .font(OCFont.text(12)).foregroundStyle(Color.ocMuted)
+                            AppleSignInButton(link: true)
+                        }
+                    }
+                    if let n = appleNote {
+                        Text(n).font(OCFont.text(13)).foregroundStyle(Color.ocDanger)
+                    }
                 } else {
+                    AppleSignInButton()
                     Button {
                         Task { await auth.signIn() }
                     } label: {
                         HStack {
-                            Text("Sign in")
+                            Text("Sign in to open-chess")
                             Spacer()
                             if auth.busy { ProgressView() }
                         }
@@ -135,6 +157,14 @@ struct AccountView: View {
         }
         .alert("Account deleted", isPresented: $deleted) {
             Button("OK", role: .cancel) {}
+        }
+        .alert("Unlink your Apple ID?", isPresented: $confirmUnlink) {
+            Button("Unlink", role: .destructive) {
+                Task { appleNote = await auth.unlinkApple() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You won't be able to sign in with Apple any more; sign in the usual way instead.")
         }
         .sheet(isPresented: $showLicence) {
             PhotoLicenceSheet { _ in showLicence = false }

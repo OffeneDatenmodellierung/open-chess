@@ -29,6 +29,9 @@ struct SignInPrompt: View {
             Text(message)
                 .font(OCFont.text(14))
                 .foregroundStyle(Color.ocMuted)
+            if service == .openChess {
+                AppleSignInButton()
+            }
             Button {
                 Task {
                     switch service {

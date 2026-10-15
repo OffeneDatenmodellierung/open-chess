@@ -61,6 +61,8 @@ targets:
       path: Support/OpenChess.entitlements
       properties:
         aps-environment: $(APS_ENVIRONMENT)
+        com.apple.developer.applesignin:
+          - Default
     info:
       path: Support/Info.plist
       properties:
@@ -124,6 +126,7 @@ targets:
       - path: OpenChess/Game/GameText.swift
       - path: OpenChess/Board/MoveInput.swift
       - path: OpenChess/Live/LiveHelpers.swift
+      - path: OpenChess/Account/AppleSignIn.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.offenedatenmodellierung.openchess.tests

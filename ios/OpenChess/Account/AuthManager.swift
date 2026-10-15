@@ -25,6 +25,15 @@ final class AuthManager: ObservableObject {
     @Published var error: String?
     @Published var lichessBusy = false
     @Published var lichessError: String?
+    /// Sign in with Apple: whether the account has an Apple ID linked, a
+    /// sign-in waiting for a username, and the last problem (with the
+    /// button that started it).
+    @Published private(set) var appleLinked = false
+    @Published var appleUsername: AppleUsernameRequest?
+    @Published private(set) var appleBusy = false
+    @Published var appleError: (origin: UUID, message: String)?
+    private var appleNonce = ""
+    private var applePending: ApplePending?
 
     let settings: AppSettings
     private var webSession: ASWebAuthenticationSession?
@@ -138,6 +147,7 @@ final class AuthManager: ObservableObject {
             let data = try await server.get("/api/account")
             let account = try JSONDecoder().decode(AccountInfo.self, from: data)
             settings.username = account.username.isEmpty ? account.id : account.username
+            appleLinked = account.apple
         } catch {
             if let e = error as? APIError, e.status == 401 {
                 setToken(nil)
@@ -150,6 +160,7 @@ final class AuthManager: ObservableObject {
     private func setToken(_ value: String?) {
         Keychain.set(AuthManager.tokenKey, value)
         token = value
+        if value == nil { appleLinked = false }
     }
 
     func signOut() async {
@@ -174,6 +185,160 @@ final class AuthManager: ObservableObject {
         } catch {
             self.error = describe(error)
             return false
+        }
+    }
+
+    // MARK: Sign in with Apple
+
+    /// Apple's sheet is about to show: ask for name and email, with a
+    /// fresh nonce (Apple gets its SHA-256; the server gets it raw).
+    func prepareApple(_ request: ASAuthorizationAppleIDRequest) {
+        appleNonce = AppleNonce.make()
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = AppleNonce.sha256Hex(appleNonce)
+    }
+
+    /// Apple's sheet answered. `link`: add the Apple ID to the signed-in
+    /// account (sent with the bearer token) instead of signing in.
+    func completeApple(_ result: Result<ASAuthorization, Error>, link: Bool, origin: UUID) async {
+        appleError = nil
+        switch result {
+        case .failure(let error):
+            if let e = error as? ASAuthorizationError, e.code == .canceled { return }
+            appleError = (origin: origin, message: "Sign in with Apple didn't finish: \(error.localizedDescription)")
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let tokenData = credential.identityToken,
+                  let identityToken = String(data: tokenData, encoding: .utf8),
+                  let codeData = credential.authorizationCode,
+                  let code = String(data: codeData, encoding: .utf8) else {
+                appleError = (origin: origin, message: "Apple sent no identity token; try again.")
+                return
+            }
+            var name: String?
+            if let parts = credential.fullName {
+                let formatted = PersonNameComponentsFormatter().string(from: parts).trimmed
+                name = formatted.isEmpty ? nil : formatted
+            }
+            let pending = ApplePending(
+                identityToken: identityToken,
+                authorizationCode: code,
+                nonce: appleNonce,
+                name: name,
+                email: credential.email,
+                link: link,
+                origin: origin,
+                at: Date()
+            )
+            applePending = pending
+            await sendApple(pending, username: nil)
+        }
+    }
+
+    /// The username chosen for a new account: the same Apple answer again,
+    /// with the name (while Apple's code is still fresh).
+    func submitAppleUsername(_ username: String) async {
+        guard let pending = applePending else {
+            appleUsername = nil
+            return
+        }
+        if Date().timeIntervalSince(pending.at) > 270 {
+            appleUsername = nil
+            applePending = nil
+            appleError = (origin: pending.origin, message: "That took a while, so Apple's sign-in ran out. Sign in with Apple again.")
+            return
+        }
+        await sendApple(pending, username: username.trimmed)
+    }
+
+    func cancelAppleUsername() {
+        appleUsername = nil
+        applePending = nil
+    }
+
+    private func sendApple(_ pending: ApplePending, username: String?) async {
+        appleBusy = true
+        defer { appleBusy = false }
+        var body: [String: Any] = [
+            "identityToken": pending.identityToken,
+            "authorizationCode": pending.authorizationCode,
+            "nonce": pending.nonce,
+            "clientId": "open-chess iOS",
+            "scopes": AuthManager.scope.split(separator: " ").map(String.init) + ["email:read"],
+        ]
+        if let username, !username.isEmpty { body["username"] = username }
+        if let name = pending.name { body["name"] = name }
+        if let email = pending.email { body["email"] = email }
+        let client = pending.link ? server : APIClient(base: settings.serverBase, token: nil)
+        var request = client.makeRequest("POST", "/api/auth/apple")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = JSONAny.data(body)
+        let status: Int
+        let obj: [String: Any]
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            obj = JSONAny.object(data) ?? [:]
+        } catch {
+            appleError = (origin: pending.origin, message: describe(error))
+            return
+        }
+        let code = obj["error"] as? String ?? ""
+        let message = obj["message"] as? String ?? (code.isEmpty ? "The server answered \(status)." : code)
+        if (200..<300).contains(status) {
+            applePending = nil
+            appleUsername = nil
+            if !pending.link {
+                let token = obj["access_token"] as? String ?? ""
+                guard !token.isEmpty else {
+                    appleError = (origin: pending.origin, message: "The server sent no token.")
+                    return
+                }
+                setToken(token)
+            }
+            if let name = obj["username"] as? String, !name.isEmpty {
+                settings.username = name
+            }
+            appleLinked = true
+            await refreshAccount()
+            return
+        }
+        if status == 409 && code == "choose_username" {
+            let suggestion = obj["suggestion"] as? String ?? (username ?? "")
+            appleUsername = AppleUsernameRequest(origin: pending.origin, suggestion: suggestion, message: nil)
+            return
+        }
+        if status == 400 && code == "bad_username" {
+            // Same sheet (same id), now with the reason.
+            if var r = appleUsername {
+                r.message = message
+                appleUsername = r
+            } else {
+                appleUsername = AppleUsernameRequest(origin: pending.origin, suggestion: username ?? "", message: message)
+            }
+            return
+        }
+        // apple_linked_elsewhere, already_linked, email_in_use, 403 and the rest.
+        applePending = nil
+        appleUsername = nil
+        appleError = (origin: pending.origin, message: message)
+    }
+
+    /// `DELETE /api/auth/apple`: nil when done, else why not.
+    func unlinkApple() async -> String? {
+        var request = server.makeRequest("DELETE", "/api/auth/apple")
+        request.timeoutInterval = 30
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if (200..<300).contains(status) {
+                appleLinked = false
+                return nil
+            }
+            let obj = JSONAny.object(data) ?? [:]
+            return obj["message"] as? String ?? obj["error"] as? String ?? "The server answered \(status)."
+        } catch {
+            return describe(error)
         }
     }
 
@@ -272,4 +437,25 @@ final class WebAuthAnchor: NSObject, ASWebAuthenticationPresentationContextProvi
         }
         return WebAuthAnchor(anchor: ASPresentationAnchor())
     }
+}
+
+/// Apple's answer, kept while a new account picks its username (sent
+/// again unchanged, with the name).
+struct ApplePending {
+    let identityToken: String
+    let authorizationCode: String
+    let nonce: String
+    let name: String?
+    let email: String?
+    let link: Bool
+    let origin: UUID
+    let at: Date
+}
+
+/// "Choose a username" for a new Apple account.
+struct AppleUsernameRequest: Identifiable {
+    let id = UUID()
+    let origin: UUID
+    var suggestion: String
+    var message: String?
 }

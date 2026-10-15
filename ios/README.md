@@ -44,6 +44,10 @@ set your team in `project.yml` (or in Xcode), remove the two
 
 These need a real team and its provisioning profile:
 
+- **Sign in with Apple**: the `com.apple.developer.applesignin`
+  entitlement (`Default`), and the capability on the App ID. Unsigned CI
+  builds aren't affected; in the simulator it needs an Apple ID signed
+  in to the simulator.
 - **Push** ("Tell me when it's my move"): the `aps-environment`
   entitlement in `Support/OpenChess.entitlements`. Without it,
   `registerForRemoteNotifications` fails, and the setting shows the
@@ -114,6 +118,20 @@ falls back to choosing one from the library.
   real-board games, notifications, Lichess games) shows `SignInPrompt`:
   a reason and a button that signs in right there. It goes away once
   signed in; cancelling leaves it.
+- **Sign in with Apple** (native, `AuthenticationServices`): Apple's
+  white button sits above "Sign in to open-chess" in `SignInPrompt` and
+  on Account. The app makes a nonce (32 random bytes, base64url), gives
+  Apple its SHA-256 (hex) and sends the raw nonce, the identity token and
+  the authorization code to `POST /api/auth/apple` (with the OAuth
+  scopes and `email:read`, and the name and email Apple gives the first
+  time). A 200 brings the same kind of token as the OAuth sign-in. A new
+  Apple user gets "Choose a username" (prefilled with the server's
+  suggestion); the same Apple answer is sent again with the name while
+  Apple's code is still fresh (about 5 minutes, else Apple's sheet runs
+  again). Signed in, Account shows the Apple ID: "Link Apple ID" posts
+  with the bearer token (the token is kept), and Unlink (confirmed)
+  calls `DELETE /api/auth/apple`. The server's messages (taken name,
+  linked elsewhere, email in use, no new accounts) are shown as sent.
 - **Lichess sign-in** is OAuth 2 PKCE on lichess.org (no client
   registration: client id `open-chess-ios`, redirect
   `org.offenedatenmodellierung.openchess:/lichess`, scopes `board:play

@@ -173,4 +173,18 @@ final class LogicTests: XCTestCase {
         XCTAssertEqual(setup.opponent, "bob")
         XCTAssertEqual(setup.startBody["board"] as? String, "photos")
     }
+
+    // MARK: Sign in with Apple
+
+    func testAppleNonce() {
+        XCTAssertEqual(
+            AppleNonce.sha256Hex("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        )
+        let nonce = AppleNonce.make()
+        XCTAssertEqual(nonce.count, 43)
+        XCTAssertNil(nonce.rangeOfCharacter(from: CharacterSet(charactersIn: "+/=")))
+        XCTAssertNotEqual(nonce, AppleNonce.make())
+        XCTAssertEqual(AppleNonce.sha256Hex(nonce).count, 64)
+    }
 }
