@@ -10,6 +10,10 @@ renames that heading to the version and date.
 - The Chess lab has the esports-lab look unless `CHESS_APP_THEME` says
   otherwise (`none` for the app's own), so a deployment can't lose it by
   leaving the setting out.
+- The Cloudflare Worker hands the containers the Sign in with Apple and
+  push notification settings (and the other settings it had missed: admin
+  emails, the tablebase, photo review, analysis threads), so setting them
+  in Cloudflare takes effect.
 
 ## 0.1.6 — 2026-10-15
 

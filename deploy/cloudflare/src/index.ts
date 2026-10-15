@@ -58,7 +58,32 @@ const PASS_THROUGH = [
   "CHESS_VISION_ENDPOINT",
   "CHESS_VISION_MODEL",
   "CHESS_VISION_API_KEY",
+  "CHESS_VISION_LOCAL_MODEL",
+  "CHESS_VISION_MIN_CONFIDENCE",
+  "CHESS_VISION_REVIEW",
+  "CHESS_VISION_REVIEW_MAX",
   "CHESS_APP_DIR",
+  // Admins by email, and how long an admin's passkey sign-in lasts.
+  "CHESS_ADMIN_EMAILS",
+  "CHESS_ADMIN_PASSKEY_HOURS",
+  "CHESS_FAIRPLAY_SKIP_PLIES",
+  "CHESS_TABLEBASE_URL",
+  "CHESS_ANALYSIS_THREADS",
+  "CHESS_ANALYSIS_HASH_MB",
+  "CHESS_SWEEP_MS",
+  // The iOS app's push notifications (the .p8 key is a secret).
+  "CHESS_APNS_KEY",
+  "CHESS_APNS_KEY_ID",
+  "CHESS_APNS_TEAM_ID",
+  "CHESS_APNS_TOPIC",
+  // Sign in with Apple, in the app and on the sign-in page (the key is a
+  // secret; the ids are vars).
+  "CHESS_APPLE_KEY",
+  "CHESS_APPLE_KEY_ID",
+  "CHESS_APPLE_TEAM_ID",
+  "CHESS_APPLE_CLIENT_IDS",
+  "CHESS_APPLE_SERVICES_ID",
+  "CHESS_APPLE_URL",
   "RUST_LOG",
 ];
 

@@ -18,8 +18,9 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
    host, e.g. `chess.example.com`; its zone must be in this Cloudflare
    account), `CHESS_PUBLIC_URL` to match, `ESPORTS_PUBLIC_URL`,
    `ESPORTS_LOGIN` (`"true"` to let that site's players sign in with it),
-   `CHESS_SITE_NAME` and `CHESS_INSTANCES`. To give the Chess lab
-   your colours, `npx wrangler secret put CHESS_APP_THEME < theme.css`
+   `CHESS_SITE_NAME` and `CHESS_INSTANCES`. The Chess lab has the
+   esports-lab look unless you give it yours:
+   `npx wrangler secret put CHESS_APP_THEME < theme.css`
    ([docs/api.md](../../docs/api.md#the-chess-labs-look)).
 2. Set the secrets:
 
@@ -65,6 +66,22 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
    (Vars in `wrangler.jsonc` work too for the endpoint and model; keep the
    key a secret.) Then redeploy so new containers pick them up. Without
    them the app's photo buttons explain that photo reading isn't set up.
+
+7. **The iOS app** (optional): Sign in with Apple, in the app and on the
+   sign-in page, and "your move" notifications. The ids are plain values
+   (vars in `wrangler.jsonc` or `CHESS_WORKER_VARS`), the keys secrets;
+   [docs/ios.md](../../docs/ios.md#publishing-to-the-app-store) says where
+   each comes from in the Apple Developer account:
+
+   ```sh
+   npx wrangler secret put CHESS_APPLE_KEY   # the Sign in with Apple key's .p8
+   npx wrangler secret put CHESS_APNS_KEY    # the push key's .p8 (may be the same key)
+   # vars: CHESS_APPLE_KEY_ID, CHESS_APPLE_TEAM_ID, CHESS_APPLE_SERVICES_ID,
+   #       CHESS_APNS_KEY_ID, CHESS_APNS_TEAM_ID
+   ```
+
+   Then redeploy. Without them the app and the sign-in page leave Sign in
+   with Apple out, and nothing is pushed.
 
 `npm run check` type-checks the Worker and validates the config.
 
