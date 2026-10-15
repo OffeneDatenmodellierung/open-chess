@@ -37,7 +37,7 @@ packages:
   # Streaming over RTMP (BSD-3-Clause).
   HaishinKit:
     url: https://github.com/HaishinKit/HaishinKit.swift
-    exactVersion: 2.1.2
+    exactVersion: 2.2.5
 
 targets:
   OpenChess:

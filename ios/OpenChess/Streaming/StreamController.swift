@@ -4,7 +4,7 @@ import RTMPHaishinKit
 import SwiftUI
 import UIKit
 
-// Streaming to Twitch, YouTube or any RTMP server with HaishinKit 2.1.2
+// Streaming to Twitch, YouTube or any RTMP server with HaishinKit 2.2.5
 // (BSD-3-Clause): the back camera full frame with the board cutout drawn
 // over it (the mixer's offscreen screen), microphone audio, and optionally
 // a copy recorded on the phone. This is the only file that uses HaishinKit.

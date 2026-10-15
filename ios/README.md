@@ -190,7 +190,7 @@ falls back to choosing one from the library.
   rendered with `ImageRenderer` on every move), 1280×720 by default, with
   the microphone. The preview on screen is the mixed picture. The screen
   stays awake while live; the stream stops when the app goes to the
-  background (no background audio mode). HaishinKit 2.1.2 (BSD-3-Clause)
+  background (no background audio mode). HaishinKit 2.2.5 (BSD-3-Clause)
   comes from Swift Package Manager.
 - **The overlay link** (`broadcastUrl`) is shown with Share: add it as a
   Browser Source in OBS, with `&bg=transparent`.
