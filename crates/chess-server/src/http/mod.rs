@@ -64,10 +64,12 @@ pub async fn docs(State(ctx): State<Ctx>, guide: Option<axum::extract::Path<Stri
             None => format!("{base}/app/#docs"),
         }
     } else {
-        let repo = "https://github.com/OffeneDatenmodellierung/open-chess/blob/main/docs";
-        match name {
-            Some(n) => format!("{repo}/{n}.md"),
-            None => repo.to_owned(),
+        let repo = "https://github.com/OffeneDatenmodellierung/open-chess/blob/main";
+        match name.as_deref() {
+            // What's new: the changelog, at the repository's root.
+            Some("changelog") => format!("{repo}/CHANGELOG.md"),
+            Some(n) => format!("{repo}/docs/{n}.md"),
+            None => format!("{repo}/docs"),
         }
     };
     axum::response::Redirect::to(&to).into_response()
@@ -95,6 +97,7 @@ pub async fn index(State(ctx): State<Ctx>, headers: axum::http::HeaderMap) -> Re
         "api": "Lichess-compatible: Board, Bot, Challenge, OAuth (PKCE), event and game streams, game export",
         "url": ctx.cfg.public_url(),
         "version": env!("CARGO_PKG_VERSION"),
+        "changelog": format!("{}/docs/changelog", ctx.cfg.public_url()),
         // Browser sign-in (the OAuth page, the Account page): always, with
         // this server's own accounts; "signup" whether anyone may make one;
         // "esports" whether the host site's players sign in with it.
