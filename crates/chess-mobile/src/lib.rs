@@ -33,7 +33,10 @@ pub use board::{
     BoardEvent, BoardNow, ChessnutBoard, chessnut_read_characteristic, chessnut_write_characteristic,
 };
 pub use capture::{Capture, CapturePolicy, FrameDecision, default_capture_policy};
-pub use game::{Assistance, BotMove, GameMode, GameSession, GameState, PlayedMove, check_fen, complete_fen};
+pub use game::{
+    Assistance, BotMove, GameMode, GameSession, GameState, PlayedMove, check_fen, complete_fen,
+    describe_moves,
+};
 pub use ratings::RatingValue;
 pub use store::{OutboxItem, PendingTotals, SpeedRating, Store};
 #[cfg(feature = "vision")]
