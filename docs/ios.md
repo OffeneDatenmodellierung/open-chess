@@ -149,6 +149,13 @@ signed release and uploads it to App Store Connect. Once:
    `CHESS_APNS_TEAM_ID`). Without them the app's Apple button answers that
    the server isn't set up for it.
 
+   For the website as well (so an account made with Apple in the app can
+   sign in there): Identifiers › + › Services IDs, e.g.
+   `org.offenedatenmodellierung.openchess.web`; tick Sign In with Apple ›
+   Configure: primary app id the app's, domain your server's host, return
+   URL `https://<your server>/auth/apple/callback` (with the path prefix,
+   if the server has one). Set `CHESS_APPLE_SERVICES_ID` to it.
+
 Each release: run *TestFlight* from the Actions tab (or push a tag
 `ios-v1.0.0`). The build appears in App Store Connect › TestFlight after
 Apple processes it (minutes to an hour); test it there, then fill in the

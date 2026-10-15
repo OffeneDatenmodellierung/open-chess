@@ -142,11 +142,11 @@ pub async fn link(ctx: &Ctx, p: &SitePlayer) -> ApiResult<(i64, String)> {
 
 // ─── sessions ───
 
-fn secure(ctx: &Ctx) -> &'static str {
+pub(crate) fn secure(ctx: &Ctx) -> &'static str {
     if ctx.cfg.public_url().starts_with("https://") { "; Secure" } else { "" }
 }
 
-fn cookie_path(ctx: &Ctx) -> String {
+pub(crate) fn cookie_path(ctx: &Ctx) -> String {
     let base = ctx.cfg.base_path().unwrap_or_default();
     if base.is_empty() { "/".into() } else { base }
 }
@@ -179,7 +179,7 @@ pub async fn grant_listed(ctx: &Ctx, player: i64) -> ApiResult<()> {
 
 /// Start a session: the cookie to set. `checked`: signed in with a passkey,
 /// which counts as an admin's or manager's passkey check.
-async fn start_session(ctx: &Ctx, player: i64, checked: bool) -> ApiResult<HeaderValue> {
+pub(crate) async fn start_session(ctx: &Ctx, player: i64, checked: bool) -> ApiResult<HeaderValue> {
     grant_listed(ctx, player).await?;
     let token = random_token(40);
     let c = ctx.db.conn().await?;
@@ -212,7 +212,7 @@ fn js_string(s: &str) -> String {
 }
 
 /// Where to go after signing in: a path on this server, or the Account page.
-fn back_to(ctx: &Ctx, want: Option<&str>) -> String {
+pub(crate) fn back_to(ctx: &Ctx, want: Option<&str>) -> String {
     let base = ctx.cfg.base_path().unwrap_or_default();
     match want {
         Some(p)
@@ -236,13 +236,13 @@ fn redirect_with_cookies(to: &str, cookies: Vec<HeaderValue>) -> Response {
 }
 
 /// A form tied to the session that saw it.
-fn csrf(session: &str, what: &str) -> String {
+pub(crate) fn csrf(session: &str, what: &str) -> String {
     hash_key(&format!("{session}|{what}"))
 }
 
 // ─── pages ───
 
-fn hidden(k: &str, v: &str) -> String {
+pub(crate) fn hidden(k: &str, v: &str) -> String {
     format!("<input type=hidden name=\"{k}\" value=\"{}\">", html_escape(v))
 }
 
@@ -251,6 +251,13 @@ fn sign_in_form(ctx: &Ctx, ret: &str, error: Option<&str>) -> String {
     let mut body = String::new();
     if let Some(e) = error {
         let _ = write!(body, "<p class=err>{}</p>", html_escape(e));
+    }
+    if crate::http::apple::on_web(ctx) {
+        let _ = write!(
+            body,
+            "<p><a class=\"btn apple\" href=\"{base}/auth/apple?return={}\">Sign in with Apple</a></p>",
+            urlencoding::encode(ret)
+        );
     }
     if ctx.cfg.esports().is_some() {
         let _ = write!(
@@ -338,6 +345,13 @@ fn signup_form(ctx: &Ctx, ret: &str, error: Option<&str>, name: &str, email: &st
     let mut body = String::new();
     if let Some(e) = error {
         let _ = write!(body, "<p class=err>{}</p>", html_escape(e));
+    }
+    if crate::http::apple::on_web(ctx) {
+        let _ = write!(
+            body,
+            "<p><a class=\"btn apple\" href=\"{base}/auth/apple?return={}\">Sign up with Apple</a></p><p class=muted>or:</p>",
+            urlencoding::encode(ret)
+        );
     }
     let _ = write!(
         body,
@@ -703,6 +717,7 @@ async fn account_page(ctx: &Ctx, player: i64, session: &str, fresh: Option<&str>
         );
     }
 
+    body.push_str(&crate::http::apple::account_section(ctx, player, &pk_csrf, locked).await?);
     body.push_str("<h2>API tokens</h2>");
     if tokens.is_empty() {
         body.push_str("<p class=muted>None yet.</p>");
@@ -763,7 +778,7 @@ async fn account_page(ctx: &Ctx, player: i64, session: &str, fresh: Option<&str>
     Ok(page("Your chess account", &body))
 }
 
-async fn signed_in(ctx: &Ctx, h: &HeaderMap) -> ApiResult<Option<(i64, String)>> {
+pub(crate) async fn signed_in(ctx: &Ctx, h: &HeaderMap) -> ApiResult<Option<(i64, String)>> {
     let session = cookie(h, SESSION_COOKIE).unwrap_or_default();
     Ok(ctx.auth.session(h).await?.map(|p| (p, session)))
 }
@@ -1051,7 +1066,7 @@ pub async fn account_passkey_add(
 /// Changing how an account signs in (its passkeys, its password) needs a
 /// fresh passkey check in this session when it has passkeys, so a stolen
 /// password or session can't add the thief's own.
-async fn may_change(ctx: &Ctx, player: i64, session: &str) -> ApiResult<()> {
+pub(crate) async fn may_change(ctx: &Ctx, player: i64, session: &str) -> ApiResult<()> {
     let c = ctx.db.conn().await?;
     let r = c
         .query_one(
@@ -1088,7 +1103,7 @@ async fn forget_checks(ctx: &Ctx, player: i64) -> ApiResult<()> {
     Ok(())
 }
 
-fn form_csrf_ok(f: &HashMap<String, String>, session: &str) -> ApiResult<()> {
+pub(crate) fn form_csrf_ok(f: &HashMap<String, String>, session: &str) -> ApiResult<()> {
     if f.get("csrf").map(String::as_str) == Some(csrf(session, "passkeys").as_str()) {
         Ok(())
     } else {
@@ -1096,7 +1111,7 @@ fn form_csrf_ok(f: &HashMap<String, String>, session: &str) -> ApiResult<()> {
     }
 }
 
-fn to_account(ctx: &Ctx) -> Response {
+pub(crate) fn to_account(ctx: &Ctx) -> Response {
     let base = ctx.cfg.base_path().unwrap_or_default();
     Redirect::to(&format!("{base}/account")).into_response()
 }

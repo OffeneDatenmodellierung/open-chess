@@ -128,6 +128,14 @@ may be for (default: the app's bundle id, `CHESS_APNS_TOPIC`). The server
 checks the identity token with Apple's keys and trades the one-time code
 with Apple, which also gives the token it uses to revoke the link later.
 
+The website signs in with Apple too when `CHESS_APPLE_SERVICES_ID` names a
+Services ID whose return URL is `{CHESS_PUBLIC_URL}/auth/apple/callback`
+(https). The sign-in and sign-up pages then offer "Sign in with Apple"
+(`GET /auth/apple?return=…`); Apple posts its answer back, a new Apple ID
+chooses a username on a page of its own, and the account page links or
+unlinks an Apple ID. The same Apple ID signs in to the same account in the
+app and on the website.
+
 The app also signs in with OAuth
 (PKCE) and the redirect `org.offenedatenmodellierung.openchess:/oauth`:
 native apps' reversed-domain schemes are accepted ([RFC 8252](https://www.rfc-editor.org/rfc/rfc8252#section-7.1)).

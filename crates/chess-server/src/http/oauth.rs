@@ -102,6 +102,7 @@ pub fn page(title: &str, body: &str) -> Response {
          color:#e6ebf0;background:#121820}}a{{color:#6fa3d6}}button{{font:inherit;padding:.5rem 1.2rem;margin-right:.5rem;\
          border-radius:8px;border:1px solid #2c3845;background:#19222c;color:inherit;cursor:pointer}}button.go,a.btn{{background:#6fa3d6;\
          border-color:#6fa3d6;color:#0c1218;font-weight:700}}a.btn{{display:inline-block;padding:.5rem 1.2rem;border-radius:8px;text-decoration:none}}\
+         a.btn.apple{{background:#fff;border-color:#fff;color:#000}}\
          code{{background:#19222c;padding:0 .3rem;border-radius:4px}}li{{margin:.2rem 0}}label{{display:block;margin:.6rem 0}}\
          label input:not([type=checkbox]){{display:block;width:100%;box-sizing:border-box;font:inherit;padding:.4rem;margin-top:.2rem;\
          border-radius:8px;border:1px solid #2c3845;background:#19222c;color:inherit}}label.check{{margin:.3rem 0}}\

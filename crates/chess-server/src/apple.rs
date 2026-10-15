@@ -65,6 +65,8 @@ pub struct Apple {
     key_id: String,
     team_id: String,
     client_ids: Vec<String>,
+    /// The website's Services ID, if it signs in with Apple too.
+    services_id: Option<String>,
     /// Apple's sign-in service: `https://appleid.apple.com`, which is also
     /// the tokens' issuer and the client secret's audience.
     url: String,
@@ -94,16 +96,45 @@ impl Apple {
         if client_ids.is_empty() {
             client_ids.push(cfg.apns_topic.clone());
         }
+        let services_id =
+            cfg.apple_services_id.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+        if let Some(s) = &services_id
+            && !client_ids.contains(s)
+        {
+            client_ids.push(s.clone());
+        }
         let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).build()?;
         Ok(Some(Arc::new(Apple {
             key,
             key_id: key_id.clone(),
             team_id,
             client_ids,
+            services_id,
             url: cfg.apple_url.trim_end_matches('/').to_owned(),
             http,
             keys: Mutex::new(None),
         })))
+    }
+
+    /// The website's Services ID, when the website signs in with Apple.
+    pub fn services_id(&self) -> Option<&str> {
+        self.services_id.as_deref()
+    }
+
+    /// Where to send a browser to sign in with Apple (the website's flow:
+    /// Apple posts the answer back to `redirect`).
+    pub fn authorize_url(&self, redirect: &str, state: &str, nonce: &str) -> Option<String> {
+        let client = self.services_id.as_deref()?;
+        let mut u = url::Url::parse(&format!("{}/auth/authorize", self.url)).ok()?;
+        u.query_pairs_mut()
+            .append_pair("response_type", "code id_token")
+            .append_pair("response_mode", "form_post")
+            .append_pair("client_id", client)
+            .append_pair("redirect_uri", redirect)
+            .append_pair("scope", "name email")
+            .append_pair("state", state)
+            .append_pair("nonce", &nonce_hash(nonce));
+        Some(u.into())
     }
 
     /// Check an identity token from the app and the nonce it sent Apple
@@ -153,17 +184,23 @@ impl Apple {
     /// Trade the app's authorization code for a refresh token, checking it
     /// was issued to the same person. `Ok(None)`: Apple gave no refresh
     /// token (it doesn't always).
-    pub async fn redeem(&self, code: &str, id: &AppleId) -> Result<Option<String>> {
+    /// `redirect`: the website's return URL, which a code from the website's
+    /// flow is traded with.
+    pub async fn redeem(&self, code: &str, id: &AppleId, redirect: Option<&str>) -> Result<Option<String>> {
         let secret = self.client_secret(&id.client_id, chrono::Utc::now().timestamp());
+        let mut form = vec![
+            ("client_id", id.client_id.as_str()),
+            ("client_secret", secret.as_str()),
+            ("code", code),
+            ("grant_type", "authorization_code"),
+        ];
+        if let Some(r) = redirect {
+            form.push(("redirect_uri", r));
+        }
         let r = self
             .http
             .post(format!("{}/auth/token", self.url))
-            .form(&[
-                ("client_id", id.client_id.as_str()),
-                ("client_secret", secret.as_str()),
-                ("code", code),
-                ("grant_type", "authorization_code"),
-            ])
+            .form(&form)
             .send()
             .await
             .context("Apple's token service")?;

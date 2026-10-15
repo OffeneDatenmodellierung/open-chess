@@ -112,6 +112,7 @@ async fn setup_with(pre: &str, tweak: impl FnOnce(&mut Config)) -> Option<Env> {
         apple_key_id: None,
         apple_team_id: None,
         apple_client_ids: Vec::new(),
+        apple_services_id: None,
         apple_url: "http://apple.invalid".into(),
     };
     tweak(&mut cfg);
@@ -2664,18 +2665,19 @@ mod apple_mock {
         /// Codes not yet used, and whose they are.
         codes: Arc<Mutex<HashMap<String, String>>>,
         pub revoked: Arc<Mutex<Vec<String>>>,
-        pub client_id: String,
+        /// Our ids Apple knows: the app's bundle id, the website's Services ID.
+        client_ids: Vec<String>,
     }
 
     impl Mock {
-        pub async fn start(client_id: &str) -> Mock {
+        pub async fn start(client_ids: &[&str]) -> Mock {
             let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let m = Mock {
                 url: format!("http://{}", l.local_addr().unwrap()),
                 key: Arc::new(RsaKeyPair::generate(KeySize::Rsa2048).unwrap()),
                 codes: Arc::default(),
                 revoked: Arc::default(),
-                client_id: client_id.to_owned(),
+                client_ids: client_ids.iter().map(|s| (*s).to_owned()).collect(),
             };
             let app = Router::new()
                 .route("/auth/keys", get(keys))
@@ -2698,14 +2700,25 @@ mod apple_mock {
         /// What the app gets from Apple: an identity token for `sub` and a
         /// fresh code, for this raw nonce.
         pub fn sign_in(&self, sub: &str, email: Option<&str>, nonce: &str, aud: &str) -> (String, String) {
+            self.sign_in_hashed(sub, email, &open_chess_server::apple::nonce_hash(nonce), aud)
+        }
+
+        /// The same, with the nonce as Apple holds it (the website's flow).
+        pub fn sign_in_hashed(
+            &self,
+            sub: &str,
+            email: Option<&str>,
+            nonce: &str,
+            aud: &str,
+        ) -> (String, String) {
             let now = chrono::Utc::now().timestamp();
             let mut claims = json!({
-                "iss": self.url, "aud": aud, "sub": sub, "iat": now, "exp": now + 600,
-                "nonce": open_chess_server::apple::nonce_hash(nonce),
+                "iss": self.url, "aud": aud, "sub": sub, "iat": now, "exp": now + 600, "nonce": nonce,
             });
             if let Some(e) = email {
                 claims["email"] = json!(e);
                 claims["email_verified"] = json!(true);
+                claims["is_private_email"] = json!(e.contains("privaterelay"));
             }
             let code = format!("c{}", open_chess_server::auth::random_token(12));
             self.codes.lock().unwrap().insert(code.clone(), sub.to_owned());
@@ -2728,11 +2741,12 @@ mod apple_mock {
         let parts: Vec<&str> = s.split('.').collect();
         let Some(claims) = parts.get(1).and_then(|c| B64.decode(c).ok()) else { return false };
         let claims: Value = serde_json::from_slice(&claims).unwrap_or_default();
+        let client = f.get("client_id").cloned().unwrap_or_default();
         parts.len() == 3
-            && claims["sub"] == m.client_id.as_str()
+            && claims["sub"] == client.as_str()
             && claims["aud"] == m.url.as_str()
             && claims["iss"] == "TEAM123456"
-            && f.get("client_id") == Some(&m.client_id)
+            && m.client_ids.contains(&client)
     }
 
     async fn token(
@@ -2746,7 +2760,7 @@ mod apple_mock {
             Some(sub) if secret_ok(&m, &f) => {
                 let now = chrono::Utc::now().timestamp();
                 let id = m.jwt(
-                    &json!({"iss": m.url, "aud": m.client_id, "sub": sub, "iat": now, "exp": now + 600}),
+                    &json!({"iss": m.url, "aud": f.get("client_id").cloned().unwrap_or_default(), "sub": sub, "iat": now, "exp": now + 600}),
                 );
                 axum::Json(json!({"refresh_token": format!("r-{code}"), "id_token": id})).into_response()
             }
@@ -2770,7 +2784,7 @@ mod apple_mock {
 #[tokio::test]
 async fn sign_in_with_apple_makes_links_and_revokes() {
     use p256::pkcs8::EncodePrivateKey;
-    let apple = apple_mock::Mock::start("org.example.test").await;
+    let apple = apple_mock::Mock::start(&["org.example.test"]).await;
     let pem = p256::ecdsa::SigningKey::from_slice(&[9u8; 32])
         .unwrap()
         .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
@@ -2885,5 +2899,179 @@ async fn sign_in_with_apple_makes_links_and_revokes() {
     let left: i64 =
         env.pg.query_one(&format!("SELECT count(*) FROM {}.apple_ids", env.chess), &[]).await.unwrap().get(0);
     assert_eq!(left, 0);
+    env.teardown().await;
+}
+
+/// Sign in with Apple on the website: a new account (choosing a name on
+/// the way), an account made in the app signing in on the web, and linking
+/// from the account page.
+#[tokio::test]
+async fn sign_in_with_apple_on_the_website() {
+    use p256::pkcs8::EncodePrivateKey;
+    let apple = apple_mock::Mock::start(&["org.example.test", "org.example.web"]).await;
+    let pem = p256::ecdsa::SigningKey::from_slice(&[9u8; 32])
+        .unwrap()
+        .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+        .unwrap()
+        .to_string();
+    let url = apple.url.clone();
+    let Some(env) = setup(move |c| {
+        c.apple_key = Some(pem);
+        c.apple_key_id = Some("SIWAKEY123".into());
+        c.apple_team_id = Some("TEAM123456".into());
+        c.apple_client_ids = vec!["org.example.test".into()];
+        c.apple_services_id = Some("org.example.web".into());
+        c.apple_url = url;
+    })
+    .await
+    else {
+        return;
+    };
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let base = env.base[0].clone();
+    let set_cookie = |r: &reqwest::Response, name: &str| -> Option<String> {
+        r.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()).find_map(|v| {
+            let kv = v.split(';').next()?;
+            let (k, val) = kv.split_once('=')?;
+            (k == name && !val.is_empty()).then(|| val.to_owned())
+        })
+    };
+    // The sign-in page offers Apple.
+    let login = http.get(format!("{base}/login")).send().await.unwrap().text().await.unwrap();
+    assert!(login.contains("Sign in with Apple"), "{login}");
+
+    // Off to Apple: the state and the nonce's hash go along.
+    let start = |q: &'static str, session: Option<String>| {
+        let mut r = http.get(format!("{base}/auth/apple?{q}"));
+        if let Some(s) = session {
+            r = r.header("cookie", format!("oc_session={s}"));
+        }
+        async move {
+            let r = r.send().await.unwrap();
+            assert_eq!(r.status(), 303, "to Apple");
+            let state_cookie = set_cookie(&r, "oc_apple").expect("state cookie");
+            let to = url::Url::parse(r.headers()["location"].to_str().unwrap()).unwrap();
+            let q: std::collections::HashMap<String, String> = to.query_pairs().into_owned().collect();
+            assert_eq!(q["client_id"], "org.example.web");
+            assert_eq!(q["response_mode"], "form_post");
+            assert_eq!(q["redirect_uri"], "http://chess.test/auth/apple/callback");
+            assert_eq!(q["state"], state_cookie);
+            (q["state"].clone(), q["nonce"].clone())
+        }
+    };
+    let callback = |form: Vec<(&'static str, String)>, state_cookie: String| {
+        http.post(format!("{base}/auth/apple/callback"))
+            .header("cookie", format!("oc_apple={state_cookie}"))
+            .form(&form)
+            .send()
+    };
+
+    // A new Apple ID: a page to choose the name, then signed in.
+    let (state, nonce) = start("return=/account", None).await;
+    let (tok, code) =
+        apple.sign_in_hashed("003.dora", Some("d@privaterelay.appleid.com"), &nonce, "org.example.web");
+    let user = r#"{"name":{"firstName":"Dora","lastName":"Ek"},"email":"d@privaterelay.appleid.com"}"#;
+    let form = vec![("state", state.clone()), ("code", code), ("id_token", tok), ("user", user.to_owned())];
+    // Without the browser's state cookie: refused.
+    let (state2, nonce2) = start("return=/account", None).await;
+    let (tok2, code2) = apple.sign_in_hashed("003.dora", None, &nonce2, "org.example.web");
+    let r =
+        callback(vec![("state", state2), ("code", code2), ("id_token", tok2)], "other".into()).await.unwrap();
+    assert_eq!(r.status(), 403);
+    let r = callback(form.clone(), state.clone()).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let page = r.text().await.unwrap();
+    assert!(page.contains("Choose a username") && page.contains("value=\"doraek\""), "{page}");
+    let ticket = page.split("name=\"ticket\" value=\"").nth(1).unwrap().split('"').next().unwrap().to_owned();
+    // The same answer twice: the state is spent.
+    assert_eq!(callback(form, state).await.unwrap().status(), 400);
+    let name = |n: &str| {
+        http.post(format!("{base}/auth/apple/name"))
+            .form(&[("ticket", ticket.clone()), ("name", n.to_owned())])
+            .send()
+    };
+    assert_eq!(name("x").await.unwrap().status(), 400);
+    let r = name("Dora").await.unwrap();
+    assert_eq!((r.status().as_u16(), r.headers()["location"].to_str().unwrap()), (303, "/account"));
+    let session = set_cookie(&r, "oc_session").expect("a session");
+    let account = http
+        .get(format!("{base}/account"))
+        .header("cookie", format!("oc_session={session}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        account.contains("<b>Dora</b>") && account.contains("Linked (with a private email address)"),
+        "{account}"
+    );
+    assert!(!account.contains("Unlink your Apple ID"), "her only way in stays: {account}");
+    assert_eq!(name("Dora").await.unwrap().status(), 400, "the ticket is spent");
+
+    // An account made in the app signs in on the website.
+    let (tok, code) = apple.sign_in("004.erik", None, "n1", "org.example.test");
+    let r = reqwest::Client::new()
+        .post(format!("{base}/api/auth/apple"))
+        .json(&serde_json::json!({"identityToken": tok, "authorizationCode": code, "nonce": "n1", "username": "Erik"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let (state, nonce) = start("return=/oauth?x=1", None).await;
+    let (tok, code) = apple.sign_in_hashed("004.erik", None, &nonce, "org.example.web");
+    let r = callback(vec![("state", state.clone()), ("code", code), ("id_token", tok)], state).await.unwrap();
+    assert_eq!((r.status().as_u16(), r.headers()["location"].to_str().unwrap()), (303, "/oauth?x=1"));
+    assert!(set_cookie(&r, "oc_session").is_some());
+
+    // Linking from the account page: Fay has a password; Apple is told when she unlinks.
+    let (fay_id, _) = env.player("Fay", HUMAN).await;
+    env.pg
+        .execute(&format!("UPDATE {}.players SET password_hash = 'x' WHERE id = $1", env.chess), &[&fay_id])
+        .await
+        .unwrap();
+    let fay_session = random_token(40);
+    env.pg
+        .execute(
+            &format!(
+                "INSERT INTO {}.sessions (token_hash, player_id, expires_at) VALUES ($1, $2, now() + interval '1 day')",
+                env.chess
+            ),
+            &[&hash_key(&fay_session), &fay_id],
+        )
+        .await
+        .unwrap();
+    let account = |s: String| {
+        let (http, base) = (http.clone(), base.clone());
+        async move {
+            http.get(format!("{base}/account"))
+                .header("cookie", format!("oc_session={s}"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+    assert!(account(fay_session.clone()).await.contains("Link your Apple ID"));
+    let (state, nonce) = start("link=1&return=/account", Some(fay_session.clone())).await;
+    let (tok, code) = apple.sign_in_hashed("005.fay", None, &nonce, "org.example.web");
+    let r = callback(vec![("state", state.clone()), ("code", code), ("id_token", tok)], state).await.unwrap();
+    assert_eq!(r.status(), 303);
+    let page = account(fay_session.clone()).await;
+    assert!(page.contains("Unlink your Apple ID"), "{page}");
+    let csrf = page.split("name=\"csrf\" value=\"").nth(1).unwrap().split('"').next().unwrap().to_owned();
+    let r = http
+        .post(format!("{base}/account/apple/remove"))
+        .header("cookie", format!("oc_session={fay_session}"))
+        .form(&[("csrf", csrf)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 303);
+    assert!(account(fay_session).await.contains("Link your Apple ID"));
+    assert_eq!(apple.revoked.lock().unwrap().len(), 1);
     env.teardown().await;
 }

@@ -245,6 +245,13 @@ pub struct Config {
     #[arg(long, env = "CHESS_APPLE_CLIENT_IDS", value_delimiter = ',')]
     pub apple_client_ids: Vec<String>,
 
+    /// Sign in with Apple on the website (the sign-in and account pages):
+    /// the Services ID made for it, whose return URL is
+    /// `{CHESS_PUBLIC_URL}/auth/apple/callback`. Without it, only the app
+    /// signs in with Apple.
+    #[arg(long, env = "CHESS_APPLE_SERVICES_ID")]
+    pub apple_services_id: Option<String>,
+
     /// Apple's sign-in service (only tests change it).
     #[arg(long, env = "CHESS_APPLE_URL", default_value = "https://appleid.apple.com")]
     pub apple_url: String,

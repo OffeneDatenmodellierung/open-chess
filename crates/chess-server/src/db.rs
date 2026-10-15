@@ -886,6 +886,25 @@ CREATE TABLE chess.apple_ids (
     private_email boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
     last_used_at timestamptz NOT NULL DEFAULT now());
+
+-- The website's Sign in with Apple: a browser on its way to Apple (state,
+-- nonce, where to go after, the account it links to), and an Apple ID that
+-- still needs a username (ticket: the secret in the form that chooses it).
+CREATE TABLE chess.apple_flows (
+    state_hash text PRIMARY KEY,
+    nonce text NOT NULL,
+    return_to text NOT NULL,
+    player_id bigint REFERENCES chess.players ON DELETE CASCADE,
+    expires_at timestamptz NOT NULL);
+CREATE TABLE chess.apple_pending (
+    ticket_hash text PRIMARY KEY,
+    sub text NOT NULL,
+    client_id text NOT NULL,
+    refresh_token text,
+    email text,
+    private_email boolean NOT NULL DEFAULT false,
+    return_to text NOT NULL,
+    expires_at timestamptz NOT NULL);
 ",
 ];
 
