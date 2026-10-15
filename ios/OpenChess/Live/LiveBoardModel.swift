@@ -754,15 +754,7 @@ final class LiveBoardModel: ObservableObject, Identifiable {
 
     /// The move from a board fixed in the editor, if it's one legal move away.
     func moveMatching(_ target: Placement) -> String? {
-        let fen = state.fen
-        for m in legal {
-            guard let s = try? GameSession(fen: fen, mode: .passAndPlay) else { continue }
-            guard (try? s.play(mv: m, atMs: 0)) != nil else { continue }
-            if Placement(fen: s.state().fen) == target {
-                return m
-            }
-        }
-        return nil
+        PositionTools.move(from: state.fen, to: target)
     }
 
     // MARK: Labelled frames

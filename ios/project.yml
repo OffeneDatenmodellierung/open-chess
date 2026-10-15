@@ -34,6 +34,10 @@ settings:
 packages:
   OpenChessCore:
     path: ../dist/ios/OpenChessCore
+  # Streaming over RTMP (BSD-3-Clause).
+  HaishinKit:
+    url: https://github.com/HaishinKit/HaishinKit.swift
+    exactVersion: 2.1.2
 
 targets:
   OpenChess:
@@ -49,6 +53,10 @@ targets:
     dependencies:
       - package: OpenChessCore
         product: OpenChessCore
+      - package: HaishinKit
+        product: HaishinKit
+      - package: HaishinKit
+        product: RTMPHaishinKit
     entitlements:
       path: Support/OpenChess.entitlements
       properties:
@@ -71,8 +79,11 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        UIUserInterfaceStyle: Automatic
-        NSCameraUsageDescription: open-chess uses the camera to read a chess position from a photo of your board. The photo is read on this device.
+        # Dark from launch (the esports look); Settings → Appearance can
+        # switch to Light or Match system.
+        UIUserInterfaceStyle: Dark
+        NSCameraUsageDescription: open-chess uses the camera to read a chess position from a photo of your board, to follow a game on a real board, and to stream it if you choose. Photos are read on this device.
+        NSMicrophoneUsageDescription: open-chess records your voice with the picture when you stream a game on a real board.
         NSPhotoLibraryUsageDescription: open-chess can read a chess position from a photo of a board you choose.
         NSBluetoothAlwaysUsageDescription: open-chess connects to your Chessnut board over Bluetooth to follow the moves you make on it.
         UIBackgroundModes:
@@ -96,6 +107,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Support/OpenChess.entitlements
         ENABLE_PREVIEWS: YES
         SUPPORTS_MACCATALYST: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
 
   # Logic tests without a host app: they compile the pure-Swift files
   # (no OpenChessCore) directly, so they never link the Rust library twice.
@@ -108,6 +121,9 @@ targets:
       - path: OpenChess/Board/Position.swift
       - path: OpenChess/Game/GameTypes.swift
       - path: OpenChess/Game/AnalysisModels.swift
+      - path: OpenChess/Game/GameText.swift
+      - path: OpenChess/Board/MoveInput.swift
+      - path: OpenChess/Live/LiveHelpers.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.offenedatenmodellierung.openchess.tests

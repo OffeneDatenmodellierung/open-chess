@@ -206,3 +206,19 @@ struct AdvicePanel: View {
         .padding(.vertical, 2)
     }
 }
+
+enum PositionTools {
+    /// The legal move from `fen` that gives `target` (placement only), if
+    /// there's exactly one way there.
+    static func move(from fen: String, to target: Placement) -> String? {
+        guard let start = try? GameSession(fen: fen, mode: .passAndPlay) else { return nil }
+        for m in start.legalUci() {
+            guard let s = try? GameSession(fen: fen, mode: .passAndPlay) else { continue }
+            guard (try? s.play(mv: m, atMs: 0)) != nil else { continue }
+            if Placement(fen: s.state().fen) == target {
+                return m
+            }
+        }
+        return nil
+    }
+}

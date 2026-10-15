@@ -95,6 +95,7 @@ struct GameScreen: View {
             }
             .fullScreenCover(item: $analysis) { a in
                 AnalysisCover(board: a) { analysis = nil }
+                    .ocAppearance()
             }
         }
     }

@@ -19,6 +19,8 @@ final class BoardEditorModel: ObservableObject {
     @Published var brush = 0
     @Published var unsure: Set<Int> = []
     @Published var error: String?
+    /// Bumped to ask the editor's view to run the advice again (live advice).
+    @Published var adviceRequest = 0
 
     init(placement: Placement) {
         self.placement = placement
@@ -165,6 +167,9 @@ struct BoardEditorView: View {
         }
         .onChange(of: editor.whiteToMove) { _, _ in
             if showAdvice { runAdvice(delay: 0) }
+        }
+        .onChange(of: editor.adviceRequest) { _, _ in
+            runAdvice(delay: 0)
         }
         .sheet(isPresented: $showPlay) {
             NewComputerGameView(fen: playFen, training: true)

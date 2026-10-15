@@ -10,6 +10,7 @@ struct LiveBoardScreen: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var otb: OTBSender
+    @EnvironmentObject var auth: AuthManager
     @Environment(\.scenePhase) var scenePhase
 
     @State var askResign = false
@@ -309,6 +310,9 @@ struct LiveBoardScreen: View {
     @ViewBuilder
     private var serverLine: some View {
         let waiting = otb.waiting(gameId: live.id)
+        if !auth.signedIn {
+            SignInPrompt(message: "Sign in again to send this game's moves to the server. They wait here until then.")
+        }
         if waiting > 0 || otb.lastError != nil {
             VStack(alignment: .leading, spacing: 2) {
                 if waiting > 0 {

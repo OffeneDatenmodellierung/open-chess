@@ -29,8 +29,7 @@ struct LiveBoardSetupView: View {
             Form {
                 if !auth.signedIn {
                     Section {
-                        Text("Sign in under Account first: real-board games are recorded on your open-chess account.")
-                            .foregroundStyle(Color.ocMuted)
+                        SignInPrompt(message: "Sign in to record a real-board game on your account (and to share it live).", inList: true)
                     }
                     .listRowBackground(Color.ocPanel)
                 }

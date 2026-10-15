@@ -117,6 +117,13 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// Back in the app: "Match system" re-reads the system's setting.
+    func refreshAppearance() {
+        if appearance == "system" {
+            objectWillChange.send()
+        }
+    }
+
     static func systemScheme() -> ColorScheme {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         if let style = scenes.first?.screen.traitCollection.userInterfaceStyle {

@@ -61,7 +61,12 @@ final class OTBSender: ObservableObject {
 
     /// Send what's waiting, if anything and not already sending.
     func kick() {
-        guard !inFlight, !ops.isEmpty, auth.signedIn else { return }
+        guard !inFlight, !ops.isEmpty else { return }
+        guard auth.signedIn else {
+            // Try again shortly: signing in (from the prompt) carries on.
+            scheduleRetry()
+            return
+        }
         retryTimer?.invalidate()
         retryTimer = nil
         inFlight = true

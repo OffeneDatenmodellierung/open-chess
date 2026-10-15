@@ -159,6 +159,7 @@ final class AppModel: ObservableObject {
             sync.startForeground()
             push.refreshRegistration()
             otb.kick()
+            settings.refreshAppearance()
         case .background:
             sync.stopForeground()
             SyncEngine.scheduleBackgroundRefresh(minutes: settings.syncMinutes)
