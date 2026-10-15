@@ -3,13 +3,14 @@
 // /docs and /docs/<name> here too.
 
 const GUIDES = [
+  { id: "changelog", title: "What's new", blurb: "What each release changed." },
   { id: "api", title: "The server API", blurb: "Lichess's API as open-chess speaks it, and what it adds." },
   { id: "lichess", title: "Lichess tools", blurb: "Using Lichess apps, bots and libraries with an open-chess server." },
   { id: "boards", title: "Electronic boards", blurb: "DGT, Chessnut, Centaur and DGT Pi boards with open-chess-device." },
   { id: "photos", title: "Boards from photos", blurb: "Read a position from a photo, carry a game online, play on from the board." },
   { id: "photo-licence", title: "The photo licence", blurb: "What sending a board photo for checking and training means." },
   { id: "engine", title: "The engine", blurb: "Search, odds, explanations and training the engine." },
-  { id: "releases", title: "Releases", blurb: "What each release changed." },
+  { id: "releases", title: "Releases", blurb: "Downloads, the image, the crates, and cutting a release." },
 ];
 
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -22,6 +23,9 @@ function href(url) {
   if (m && GUIDES.some((g) => g.id === m[1])) return `#docs/${m[1]}${m[2] || ""}`;
   return url;
 }
+
+// Where a guide lives in the repository.
+const repoPath = (id) => (id === "changelog" ? "CHANGELOG.md" : `docs/${id}.md`);
 
 function inline(text) {
   const code = [];
@@ -113,6 +117,19 @@ export function markdown(src) {
 }
 
 const view = () => document.getElementById("docsView");
+
+// This build's version (version.json, written by the build); none when the
+// app is served straight from the repository.
+let version;
+function appVersion() {
+  version ??= fetch("version.json", { cache: "no-cache" })
+    .then((r) => (r.ok ? r.json() : {}))
+    .then((j) => j.version || "")
+    .catch(() => "");
+  return version;
+}
+const versionLine = (v) =>
+  v ? `<p class="docs-version">Chess lab ${esc(v)} · <a href="#docs/changelog">What's new</a></p>` : "";
 const play = () => document.querySelector("main.play");
 const cache = new Map();
 
@@ -127,6 +144,10 @@ async function show(id, anchor) {
       (g) => `<li><a href="#docs/${g.id}"><strong>${esc(g.title)}</strong><span>${esc(g.blurb)}</span></a></li>`,
     ).join("")}</ul></article>`;
     document.title = "Guides · Chess lab";
+    appVersion().then((ver) => {
+      const body = v.querySelector(".docs-body");
+      if (ver && body && !location.hash.replace(/^#docs\/?/, "")) body.insertAdjacentHTML("beforeend", versionLine(ver));
+    });
     return;
   }
   const g = GUIDES.find((x) => x.id === id);
@@ -141,13 +162,17 @@ async function show(id, anchor) {
       cache.set(id, markdown(await r.text()));
     }
     v.querySelector(".docs-body").innerHTML = cache.get(id);
+    if (id === "changelog") {
+      const ver = await appVersion();
+      if (ver) v.querySelector(".docs-body h2")?.insertAdjacentHTML("afterend", `<p class="docs-version">This is Chess lab ${esc(ver)}.</p>`);
+    }
     const target = anchor && document.getElementById(anchor);
     if (target) target.scrollIntoView({ block: "start" });
     else scrollTo(0, 0);
   } catch (e) {
     v.querySelector(".docs-body").innerHTML =
       `<h1>${esc(g.title)}</h1><p>This guide isn't available here (${esc(String(e.message || e))}). ` +
-      `It's in the repository as <a href="https://github.com/OffeneDatenmodellierung/open-chess/blob/main/docs/${id}.md" target="_blank" rel="noopener">docs/${id}.md</a>.</p>`;
+      `It's in the repository as <a href="https://github.com/OffeneDatenmodellierung/open-chess/blob/main/${repoPath(id)}" target="_blank" rel="noopener">${repoPath(id)}</a>.</p>`;
   }
 }
 
