@@ -1,19 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Export for App Store Connect and upload straight to it (TestFlight).
-     The team comes from the archive; signing is automatic, with the
-     App Store Connect API key the TestFlight workflow passes. -->
+<!-- Export an App Store .ipa (signed for App Store Connect); the
+     TestFlight workflow uploads it with App Store Connect's API. The team
+     comes from the archive; signing is automatic, with the App Store
+     Connect API key the workflow passes. -->
 <plist version="1.0">
 <dict>
 	<key>method</key>
 	<string>app-store-connect</string>
 	<key>destination</key>
-	<string>upload</string>
+	<string>export</string>
 	<key>signingStyle</key>
 	<string>automatic</string>
 	<key>uploadSymbols</key>
 	<true/>
-	<key>manageAppVersionAndBuildNumber</key>
-	<false/>
 </dict>
 </plist>
