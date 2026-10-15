@@ -159,7 +159,7 @@ final class StreamController: ObservableObject {
         state = .connecting
         await SessionBuilderFactory.shared.register(RTMPSessionFactory())
         do {
-            guard let s = try await SessionBuilderFactory.shared.make(url).setMethod(.ingest).build() else {
+            guard let s = try await SessionBuilderFactory.shared.make(url).setMode(.publish).build() else {
                 state = .failed("Couldn't make a stream for that address.")
                 return
             }
