@@ -191,7 +191,10 @@ struct AnalysisScreen: View {
             HStack {
                 OCBadge(text: "Not scored", color: .ocMuted)
                 Spacer()
-                Text(board.whiteToMove ? "White to move" : "Black to move")
+                Text(board.state.status == "started"
+                     ? (board.whiteToMove ? "White to move" : "Black to move")
+                     : AdviceResult(fen: board.state.fen, whiteToMove: board.whiteToMove,
+                                    status: board.state.status, winner: board.state.winner).sideText)
                     .font(OCFont.text(14, weight: .semibold))
             }
             BoardView(

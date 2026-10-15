@@ -157,11 +157,18 @@ struct SyncPill: View {
 @MainActor
 struct RatingsCard: View {
     @EnvironmentObject var model: AppModel
+    @State private var showNote = false
     private let speeds = ["bullet", "blitz", "rapid", "classical", "correspondence"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionTitle(text: "Ratings")
+            HStack {
+                SectionTitle(text: "Ratings")
+                Spacer()
+                Image(systemName: showNote ? "info.circle.fill" : "info.circle")
+                    .foregroundStyle(Color.ocMuted)
+                    .accessibilityHidden(true)
+            }
             HStack(spacing: 0) {
                 ForEach(speeds, id: \.self) { speed in
                     let r = model.ratings.first { $0.speed == speed }
@@ -189,8 +196,22 @@ struct RatingsCard: View {
                     .frame(maxWidth: .infinity)
                 }
             }
+            if showNote {
+                Text("Everyone starts at 1,500 in each speed. A ? means the rating is still settling: it moves a lot at first and the ? goes after about a dozen rated games at that speed. Games against the computer count when you play without hints, takebacks or analysis.")
+                    .font(OCFont.text(13))
+                    .foregroundStyle(Color.ocMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+            }
         }
         .ocCard()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.2)) { showNote.toggle() }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint(showNote ? "Hides what the ratings mean." : "Shows what the ratings and the question marks mean.")
     }
 
     private func label(_ speed: String) -> String {
