@@ -1,5 +1,6 @@
 import AudioToolbox
 import AVFoundation
+import OpenChessCore
 import UIKit
 
 /// Haptics, short sounds, spoken moves and VoiceOver announcements, each
@@ -53,8 +54,14 @@ enum Feedback {
         UIAccessibility.post(notification: .announcement, argument: text)
     }
 
-    /// Speak a move (SAN) in plain English, when Speak moves is on.
-    static func speakMove(san: String) {
+    /// Speak a move, when Speak moves is on: the core's words for it with
+    /// "Moves in plain English" on (given the game after it), else from SAN.
+    static func speakMove(san: String, after state: GameState? = nil) {
+        guard speaks else { return }
+        if settings?.plainMoves ?? false, let state, let words = MoveWords.lastMove(of: state) {
+            say(words)
+            return
+        }
         say(GameText.spoken(san: san))
     }
 

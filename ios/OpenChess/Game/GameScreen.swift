@@ -288,17 +288,27 @@ struct PlayerRow: View {
     }
 }
 
-/// The moves in SAN, numbered.
+/// The moves in SAN, numbered; with "Moves in plain English" on, each
+/// move's words beside it.
 @MainActor
 struct MoveListView: View {
     let san: [String]
     let startsWhite: Bool
+    /// One sentence per move (empty: SAN only).
+    var words: [String] = []
 
     private struct Row: Identifiable {
         let id: Int
         let number: Int
         let white: String?
         let black: String?
+    }
+
+    private struct PlyRow: Identifiable {
+        let id: Int
+        let label: String
+        let san: String
+        let words: String
     }
 
     private var rows: [Row] {
@@ -320,6 +330,17 @@ struct MoveListView: View {
         return out
     }
 
+    private var plyRows: [PlyRow] {
+        var out: [PlyRow] = []
+        for (i, m) in san.enumerated() {
+            let ply = startsWhite ? i : i + 1
+            let number = ply / 2 + 1
+            let label = ply % 2 == 0 ? "\(number)." : "\(number)…"
+            out.append(PlyRow(id: i, label: label, san: m, words: i < words.count ? words[i] : ""))
+        }
+        return out
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionTitle(text: "Moves")
@@ -328,6 +349,36 @@ struct MoveListView: View {
                 Text("No moves yet.")
                     .font(OCFont.text(14))
                     .foregroundStyle(Color.ocMuted)
+            } else if !words.isEmpty {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(plyRows) { r in
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(r.label)
+                                        .font(OCFont.mono(14))
+                                        .foregroundStyle(Color.ocMuted)
+                                        .frame(width: 44, alignment: .leading)
+                                    Text(r.san)
+                                        .font(OCFont.mono(15, weight: .medium))
+                                        .frame(width: 64, alignment: .leading)
+                                    Text(r.words)
+                                        .font(OCFont.text(13))
+                                        .foregroundStyle(Color.ocMuted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 0)
+                                }
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(r.words.isEmpty ? "\(r.label) \(r.san)" : "\(r.label) \(r.words)")
+                                .id(r.id)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                    .onChange(of: san.count) { _, _ in
+                        if let last = plyRows.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                    }
+                }
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {

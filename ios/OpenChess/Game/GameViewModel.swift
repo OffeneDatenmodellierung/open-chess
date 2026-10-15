@@ -411,7 +411,7 @@ final class GameViewModel: ObservableObject, Identifiable {
                 let played = try s.play(mv: move.uci, atMs: nowMs())
                 self.applyIncrement(moverWhite: self.whiteToMove)
                 self.app?.chessnut.opponentMove(played.uci)
-                Feedback.speakMove(san: played.san)
+                Feedback.speakMove(san: played.san, after: s.state())
                 self.afterChange(animateBot: true)
             } catch {
                 self.message = describe(error)
@@ -848,7 +848,7 @@ final class GameViewModel: ObservableObject, Identifiable {
                 do {
                     let played = try session.play(mv: m, atMs: nowMs())
                     app?.chessnut.opponentMove(played.uci)
-                    if live { Feedback.speakMove(san: played.san) }
+                    if live { Feedback.speakMove(san: played.san, after: session.state()) }
                 } catch {
                     message = describe(error)
                     break

@@ -212,7 +212,7 @@ struct AnalysisScreen: View {
     private var panel: some View {
         VStack(alignment: .leading, spacing: 12) {
             AdvicePanel(advice: advice)
-            MoveListView(san: board.state.san, startsWhite: board.startsWhite)
+            MoveListView(san: board.state.san, startsWhite: board.startsWhite, words: MoveWords.words(for: board.state))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 8) {
                 Button("Take back") { board.takeBack() }
                     .disabled(board.state.ply == 0)

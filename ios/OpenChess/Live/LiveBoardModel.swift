@@ -394,7 +394,7 @@ final class LiveBoardModel: ObservableObject, Identifiable {
             _ = try? capture.movePlayed(uci: played.uci, atMs: stamp, connectedBoard: connectedBoard)
             moveTimes.append(nowMs())
             app?.otb.enqueue(.move(gameId: id, uci: played.uci))
-            Feedback.speakMove(san: played.san)
+            Feedback.speakMove(san: played.san, after: session.state())
             afterChange()
             return true
         } catch {
