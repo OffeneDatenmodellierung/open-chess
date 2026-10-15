@@ -3467,7 +3467,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -3488,7 +3488,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-analysis"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cozy-chess",
  "open-chess-core",
@@ -3498,14 +3498,14 @@ dependencies = [
 
 [[package]]
 name = "open-chess-ble"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "rustix",
 ]
 
 [[package]]
 name = "open-chess-centaur"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "embedded-graphics",
  "gpiocdev",
@@ -3516,7 +3516,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-chessnut"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "open-chess-core",
  "open-chess-dgt",
@@ -3524,7 +3524,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-client"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "bytes",
  "futures-util",
@@ -3538,7 +3538,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-conformance"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -3556,7 +3556,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cozy-chess",
  "serde",
@@ -3565,7 +3565,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-device"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "axum",
@@ -3594,7 +3594,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-dgt"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "open-chess-core",
  "rustix",
@@ -3602,21 +3602,21 @@ dependencies = [
 
 [[package]]
 name = "open-chess-dgtpi"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "rustix",
 ]
 
 [[package]]
 name = "open-chess-engine"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "open-chess-fairplay"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "open-chess-analysis",
  "open-chess-core",
@@ -3628,7 +3628,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-mobile"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "open-chess-analysis",
  "open-chess-chessnut",
@@ -3644,7 +3644,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-proto"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "open-chess-core",
  "serde",
@@ -3653,7 +3653,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-server"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "argon2",
@@ -3696,7 +3696,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-train"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cozy-chess",
  "open-chess-analysis",
@@ -3707,7 +3707,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-vision"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "candle-core",
  "candle-metal-kernels",
@@ -3727,7 +3727,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-vision-train"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -3745,7 +3745,7 @@ dependencies = [
 
 [[package]]
 name = "open-chess-wasm"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "open-chess-analysis",
  "open-chess-core",
@@ -4721,9 +4721,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.46"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
  "log",

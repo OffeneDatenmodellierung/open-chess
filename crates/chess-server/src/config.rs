@@ -198,7 +198,8 @@ pub struct Config {
     #[arg(long, env = "CHESS_APP_DIR")]
     pub app_dir: Option<String>,
 
-    /// The app's look for this deployment: CSS (or the path of a .css file)
+    /// The app's look for this deployment: a theme the app bundles, by name
+    /// (`esports-lab`: web/chess/themes), CSS, or the path of a .css file;
     /// served as `/app/theme.css`, after the app's own styles, so it can set
     /// the app's colour and font variables (docs/api.md, "The Chess lab's
     /// look").

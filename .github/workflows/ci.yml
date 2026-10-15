@@ -183,14 +183,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: cargo deny (advisories, licences, bans, sources)
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
-        with:
-          command: check all
+      # No crate published less than 48h ago (our own open-chess-* aside).
+      - name: Cooldown
+        run: python3 scripts/check-cooldown.py --hours 48 --strict-latest
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
-          tool: cargo-audit
-      - run: cargo audit --deny warnings
+          tool: cargo-deny,cargo-audit
+      # An advisory whose fix is still inside the cooldown can't be taken
+      # yet: a warning until the fix is 48h old, then it fails again.
+      - name: Advisories waiting on the cooldown
+        run: python3 scripts/advisory-cooldown.py --hours 48
+      - name: cargo deny (advisories, licences, bans, sources)
+        run: cargo deny --config deny.ci.toml check all
+      - run: cargo audit --deny warnings $(sed 's/^/--ignore /' advisory-ignores.txt)
 
   # The image as releases build it, from binaries built first: the server
   # here (on 22.04, so its glibc suits Debian bookworm) and the app from
