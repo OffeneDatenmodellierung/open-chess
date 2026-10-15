@@ -1,0 +1,107 @@
+name: TestFlight
+
+# Build the iOS app for the App Store and upload it to App Store Connect,
+# where it goes to TestFlight testers and, once submitted, App Review.
+#
+# Run by hand (Actions › TestFlight › Run workflow) or by pushing a tag
+# `ios-v1.0.0` (the version shown in the App Store; the build number is
+# this workflow's run number). Needs these repository secrets:
+#
+#   APPLE_TEAM_ID                  the Apple Developer team id (10 characters)
+#   APP_STORE_CONNECT_KEY_ID       an App Store Connect API key's id (role: App Manager or Admin)
+#   APP_STORE_CONNECT_ISSUER_ID    the keys page's issuer id
+#   APP_STORE_CONNECT_KEY          the key's .p8 file, its whole text
+#
+# Signing is automatic: Xcode makes the certificate and profile in the
+# team with the key ("cloud-managed"), so no certificates are kept here.
+# Optional: BOARD_READER_URL, where to download weights to bundle (a
+# model card that isn't internal-only; the app refuses those anyway).
+
+on:
+  push:
+    tags: ["ios-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version shown in the App Store (e.g. 1.0.0)"
+        required: true
+        default: "1.0.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: "1.97.0"
+
+jobs:
+  upload:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check the secrets
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+        run: |
+          missing=""
+          for v in TEAM KEY_ID ISSUER KEY; do [ -n "${!v}" ] || missing="$missing $v"; done
+          if [ -n "$missing" ]; then
+            echo "::error::missing secrets:$missing (see the top of .github/workflows/testflight.yml)"
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ios
+          save-if: false
+      - name: The core (Metal for the board reader)
+        run: METAL=1 scripts/build-xcframework.sh dist/ios
+      - name: Board reader weights
+        env:
+          URL: ${{ secrets.BOARD_READER_URL }}
+        run: |
+          if [ -n "$URL" ]; then
+            mkdir -p ios/Resources && curl -fsSL "$URL" -o ios/Resources/board-reader.safetensors
+          else
+            echo "::notice::no BOARD_READER_URL: the app ships without the board reader (photos open the board editor)"
+          fi
+      - name: Version
+        id: v
+        run: |
+          v="${{ github.event.inputs.version }}"
+          [ -n "$v" ] || v="${GITHUB_REF_NAME#ios-v}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+      - name: Archive and upload
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          KEY: ${{ secrets.APP_STORE_CONNECT_KEY }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/AuthKey_$KEY_ID.p8"
+          printf '%s\n' "$KEY" > "$key"
+          auth=(-allowProvisioningUpdates -authenticationKeyPath "$key" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER")
+          brew install xcodegen
+          cd ios && xcodegen
+          xcodebuild -project OpenChess.xcodeproj -scheme OpenChess -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/OpenChess.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
+            MARKETING_VERSION="${{ steps.v.outputs.version }}" CURRENT_PROJECT_VERSION="${{ steps.v.outputs.build }}" \
+            "${auth[@]}" archive | tail -40
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/OpenChess.xcarchive" \
+            -exportOptionsPlist Support/ExportOptions.plist -exportPath "$RUNNER_TEMP/export" \
+            "${auth[@]}" | tail -40
+          rm -f "$key"
+          echo "::notice::uploaded ${{ steps.v.outputs.version }} (${{ steps.v.outputs.build }}): it shows in App Store Connect › TestFlight once processed"

@@ -37,7 +37,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.incre
 | Admin (ours) | `GET /api/admin/players` (`q`, `only=staff`), `GET/POST /api/admin/players/{username}`, `POST …/tokens/revoke`, `POST …/passkeys/reset`, `GET/POST /api/admin/partners`, `POST /api/admin/partners/{id}/revoke` (see [Admins](#admins-managers-and-partners)) |
 | Training app (ours) | see [below](#training-app-endpoints) |
 | The iOS app (ours) | `POST /api/games/offline`, `POST /api/games/{id}/confirm`, `GET /api/sync`, `POST /api/photos`, `POST /api/push/devices`, `DELETE /api/push/devices/{token}`, `DELETE /api/account` (see [below](#the-ios-app)) |
-| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,photos,photo-licence,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them), `GET /docs` and `/docs/{guide}` (these guides, read in the app: `/app/#docs/{guide}`, or on GitHub when the app isn't installed), `GET /favicon.svg` (`/favicon.ico` too: the logo), `GET /@/{username}` (a player's profile, in the app: `/app/#@/{username}`) |
+| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,photos,photo-licence,privacy,ios,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them), `GET /docs` and `/docs/{guide}` (these guides, read in the app: `/app/#docs/{guide}`, or on GitHub when the app isn't installed), `GET /favicon.svg` (`/favicon.ico` too: the logo), `GET /@/{username}` (a player's profile, in the app: `/app/#@/{username}`) |
 | Operations (the metrics port, `CHESS_METRICS_BIND`) | `GET /metrics` (Prometheus), `/healthz` (the process is up), `/readyz` (it can reach Postgres) |
 
 **`GET /`** answers what the server is, for the app and for tools:
@@ -104,6 +104,14 @@ What the iPhone and iPad app needs beyond the Lichess API
 | `POST /api/photos` | `{clientId, image (base64 JPEG, up to 4 MB), placement, confidence, model}`: a board photo with the position the player confirmed, kept as training data under the [photo licence](photo-licence.md) (accept it first: `POST /api/esl/photo-terms`). `{id}`; the same `clientId` again gives the same id |
 | `POST /api/push/devices`, `DELETE /api/push/devices/{token}` | `{token: the APNs device token in hex, sandbox}`: where to send "your move" in correspondence games and results to confirm |
 | `DELETE /api/account` | Close the account: games in progress are resigned, finished games stay under a placeholder name, tokens and sessions are revoked. 204 |
+| `POST /api/otb` | A game on a real board, recorded live by one of its players: `{white, black, speed, rated, board: chessnut\|photos\|manual, broadcast}` (both players need accounts) → `{id, url, broadcastUrl}`. Followed live like any game (the public stream, the feed when it ends) |
+| `POST /api/otb/{id}/move`, `/undo`, `/end` | The recorder's moves as they're made (`{uci}` → `{san, fen, status}`), taking back misread ones (`{plies}`), and a result decided off the board (`{status: resign\|outoftime\|draw\|aborted, winner}`). Mate and stalemate end it by themselves. A rated one is rated, and reaches the feed, once the other player confirms (`POST /api/games/{id}/confirm`; it's in their `/api/sync` `confirmations` with `kind: "otb"`) |
+| `GET /broadcast/{id}?key=` | The live board overlay for a stream (OBS: a Browser Source): the board, the last five moves, the players and the result, updating as moves are made. `bg=transparent`, `theme=light`, `orientation=black`. Open only with the key in the `broadcastUrl` the recorder was given; `GET /api/broadcast/{id}/events?key=` is the event stream behind it |
+
+`POST /api/photos` also takes `labelSource: "board"` with the `gameId` of a
+real-board game the sender recorded, for photos and video frames labelled
+by a connected board, plus `angle`, `atMs` and `distance` (squares the
+board reader got wrong).
 
 Push notifications go out when `CHESS_APNS_KEY` (the `.p8` key, or its
 path), `CHESS_APNS_KEY_ID` and `CHESS_APNS_TEAM_ID` are set;
