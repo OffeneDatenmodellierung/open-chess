@@ -75,7 +75,7 @@ struct LiveBoardSetupView: View {
                     .pickerStyle(.inline)
                     .labelsHidden()
                     if source == .chessnut && !chessnut.isConnected {
-                        NavigationLink("Connect the Chessnut board") { ChessnutView() }
+                        NavigationLink("Connect the Chessnut board") { ChessnutView(returnOnConnect: true) }
                     }
                     if source == .photos && readerMissing {
                         Text("This build has no board reader, so you'll tap each move on the board instead.")
@@ -89,7 +89,7 @@ struct LiveBoardSetupView: View {
                 .listRowBackground(Color.ocPanel)
 
                 Section {
-                    Toggle("Help train the board reader", isOn: $helpTrain)
+                    Toggle("Photograph the board as you play", isOn: $helpTrain)
                     Toggle("Stream (Twitch, YouTube…)", isOn: $stream)
                     if stream {
                         NavigationLink("Streaming settings") { StreamSettingsView() }
@@ -98,7 +98,7 @@ struct LiveBoardSetupView: View {
                 } header: {
                     SectionTitle(text: "Extras")
                 } footer: {
-                    Text("Training sends labelled photos of the board (under the photo licence) with your syncs. Streaming sends the camera with the board drawn in a corner. The overlay link shows the board in OBS or a browser.")
+                    Text("Photos: the camera takes a picture of the board after each move, labelled with the position, and sends them with your syncs to help train the board reader (under the photo licence). Streaming sends the camera's video with the board drawn in a corner. The overlay link shows the board in OBS or a browser.")
                 }
                 .listRowBackground(Color.ocPanel)
 

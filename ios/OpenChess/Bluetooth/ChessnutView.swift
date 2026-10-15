@@ -1,13 +1,48 @@
 import CoreBluetooth
 import SwiftUI
+import UIKit
 
-/// Find and connect a Chessnut board.
+/// Find and connect a Chessnut board; once it's connected, start a game
+/// on it from here. `returnOnConnect`: opened from a game's setup, so go
+/// back to it as soon as the board connects.
 @MainActor
 struct ChessnutView: View {
+    var returnOnConnect = false
+
     @EnvironmentObject var chessnut: ChessnutManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var showComputer = false
+    @State private var showRealBoard = false
 
     var body: some View {
         List {
+            if chessnut.isConnected && !returnOnConnect {
+                Section {
+                    Button {
+                        showComputer = true
+                    } label: {
+                        Label("Play the computer", systemImage: "cpu")
+                            .font(OCFont.text(17, weight: .bold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(OCButtonStyle(kind: .primary))
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 4, trailing: 12))
+                    Button {
+                        showRealBoard = true
+                    } label: {
+                        Label("Play someone on this board", systemImage: "person.2")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(OCButtonStyle(kind: .secondary))
+                    .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 8, trailing: 12))
+                } header: {
+                    SectionTitle(text: "The board is ready")
+                } footer: {
+                    Text("Set the pieces up and start a game: your moves on the board play on screen, and the reply lights up on the board. Playing someone records the game on your account, with photos or a stream of the board if you like.")
+                }
+                .listRowBackground(Color.clear)
+            }
+
             Section {
                 HStack {
                     Text("Status")
@@ -53,6 +88,20 @@ struct ChessnutView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear {
             if chessnut.state == .scanning { chessnut.stopScan() }
+        }
+        .onChange(of: chessnut.isConnected) { _, connected in
+            if connected {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                if returnOnConnect { dismiss() }
+            }
+        }
+        .sheet(isPresented: $showComputer) {
+            NewComputerGameView()
+                .ocAppearance()
+        }
+        .sheet(isPresented: $showRealBoard) {
+            LiveBoardSetupView()
+                .ocAppearance()
         }
     }
 }
