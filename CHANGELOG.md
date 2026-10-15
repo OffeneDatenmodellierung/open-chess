@@ -7,6 +7,8 @@ renames that heading to the version and date.
 
 ## Unreleased
 
+## 0.1.6 — 2026-10-15
+
 - **The iOS app's server side.** Games played offline in the app upload and
   are replayed and checked (rated against the computer at its level's fixed
   rating unless help was used; two people on one device both confirm), the
@@ -34,6 +36,10 @@ renames that heading to the version and date.
 - Signing in to Lichess in the app is single sign-on, not a pasted token.
 - The API guide points to the live feed for finding new games, and says
   the spectator stream needs a token.
+- **Credits** in the Chess lab (Settings): the datasets, models and tools
+  the board reader and the app build on, and the card of the board reader
+  it ships with. felix-boards and Roboflow's Chess Pieces join the training
+  datasets, their licences checked at the source.
 
 ## 0.1.5 — 2026-10-15
 
