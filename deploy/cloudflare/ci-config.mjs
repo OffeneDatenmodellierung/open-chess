@@ -108,6 +108,10 @@ for (const k of Object.keys(secrets)) {
   else delete cfg.vars[k];
 }
 
+// New container instances for this deploy, so the settings above reach a
+// running server (a container keeps the ones it started with).
+cfg.vars.CHESS_DEPLOY_ID = `${env.GITHUB_RUN_ID ?? Date.now()}-${env.GITHUB_RUN_ATTEMPT ?? 1}`;
+
 writeFileSync("wrangler.ci.json", JSON.stringify(cfg, null, 2) + "\n");
 writeFileSync("secrets.json", JSON.stringify(secrets) + "\n", { mode: 0o600 });
 console.log(`${cfg.name}: ${cfg.vars.CHESS_PUBLIC_URL}, image ${env.IMAGE}`);

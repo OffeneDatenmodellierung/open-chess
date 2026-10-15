@@ -18,7 +18,7 @@ name: TestFlight
 #
 # Signing is automatic: Xcode makes the certificate and profile in the
 # team with the key ("cloud-managed"), so no certificates are kept here.
-# Optional: the repository variable (not secret) CHESS_SERVER_URL, the
+# Optional: the repository variable (or secret) CHESS_SERVER_URL, the
 # server the app starts with (https://…); without it the app asks for one.
 # Optional: BOARD_READER_URL, where to download weights to bundle (a
 # model card that isn't internal-only; the app refuses those anyway).
@@ -102,7 +102,7 @@ jobs:
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
       - name: Archive and export
         env:
-          SERVER: ${{ vars.CHESS_SERVER_URL }}
+          SERVER: ${{ vars.CHESS_SERVER_URL || secrets.CHESS_SERVER_URL }}
           TEAM: ${{ secrets.APPLE_TEAM_ID }}
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
