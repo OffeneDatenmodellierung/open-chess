@@ -294,6 +294,7 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/auth/apple", get(apple::start))
         .route("/auth/apple/callback", post(apple::callback))
         .route("/auth/apple/name", post(apple::choose_name))
+        .route("/auth/apple/notifications", post(apple::notification))
         .route("/account/apple/remove", post(apple::account_remove))
         .route("/account/staff/options", post(web::account_staff_options))
         .route("/account/staff", post(web::account_staff))

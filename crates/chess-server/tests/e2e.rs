@@ -2688,7 +2688,7 @@ mod apple_mock {
             m
         }
 
-        fn jwt(&self, claims: &Value) -> String {
+        pub fn jwt(&self, claims: &Value) -> String {
             let h = B64.encode(json!({"alg": "RS256", "kid": "k1"}).to_string());
             let c = B64.encode(claims.to_string());
             let input = format!("{h}.{c}");
@@ -3073,5 +3073,46 @@ async fn sign_in_with_apple_on_the_website() {
     assert_eq!(r.status(), 303);
     assert!(account(fay_session).await.contains("Link your Apple ID"));
     assert_eq!(apple.revoked.lock().unwrap().len(), 1);
+
+    // Apple's notifications: Erik stops using his Apple ID here (his
+    // tokens stop); Dora deletes her Apple Account (hers was the only way
+    // in, so her account closes). One not signed by Apple is refused.
+    let notify = |kind: &str, sub: &str, aud: &str| {
+        let now = chrono::Utc::now().timestamp();
+        let events = serde_json::json!({"type": kind, "sub": sub, "event_time": now}).to_string();
+        let jwt = apple.jwt(
+            &serde_json::json!({"iss": apple.url, "aud": aud, "iat": now, "jti": "j1", "events": events}),
+        );
+        http.post(format!("{base}/auth/apple/notifications"))
+            .json(&serde_json::json!({"payload": jwt}))
+            .send()
+    };
+    let erik_q = format!(
+        "SELECT count(*) FROM {c}.api_tokens t JOIN {c}.accounts a ON a.player_id = t.player_id
+          WHERE a.username = 'Erik' AND t.revoked_at IS NULL",
+        c = env.chess
+    );
+    assert_eq!(env.pg.query_one(&erik_q, &[]).await.unwrap().get::<_, i64>(0), 1);
+    assert_eq!(notify("consent-revoked", "004.erik", "org.example.test").await.unwrap().status(), 200);
+    assert_eq!(env.pg.query_one(&erik_q, &[]).await.unwrap().get::<_, i64>(0), 0);
+    assert_eq!(notify("account-delete", "003.dora", "org.example.other").await.unwrap().status(), 400);
+    assert_eq!(notify("account-delete", "003.dora", "org.example.web").await.unwrap().status(), 200);
+    let gone: i64 = env
+        .pg
+        .query_one(
+            &format!(
+                "SELECT count(*) FROM {}.players WHERE name = 'deleted' AND disabled_at IS NOT NULL",
+                env.chess
+            ),
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(gone, 1, "Dora's account is closed");
+    assert_eq!(notify("email-disabled", "nobody", "org.example.web").await.unwrap().status(), 200);
+    let links: i64 =
+        env.pg.query_one(&format!("SELECT count(*) FROM {}.apple_ids", env.chess), &[]).await.unwrap().get(0);
+    assert_eq!(links, 0);
     env.teardown().await;
 }

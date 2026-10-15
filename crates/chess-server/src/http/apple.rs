@@ -689,3 +689,73 @@ pub async fn account_section(ctx: &Ctx, player: i64, csrf: &str, locked: bool) -
     }
     Ok(s)
 }
+
+// ─── Apple's notifications ───
+
+/// `POST /auth/apple/notifications`: Apple's server-to-server
+/// notifications (`{"payload": "<JWT>"}`), the URL registered for Sign in
+/// with Apple. Checked as Apple's, then:
+/// - `consent-revoked` (the person stopped using their Apple ID here): the
+///   link goes, and the tokens it signed in; an account with no other way
+///   in is signed out everywhere.
+/// - `account-delete` (their Apple Account is gone for good): the same, and
+///   an account with no other way in is closed, as `DELETE /api/account`
+///   does, since no one can sign in to it again.
+/// - `email-disabled`, `email-enabled`: noted only.
+///
+/// Answers 200 to anything it has handled or doesn't know, so Apple
+/// doesn't retry; 400 to what isn't Apple's.
+pub async fn notification(State(ctx): State<Ctx>, body: Bytes) -> ApiResult<Response> {
+    let apple = apple(&ctx)?;
+    let v: Value = serde_json::from_slice(&body).map_err(|_| ApiError::bad("not JSON"))?;
+    let payload = v["payload"].as_str().ok_or_else(|| ApiError::bad("no payload"))?;
+    let notice = apple.notification(payload).await.map_err(|e| {
+        tracing::warn!("Apple notification refused: {e:#}");
+        ApiError::bad(format!("{e:#}"))
+    })?;
+    let c = ctx.db.conn().await?;
+    let row = c
+        .query_opt(
+            &ctx.db.sql(
+                "SELECT a.player_id,
+                        p.password_hash IS NOT NULL OR p.esports_id IS NOT NULL
+                        OR EXISTS (SELECT 1 FROM chess.passkeys k WHERE k.player_id = p.id)
+                   FROM chess.apple_ids a JOIN chess.players p ON p.id = a.player_id WHERE a.sub = $1",
+            ),
+            &[&notice.sub],
+        )
+        .await?;
+    let Some(row) = row else {
+        tracing::info!(kind = notice.kind, "Apple notification for an Apple ID not linked here");
+        return Ok(StatusCode::OK.into_response());
+    };
+    let (player, other_way_in): (i64, bool) = (row.get(0), row.get(1));
+    match notice.kind.as_str() {
+        "consent-revoked" | "account-delete" | "account-deleted" => {
+            c.execute(&ctx.db.sql("DELETE FROM chess.apple_ids WHERE sub = $1"), &[&notice.sub]).await?;
+            let tokens = if other_way_in {
+                "UPDATE chess.api_tokens SET revoked_at = now(), revoked_by = 'Apple: ' || $2
+                  WHERE player_id = $1 AND revoked_at IS NULL AND name LIKE 'Sign in with Apple:%'"
+            } else {
+                "UPDATE chess.api_tokens SET revoked_at = now(), revoked_by = 'Apple: ' || $2
+                  WHERE player_id = $1 AND revoked_at IS NULL"
+            };
+            c.execute(&ctx.db.sql(tokens), &[&player, &notice.kind]).await?;
+            if !other_way_in {
+                c.execute(
+                    &ctx.db.sql("UPDATE chess.sessions SET revoked_at = now() WHERE player_id = $1 AND revoked_at IS NULL"),
+                    &[&player],
+                )
+                .await?;
+            }
+            drop(c);
+            ctx.auth.forget_player(player);
+            if notice.kind != "consent-revoked" && !other_way_in {
+                crate::http::mobile::close_account(&ctx, player).await?;
+            }
+            tracing::info!(player, kind = notice.kind, other_way_in, "Apple ID link ended by Apple");
+        }
+        other => tracing::info!(player, kind = other, "Apple notification"),
+    }
+    Ok(StatusCode::OK.into_response())
+}

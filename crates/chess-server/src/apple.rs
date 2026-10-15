@@ -140,6 +140,12 @@ impl Apple {
     /// Check an identity token from the app and the nonce it sent Apple
     /// (raw here; Apple holds its SHA-256, hex).
     pub async fn verify(&self, token: &str, nonce: &str) -> Result<AppleId> {
+        let claims = self.signed_by_apple(token).await?;
+        check_claims(&claims, &self.url, &self.client_ids, nonce, chrono::Utc::now().timestamp())
+    }
+
+    /// A JWT's claims, once its signature is checked against Apple's keys.
+    async fn signed_by_apple(&self, token: &str) -> Result<Value> {
         let (kid, signed, sig, claims) = split(token)?;
         let keys = self.keys(Some(&kid)).await?;
         let jwk = keys.iter().find(|k| k.kid == kid).context("Apple doesn't know the token's key")?;
@@ -148,8 +154,16 @@ impl Apple {
         let e = B64.decode(&jwk.e).context("Apple's key")?;
         RsaPublicKeyComponents { n: &n[..], e: &e[..] }
             .verify(&RSA_PKCS1_2048_8192_SHA256, signed.as_bytes(), &sig)
-            .map_err(|_| anyhow::anyhow!("the identity token's signature is wrong"))?;
-        check_claims(&claims, &self.url, &self.client_ids, nonce, chrono::Utc::now().timestamp())
+            .map_err(|_| anyhow::anyhow!("the token's signature is wrong"))?;
+        Ok(claims)
+    }
+
+    /// A server-to-server notification's event (Apple posts
+    /// `{"payload": "<JWT>"}`), once checked: Apple signed it, for one of
+    /// our ids.
+    pub async fn notification(&self, payload: &str) -> Result<Notice> {
+        let claims = self.signed_by_apple(payload).await?;
+        check_notice(&claims, &self.url, &self.client_ids)
     }
 
     async fn keys(&self, want: Option<&str>) -> Result<Arc<Vec<Jwk>>> {
@@ -238,6 +252,29 @@ impl Apple {
     }
 }
 
+/// What Apple tells us about an Apple ID, unasked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    /// `consent-revoked`, `account-delete` (or `account-deleted`),
+    /// `email-disabled`, `email-enabled`.
+    pub kind: String,
+    pub sub: String,
+}
+
+fn check_notice(c: &Value, issuer: &str, client_ids: &[String]) -> Result<Notice> {
+    ensure!(c["iss"].as_str() == Some(issuer), "the notification isn't Apple's");
+    let aud = c["aud"].as_str().unwrap_or_default();
+    ensure!(client_ids.iter().any(|id| id == aud), "the notification is for another app");
+    // `events` is an object, or (as Apple has sent it) that object as a string.
+    let events = match &c["events"] {
+        Value::String(s) => serde_json::from_str(s).context("the notification's events")?,
+        v => v.clone(),
+    };
+    let kind = events["type"].as_str().context("the notification has no type")?.to_owned();
+    let sub = events["sub"].as_str().filter(|s| !s.is_empty()).context("the notification has no subject")?;
+    Ok(Notice { kind, sub: sub.to_owned() })
+}
+
 /// A JWT's key id, signed part, signature and claims (not yet checked).
 fn split(token: &str) -> Result<(String, String, Vec<u8>, Value)> {
     let mut parts = token.trim().split('.');
@@ -318,6 +355,20 @@ mod tests {
         let mut c = claims("n0nce");
         c["email_verified"] = json!(false);
         assert_eq!(check_claims(&c, iss, &ids, "n0nce", 1_500).unwrap().email, None, "unverified email");
+    }
+
+    #[test]
+    fn reads_notifications() {
+        let ids = vec!["org.example.app".to_owned()];
+        let iss = "https://appleid.apple.com";
+        let event = json!({"type": "consent-revoked", "sub": "001.x", "event_time": 1});
+        let mut c = json!({"iss": iss, "aud": "org.example.app", "iat": 1, "jti": "j", "events": event});
+        let n = check_notice(&c, iss, &ids).unwrap();
+        assert_eq!((n.kind.as_str(), n.sub.as_str()), ("consent-revoked", "001.x"));
+        c["events"] = json!(r#"{"type":"account-delete","sub":"001.y","event_time":1}"#);
+        assert_eq!(check_notice(&c, iss, &ids).unwrap().kind, "account-delete", "events as a string");
+        c["aud"] = json!("org.other");
+        assert!(check_notice(&c, iss, &ids).is_err());
     }
 
     #[test]

@@ -28,7 +28,9 @@ renames that heading to the version and date.
   board help train the board reader.
 - **Sign in with Apple**, in the app and on the sign-in page: a new
   account, or linked to yours under Account. Apple is told when you unlink
-  it or close your account. Needs the server's Sign in with Apple key.
+  it or close your account, and the server hears from Apple when someone
+  stops using their Apple ID here or deletes their Apple Account. Needs the
+  server's Sign in with Apple key.
 - Signing in to Lichess in the app is single sign-on, not a pasted token.
 - The API guide points to the live feed for finding new games, and says
   the spectator stream needs a token.

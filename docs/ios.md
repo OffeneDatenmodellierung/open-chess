@@ -156,6 +156,12 @@ signed release and uploads it to App Store Connect. Once:
    URL `https://<your server>/auth/apple/callback` (with the path prefix,
    if the server has one). Set `CHESS_APPLE_SERVICES_ID` to it.
 
+   Apple also asks, on the app id's Sign in with Apple settings, for a
+   server-to-server notification endpoint:
+   `https://<your server>/auth/apple/notifications`. It hears when someone
+   stops using their Apple ID with open-chess or deletes their Apple
+   Account ([api.md](api.md)).
+
 Each release: run *TestFlight* from the Actions tab (or push a tag
 `ios-v1.0.0`). The build appears in App Store Connect › TestFlight after
 Apple processes it (minutes to an hour); test it there, then fill in the

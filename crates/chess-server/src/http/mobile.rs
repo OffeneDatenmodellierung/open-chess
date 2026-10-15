@@ -678,7 +678,15 @@ pub async fn remove_device(
 /// placeholder name; tokens, sessions, devices and personal details go.
 /// Photos already given under the photo licence stay, without the name.
 pub async fn delete_account(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
-    let player = who.0.player;
+    close_account(&ctx, who.0.player).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Close an account: its games in progress resigned, its name, sign-in
+/// details, tokens, sessions and devices gone; Apple told of a linked
+/// Apple ID.
+pub async fn close_account(ctx: &Ctx, player: i64) -> ApiResult<()> {
+    let ctx = ctx.clone();
     let ongoing = {
         let c = ctx.db.conn().await?;
         model::ongoing_games(&ctx.db, &*c, player).await?
@@ -726,7 +734,7 @@ pub async fn delete_account(State(ctx): State<Ctx>, who: Who) -> ApiResult<Respo
         crate::http::apple::revoke(&ctx, client, refresh).await;
     }
     tracing::info!(player, "account closed");
-    Ok(StatusCode::NO_CONTENT.into_response())
+    Ok(())
 }
 
 #[cfg(test)]

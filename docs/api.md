@@ -136,6 +136,16 @@ chooses a username on a page of its own, and the account page links or
 unlinks an Apple ID. The same Apple ID signs in to the same account in the
 app and on the website.
 
+Apple's server-to-server notifications go to
+`{CHESS_PUBLIC_URL}/auth/apple/notifications` (register it on the app id's
+Sign in with Apple settings). Each is checked as Apple's, then: when
+someone stops using their Apple ID here (`consent-revoked`) the link goes
+and so do the tokens it signed in, or every token and session if Apple was
+the account's only way in; when someone deletes their Apple Account
+(`account-delete`) the same, and an account with no other way in is closed
+as `DELETE /api/account` closes one. Email forwarding changes are noted
+only.
+
 The app also signs in with OAuth
 (PKCE) and the redirect `org.offenedatenmodellierung.openchess:/oauth`:
 native apps' reversed-domain schemes are accepted ([RFC 8252](https://www.rfc-editor.org/rfc/rfc8252#section-7.1)).
