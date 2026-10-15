@@ -37,6 +37,19 @@ struct RootView: View {
                 .environmentObject(model.chessnut)
                 .environmentObject(model.network)
                 .environmentObject(model.push)
+                .environmentObject(model.otb)
+                .preferredColorScheme(settings.colorScheme)
+        }
+        .fullScreenCover(item: $model.liveBoard) { live in
+            LiveBoardScreen(live: live)
+                .environmentObject(model)
+                .environmentObject(settings)
+                .environmentObject(model.sync)
+                .environmentObject(model.auth)
+                .environmentObject(model.chessnut)
+                .environmentObject(model.network)
+                .environmentObject(model.push)
+                .environmentObject(model.otb)
                 .preferredColorScheme(settings.colorScheme)
         }
         .alert("Saved data", isPresented: Binding(

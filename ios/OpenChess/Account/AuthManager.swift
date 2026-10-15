@@ -2,15 +2,19 @@ import AuthenticationServices
 import Foundation
 import UIKit
 
-/// Signing in to the open-chess server (OAuth 2 PKCE through
-/// `ASWebAuthenticationSession`), the Lichess token the player pastes, and
-/// deleting the account.
+/// Signing in to the open-chess server and to Lichess (OAuth 2 PKCE
+/// through `ASWebAuthenticationSession`; a pasted Lichess token still
+/// works), and deleting the account.
 @MainActor
 final class AuthManager: ObservableObject {
     static let clientId = "open-chess-ios"
     static let callbackScheme = "org.offenedatenmodellierung.openchess"
     static let redirectURI = "org.offenedatenmodellierung.openchess:/oauth"
     static let scope = "board:play challenge:read challenge:write"
+    /// Lichess's OAuth needs no registered client: any id, and a redirect
+    /// whose scheme has a dot.
+    static let lichessRedirectURI = "org.offenedatenmodellierung.openchess:/lichess"
+    static let lichessBase = URL(string: "https://lichess.org")!
 
     private static let tokenKey = "server-token"
     private static let lichessKey = "lichess-token"
@@ -19,6 +23,8 @@ final class AuthManager: ObservableObject {
     @Published private(set) var lichessToken: String?
     @Published var busy = false
     @Published var error: String?
+    @Published var lichessBusy = false
+    @Published var lichessError: String?
 
     let settings: AppSettings
     private var webSession: ASWebAuthenticationSession?
@@ -38,9 +44,9 @@ final class AuthManager: ObservableObject {
         APIClient(base: settings.serverBase, token: token)
     }
 
-    /// A client for lichess.org, with the pasted token.
+    /// A client for lichess.org, with the Lichess token.
     var lichess: APIClient {
-        APIClient(base: URL(string: "https://lichess.org")!, token: lichessToken)
+        APIClient(base: AuthManager.lichessBase, token: lichessToken)
     }
 
     // MARK: Sign in
@@ -62,18 +68,7 @@ final class AuthManager: ObservableObject {
         ])
         do {
             let callback = try await authenticate(url: authorize)
-            let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
-            let code = items.first { $0.name == "code" }?.value ?? ""
-            let state = items.first { $0.name == "state" }?.value ?? ""
-            if let e = items.first(where: { $0.name == "error" })?.value {
-                throw APIError(status: 0, message: "Sign-in was refused: \(e)")
-            }
-            guard state == pkce.state else {
-                throw APIError(status: 0, message: "Sign-in came back with the wrong state; try again.")
-            }
-            guard !code.isEmpty else {
-                throw APIError(status: 0, message: "Sign-in came back without a code.")
-            }
+            let code = try AuthManager.code(from: callback, state: pkce.state)
             let data = try await client.postForm("/api/token", form: [
                 "grant_type": "authorization_code",
                 "code": code,
@@ -93,6 +88,23 @@ final class AuthManager: ObservableObject {
             }
             self.error = describe(error)
         }
+    }
+
+    /// The authorization code from the callback, checking the state.
+    private static func code(from callback: URL, state expected: String) throws -> String {
+        let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let code = items.first { $0.name == "code" }?.value ?? ""
+        let state = items.first { $0.name == "state" }?.value ?? ""
+        if let e = items.first(where: { $0.name == "error" })?.value {
+            throw APIError(status: 0, message: "Sign-in was refused: \(e)")
+        }
+        guard state == expected else {
+            throw APIError(status: 0, message: "Sign-in came back with the wrong state; try again.")
+        }
+        guard !code.isEmpty else {
+            throw APIError(status: 0, message: "Sign-in came back without a code.")
+        }
+        return code
     }
 
     private func authenticate(url: URL) async throws -> URL {
@@ -166,6 +178,53 @@ final class AuthManager: ObservableObject {
     }
 
     // MARK: Lichess
+
+    /// Sign in on lichess.org (PKCE; no client registration needed).
+    func signInLichess() async {
+        lichessError = nil
+        lichessBusy = true
+        defer { lichessBusy = false }
+        let pkce = PKCE()
+        let client = APIClient(base: AuthManager.lichessBase, token: nil)
+        let authorize = client.url("/oauth", query: [
+            "response_type": "code",
+            "client_id": AuthManager.clientId,
+            "redirect_uri": AuthManager.lichessRedirectURI,
+            "code_challenge": pkce.challenge,
+            "code_challenge_method": "S256",
+            "scope": AuthManager.scope,
+            "state": pkce.state,
+        ])
+        do {
+            let callback = try await authenticate(url: authorize)
+            let code = try AuthManager.code(from: callback, state: pkce.state)
+            let data = try await client.postForm("/api/token", form: [
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": pkce.verifier,
+                "redirect_uri": AuthManager.lichessRedirectURI,
+                "client_id": AuthManager.clientId,
+            ])
+            let t = try JSONDecoder().decode(TokenResponse.self, from: data)
+            guard !t.accessToken.isEmpty else {
+                throw APIError(status: 0, message: "Lichess sent no token.")
+            }
+            setLichessToken(t.accessToken)
+        } catch {
+            if let e = error as? ASWebAuthenticationSessionError, e.code == .canceledLogin {
+                return
+            }
+            lichessError = "Lichess: " + describe(error)
+        }
+    }
+
+    /// Revoke the token on Lichess (`DELETE /api/token`) and forget it.
+    func signOutLichess() async {
+        if hasLichess {
+            _ = try? await lichess.delete("/api/token")
+        }
+        setLichessToken(nil)
+    }
 
     func setLichessToken(_ value: String?) {
         let v = value?.trimmed

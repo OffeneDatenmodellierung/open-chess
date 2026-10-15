@@ -20,6 +20,7 @@ struct OpenChessApp: App {
                 .environmentObject(model.chessnut)
                 .environmentObject(model.network)
                 .environmentObject(model.push)
+                .environmentObject(model.otb)
                 .tint(Color.ocAction)
                 .onChange(of: scenePhase) { _, phase in
                     model.scenePhaseChanged(phase)

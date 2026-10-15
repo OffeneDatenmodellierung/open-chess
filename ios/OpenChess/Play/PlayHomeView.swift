@@ -9,13 +9,18 @@ struct PlayHomeView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var sync: SyncEngine
     @EnvironmentObject var chessnut: ChessnutManager
+    @EnvironmentObject var auth: AuthManager
     @State var showComputer = false
     @State var showPassAndPlay = false
+    @State var showRealBoard = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 SyncPill()
+                if !auth.signedIn {
+                    SignInPrompt(message: "Sign in to sync and rate your games, play online and record games on a real board.")
+                }
                 RatingsCard()
                 Button {
                     showComputer = true
@@ -37,6 +42,13 @@ struct PlayHomeView: View {
                     } label: {
                         Label("Play online", systemImage: "globe")
                     }
+                }
+                .buttonStyle(OCButtonStyle(kind: .secondary))
+
+                Button {
+                    showRealBoard = true
+                } label: {
+                    Label("Play on a real board", systemImage: "video")
                 }
                 .buttonStyle(OCButtonStyle(kind: .secondary))
 
@@ -76,9 +88,15 @@ struct PlayHomeView: View {
         .navigationTitle("open-chess")
         .sheet(isPresented: $showComputer) {
             NewComputerGameView()
+                .ocAppearance()
         }
         .sheet(isPresented: $showPassAndPlay) {
             NewPassAndPlayView()
+                .ocAppearance()
+        }
+        .sheet(isPresented: $showRealBoard) {
+            LiveBoardSetupView()
+                .ocAppearance()
         }
         .refreshable {
             await sync.syncNow(reason: "pull")

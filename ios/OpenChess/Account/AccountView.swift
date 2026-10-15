@@ -70,11 +70,19 @@ struct AccountView: View {
 
             Section {
                 Picker("Appearance", selection: $settings.appearance) {
-                    Text("System").tag("system")
                     Text("Dark").tag("dark")
                     Text("Light").tag("light")
+                    Text("Match system").tag("system")
                 }
                 Toggle("Turn the board in pass and play", isOn: $settings.flipPassAndPlay)
+                Toggle("Sounds", isOn: $settings.sounds)
+                Toggle("Haptics", isOn: $settings.haptics)
+                Toggle("Speak moves", isOn: $settings.speakMoves)
+                    .accessibilityHint("Reads the opponent's or computer's moves aloud, and every move recorded on a real board.")
+                Toggle("Moves in plain English", isOn: $settings.plainMoves)
+                    .accessibilityLabel("Moves in plain English")
+                    .accessibilityHint("Shows each move in words, like Knight from b1 to c3, next to the chess notation.")
+                NavigationLink("Streaming") { StreamSettingsView() }
                 NavigationLink("Sync and data") { SyncSettingsView() }
                 NavigationLink("Chessnut board") { ChessnutView() }
             } header: {
@@ -132,6 +140,7 @@ struct AccountView: View {
             PhotoLicenceSheet { _ in showLicence = false }
                 .environmentObject(settings)
                 .environmentObject(auth)
+                .ocAppearance()
         }
     }
 

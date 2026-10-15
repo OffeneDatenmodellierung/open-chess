@@ -105,6 +105,7 @@ struct SavedGameRow: View {
         switch game.kind {
         case "computer": parts.append("Computer \(game.level ?? 0)")
         case "passAndPlay": parts.append("Pass and play")
+        case "otb": parts.append("Real board")
         default: parts.append(game.online?.siteLabel ?? "Online")
         }
         parts.append(game.speed.capitalized)

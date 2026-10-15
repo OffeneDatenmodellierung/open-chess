@@ -191,7 +191,12 @@ struct GameScreen: View {
                     .font(OCFont.text(13))
                     .foregroundStyle(Color.ocMuted)
             }
-            MoveListView(san: game.state.san, startsWhite: startsWhite)
+            if MoveWords.enabled, let last = game.state.san.last, let words = MoveWords.words(for: game.state).last {
+                Text("Last move: \(last) · \(words)")
+                    .font(OCFont.text(13))
+                    .foregroundStyle(Color.ocMuted)
+            }
+            MoveListView(san: game.state.san, startsWhite: startsWhite, words: MoveWords.words(for: game.state))
             if game.hintsOn {
                 HintPanel(game: game)
             }
@@ -430,6 +435,9 @@ struct HintPanel: View {
                 HStack(spacing: 6) {
                     Text("Best move").font(OCFont.text(14)).foregroundStyle(Color.ocMuted)
                     Text(best.san).font(OCFont.mono(18, weight: .bold)).foregroundStyle(Color.ocAction)
+                }
+                if let words = MoveWords.move(fen: game.state.fen, uci: best.uci) {
+                    Text(words).font(OCFont.text(13)).foregroundStyle(Color.ocMuted)
                 }
             } else if !game.myTurn && !game.isFinished {
                 Text("Hints show on your move.").font(OCFont.text(14)).foregroundStyle(Color.ocMuted)

@@ -110,6 +110,7 @@ struct NewComputerGameView: View {
 struct NewPassAndPlayView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var auth: AuthManager
     @Environment(\.dismiss) var dismiss
 
     var fen: String?
@@ -130,6 +131,11 @@ struct NewPassAndPlayView: View {
                     Text("The other player")
                 } footer: {
                     Text("With a username the game is sent to the server, which asks them to confirm it before it's rated. Without one it stays on this device.")
+                }
+                if !auth.signedIn {
+                    Section {
+                        SignInPrompt(message: "Sign in to have this game uploaded and rated.", inList: true)
+                    }
                 }
                 Section("You play") {
                     Picker("You play", selection: $iAmWhite) {

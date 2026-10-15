@@ -40,6 +40,13 @@ struct TrainView: View {
                     Label("Scan a board", systemImage: "camera.viewfinder")
                 }
                 .buttonStyle(OCButtonStyle(kind: .secondary))
+
+                NavigationLink {
+                    AnalysisEntryView(fen: nil)
+                } label: {
+                    Tile(icon: "magnifyingglass", title: "Analysis board", detail: "Move both sides freely; the top lines follow. Not scored.")
+                }
+                .buttonStyle(.plain)
             }
             .padding(16)
             .frame(maxWidth: 720)
@@ -49,6 +56,7 @@ struct TrainView: View {
         .navigationTitle("Train")
         .sheet(isPresented: $showComputer) {
             NewComputerGameView(training: true)
+                .ocAppearance()
         }
         .navigationDestination(isPresented: $showEditor) {
             ManualSetupView()
