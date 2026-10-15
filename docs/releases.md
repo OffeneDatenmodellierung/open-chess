@@ -124,6 +124,10 @@ crates.
 
 The image goes to ghcr.io with the workflow's own token (no secret).
 
+The iOS app is built and uploaded by its own workflow with its own
+App Store Connect key, sharing only `APPLE_TEAM_ID`
+([ios.md](ios.md#publishing-to-the-app-store)).
+
 ### The Apple certificate and key
 
 With an Apple Developer Program membership, on a Mac:

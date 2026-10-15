@@ -16,6 +16,24 @@ renames that heading to the version and date.
 - The live game feed orders games by when the server recorded them, so a
   game played offline and uploaded later still reaches its readers.
 - The iOS app signs in with open-chess accounts only.
+- **The iOS app**, ready for TestFlight: play the computer or a friend
+  offline, online games, analysis (never rated), hints and advice from a
+  photo, check and checkmate called out (with sound, haptics and speech),
+  moves in plain English, and the esports look by default.
+- **Real-board games recorded live** from the app (a Chessnut, or any
+  board with photos): the illegal moves shown on the board to put right,
+  rated like games on one device once both players confirm, and a stream
+  to Twitch or YouTube with the board and last five moves overlaid
+  (`/broadcast/{id}`). Photos and video frames labelled by a connected
+  board help train the board reader.
+- **Sign in with Apple**, in the app and on the sign-in page: a new
+  account, or linked to yours under Account. Apple is told when you unlink
+  it or close your account, and the server hears from Apple when someone
+  stops using their Apple ID here or deletes their Apple Account. Needs the
+  server's Sign in with Apple key.
+- Signing in to Lichess in the app is single sign-on, not a pasted token.
+- The API guide points to the live feed for finding new games, and says
+  the spectator stream needs a token.
 
 ## 0.1.5 — 2026-10-15
 

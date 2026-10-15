@@ -3,6 +3,7 @@
 pub mod account;
 pub mod admin;
 pub mod app_files;
+pub mod apple;
 pub mod challenges;
 pub mod fairplay;
 pub mod feed;
@@ -10,6 +11,7 @@ pub mod games;
 pub mod lab;
 pub mod mobile;
 pub mod oauth;
+pub mod otb;
 pub mod play;
 pub mod streams;
 pub mod web;

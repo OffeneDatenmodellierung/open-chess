@@ -195,13 +195,16 @@ struct OfflineResults: Decodable {
 struct AccountInfo: Decodable {
     var id: String = ""
     var username: String = ""
+    /// An Apple ID is linked (open-chess only).
+    var apple = false
 
-    enum CodingKeys: String, CodingKey { case id, username }
+    enum CodingKeys: String, CodingKey { case id, username, apple }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
         username = try c.decodeIfPresent(String.self, forKey: .username) ?? ""
+        apple = (try? c.decodeIfPresent(Bool.self, forKey: .apple)) ?? false
     }
 }
 

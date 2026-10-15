@@ -1,5 +1,6 @@
 import OpenChessCore
 import SwiftUI
+import UIKit
 
 /// The app's settings, kept in the core's store (`setting` / `setSetting`).
 @MainActor
@@ -9,7 +10,10 @@ final class AppSettings: ObservableObject {
 
     private let store: Store
 
-    /// "system", "dark" or "light".
+    /// The running settings, for `ocAppearance()` on sheets and covers.
+    static var current: AppSettings?
+
+    /// "dark" (the default, the esports look), "light" or "system".
     @Published var appearance: String { didSet { save("appearance", appearance) } }
     @Published var serverURL: String { didSet { save("serverURL", serverURL) } }
     /// "auto", "on" or "off".
@@ -31,6 +35,20 @@ final class AppSettings: ObservableObject {
     @Published var botLevel: Int { didSet { save("botLevel", String(botLevel)) } }
     /// The APNs device token last sent to the server (hex).
     @Published var pushToken: String { didSet { save("pushToken", pushToken) } }
+    /// Show (and speak) moves in plain English next to SAN.
+    @Published var plainMoves: Bool { didSet { save("plainMoves", plainMoves) } }
+    @Published var sounds: Bool { didSet { save("sounds", sounds) } }
+    @Published var haptics: Bool { didSet { save("haptics", haptics) } }
+    /// Speak the opponent's or computer's moves (and every move recorded on a real board).
+    @Published var speakMoves: Bool { didSet { save("speakMoves", speakMoves) } }
+    /// Streaming: "twitch", "youtube" or "custom".
+    @Published var streamService: String { didSet { save("streamService", streamService) } }
+    /// The custom service's RTMP URL (without the key).
+    @Published var streamURL: String { didSet { save("streamURL", streamURL) } }
+    /// Video bitrate in kbit/s.
+    @Published var streamKbps: Int { didSet { save("streamKbps", String(streamKbps)) } }
+    @Published var streamRecord: Bool { didSet { save("streamRecord", streamRecord) } }
+    @Published var streamPortrait: Bool { didSet { save("streamPortrait", streamPortrait) } }
 
     init(store: Store) {
         self.store = store
@@ -51,7 +69,7 @@ final class AppSettings: ObservableObject {
             guard let v = read(key), let n = UInt64(v) else { return 0 }
             return n
         }
-        appearance = read("appearance") ?? "system"
+        appearance = read("appearance") ?? "dark"
         serverURL = read("serverURL") ?? AppSettings.defaultServer
         lowDataOverride = read("lowData") ?? "auto"
         syncMinutes = int("syncMinutes", 5)
@@ -66,6 +84,15 @@ final class AppSettings: ObservableObject {
         syncSince = u64("syncSince")
         botLevel = int("botLevel", 3)
         pushToken = read("pushToken") ?? ""
+        plainMoves = bool("plainMoves", false)
+        sounds = bool("sounds", true)
+        haptics = bool("haptics", true)
+        speakMoves = bool("speakMoves", false)
+        streamService = read("streamService") ?? "twitch"
+        streamURL = read("streamURL") ?? ""
+        streamKbps = int("streamKbps", 4000)
+        streamRecord = bool("streamRecord", false)
+        streamPortrait = bool("streamPortrait", false)
     }
 
     private func save(_ key: String, _ value: String) {
@@ -80,12 +107,29 @@ final class AppSettings: ObservableObject {
         save(key, value ? "1" : "0")
     }
 
+    /// The scheme to apply. The Info.plist starts the app dark, so "Match
+    /// system" reads the system's own setting from the screen.
     var colorScheme: ColorScheme? {
         switch appearance {
-        case "dark": return .dark
         case "light": return .light
-        default: return nil
+        case "system": return AppSettings.systemScheme()
+        default: return .dark
         }
+    }
+
+    /// Back in the app: "Match system" re-reads the system's setting.
+    func refreshAppearance() {
+        if appearance == "system" {
+            objectWillChange.send()
+        }
+    }
+
+    static func systemScheme() -> ColorScheme {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        if let style = scenes.first?.screen.traitCollection.userInterfaceStyle {
+            return style == .light ? .light : .dark
+        }
+        return .dark
     }
 
     var serverBase: URL {
@@ -108,7 +152,34 @@ final class AppSettings: ObservableObject {
 
     var photoConsentGiven: Bool { photoConsent == "accepted" }
 
+    static let streamBitrates: [Int] = [2500, 4000, 6000]
+
+    /// The stream key lives in the Keychain, not the store.
+    static let streamKeyAccount = "stream-key"
+
     static func syncLabel(_ minutes: Int) -> String {
         minutes == 0 ? "Manual" : (minutes == 60 ? "Every hour" : "Every \(minutes) min")
+    }
+}
+
+/// Applies the Appearance setting (sheets and full-screen covers need it
+/// applied to their content too).
+struct OCAppearanceModifier: ViewModifier {
+    @ObservedObject var settings: AppSettings
+
+    func body(content: Content) -> some View {
+        content.preferredColorScheme(settings.colorScheme)
+    }
+}
+
+extension View {
+    @MainActor
+    @ViewBuilder
+    func ocAppearance() -> some View {
+        if let settings = AppSettings.current {
+            modifier(OCAppearanceModifier(settings: settings))
+        } else {
+            preferredColorScheme(.dark)
+        }
     }
 }

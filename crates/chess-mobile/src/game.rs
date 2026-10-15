@@ -484,6 +484,25 @@ struct OfflineRecord<'a> {
     ratable: bool,
 }
 
+/// Every move of a game in plain English ("Knight from b1 to c3, check"),
+/// from its start (a FEN, or the starting position) and its moves (space-
+/// separated UCI). For showing moves in words next to SAN and for speaking
+/// them; describing moves already played is never help. Stops at the first
+/// move that isn't legal.
+#[uniffi::export]
+pub fn describe_moves(fen: Option<String>, moves: String) -> Vec<String> {
+    let Ok(mut game) = Game::new(start_fen(fen).as_deref()) else { return Vec::new() };
+    let mut out = Vec::new();
+    for uci in moves.split_whitespace() {
+        let Some(e) = explain_san(game.board(), uci) else { break };
+        if game.play_uci(&e.uci).is_err() {
+            break;
+        }
+        out.push(e.text);
+    }
+    out
+}
+
 /// Check a FEN typed or read from a photo: `None` if it's a legal
 /// position, else what's wrong.
 #[uniffi::export]
@@ -570,6 +589,14 @@ mod tests {
         assert_eq!(bare.state().winner, None, "a lone king can't win on time");
         let online = GameSession::new(None, GameMode::Online { rated: false }).unwrap();
         assert!(online.offline_record_json("x".into(), "a".into(), "b".into(), "rapid".into(), 0).is_err());
+    }
+
+    #[test]
+    fn describes_moves_in_words() {
+        let d = describe_moves(None, "b1c3 e7e5 g1f3 nonsense".into());
+        assert_eq!(d.len(), 3, "{d:?}");
+        assert!(d[0].to_lowercase().contains("knight") && d[0].contains("c3"), "{d:?}");
+        assert!(describe_moves(Some("bad".into()), "e2e4".into()).is_empty());
     }
 
     #[test]

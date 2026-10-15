@@ -9,6 +9,8 @@ const GUIDES = [
   { id: "boards", title: "Electronic boards", blurb: "DGT, Chessnut, Centaur and DGT Pi boards with open-chess-device." },
   { id: "photos", title: "Boards from photos", blurb: "Read a position from a photo, carry a game online, play on from the board." },
   { id: "photo-licence", title: "The photo licence", blurb: "What sending a board photo for checking and training means." },
+  { id: "privacy", title: "Privacy", blurb: "What the server and the apps keep, why, and your choices." },
+  { id: "ios", title: "The iPhone and iPad app", blurb: "The app's core, building it, and what it does." },
   { id: "engine", title: "The engine", blurb: "Search, odds, explanations and training the engine." },
   { id: "releases", title: "Releases", blurb: "Downloads, the image, the crates, and cutting a release." },
 ];

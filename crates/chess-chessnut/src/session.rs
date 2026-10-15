@@ -71,6 +71,18 @@ impl Session {
         self.start(now);
     }
 
+    /// What the board shows now, and whether it has been still long
+    /// enough to count (a position still changing is a move in progress: a
+    /// hand over the board, a capture half made). `None` before the board
+    /// has reported anything.
+    pub fn board_now(&self) -> Option<(Placement, bool)> {
+        match (self.pending, self.settled) {
+            (Some((p, _)), _) => Some((p, false)),
+            (None, Some(p)) => Some((p, true)),
+            (None, None) => None,
+        }
+    }
+
     /// Commands to write now, in order.
     pub fn take_writes(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.writes)

@@ -14,7 +14,8 @@ use crate::model;
 
 /// `GET /api/account`: Lichess's, plus what this server adds about you:
 /// `roles` here (admin, manager), whether your passkey check is done
-/// (`staff`: "checked", "pending" or absent) and how many passkeys you have.
+/// (`staff`: "checked", "pending" or absent), how many passkeys you have and
+/// whether an Apple ID is linked (`apple`).
 pub async fn me(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
     let c = ctx.db.conn().await?;
     let a = model::ensure_account(&ctx.db, &*c, who.0.player).await?;
@@ -23,7 +24,8 @@ pub async fn me(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
     let r = c
         .query_one(
             &ctx.db.sql(
-                "SELECT role, roles, (SELECT count(*) FROM chess.passkeys WHERE player_id = $1)
+                "SELECT role, roles, (SELECT count(*) FROM chess.passkeys WHERE player_id = $1),
+                        EXISTS (SELECT 1 FROM chess.apple_ids WHERE player_id = $1)
                    FROM chess.players WHERE id = $1",
             ),
             &[&who.0.player],
@@ -34,6 +36,7 @@ pub async fn me(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
         [(admin, "admin"), (manager, "manager")].iter().filter(|x| x.0).map(|x| x.1).collect();
     v["roles"] = json!(roles);
     v["passkeys"] = json!(r.get::<_, i64>(2));
+    v["apple"] = json!(r.get::<_, bool>(3));
     if who.0.admin || who.0.manager {
         v["staff"] = json!("checked");
     } else if who.0.pending {

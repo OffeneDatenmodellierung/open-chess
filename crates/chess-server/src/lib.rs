@@ -4,6 +4,7 @@
 pub mod ai;
 pub mod analyse;
 pub mod app;
+pub mod apple;
 pub mod auth;
 pub mod challenges;
 pub mod cli;

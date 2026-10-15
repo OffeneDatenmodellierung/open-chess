@@ -9,9 +9,16 @@ struct SyncSettingsView: View {
     @EnvironmentObject var sync: SyncEngine
     @EnvironmentObject var network: NetworkMonitor
     @EnvironmentObject var push: PushManager
+    @EnvironmentObject var auth: AuthManager
 
     var body: some View {
         Form {
+            if !auth.signedIn {
+                Section {
+                    SignInPrompt(message: "Sign in to send your games, photos and confirmations to the server, and to get move notifications.", inList: true)
+                }
+                .listRowBackground(Color.ocPanel)
+            }
             Section {
                 Picker("Low data", selection: $settings.lowDataOverride) {
                     Text("Automatic").tag("auto")

@@ -27,6 +27,8 @@ pub struct Ctx {
     pub reader: Option<Arc<chess_vision::Reader>>,
     /// Apple push notifications for the iOS app, when configured.
     pub apns: Option<Arc<crate::push::Apns>>,
+    /// Sign in with Apple, when configured.
+    pub apple: Option<Arc<crate::apple::Apple>>,
     slots: Arc<Mutex<HashMap<(i64, &'static str), usize>>>,
 }
 
@@ -61,6 +63,7 @@ impl Ctx {
             metrics: Metrics::new(),
             reader: None,
             apns: None,
+            apple: None,
             slots: Arc::default(),
         }
     }
@@ -82,6 +85,10 @@ impl Ctx {
         self.apns = crate::push::Apns::from_config(&self.cfg)?;
         if self.apns.is_some() {
             tracing::info!(topic = self.cfg.apns_topic, "push notifications on");
+        }
+        self.apple = crate::apple::Apple::from_config(&self.cfg)?;
+        if self.apple.is_some() {
+            tracing::info!("Sign in with Apple on");
         }
         Ok(self)
     }
@@ -210,7 +217,8 @@ async fn cors(req: Request, next: Next) -> Response {
 
 pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
     use http::{
-        account, admin, app_files, challenges, fairplay, feed, games, lab, mobile, oauth, streams, web,
+        account, admin, app_files, apple, challenges, fairplay, feed, games, lab, mobile, oauth, otb,
+        streams, web,
     };
     let api = Router::new()
         // OAuth (PKCE) and tokens
@@ -230,6 +238,7 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/api/feed", get(feed::feed))
         .route("/api/token", post(oauth::token).delete(oauth::revoke))
         .route("/api/token/test", post(oauth::test))
+        .route("/api/auth/apple", post(apple::sign_in).delete(apple::unlink))
         // account and users
         .route("/api/account", get(account::me).delete(mobile::delete_account))
         .route(
@@ -242,6 +251,12 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
             "/api/photos",
             post(mobile::photo).layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024)),
         )
+        .route("/api/otb", post(otb::start))
+        .route("/api/otb/{id}/move", post(otb::make_move))
+        .route("/api/otb/{id}/undo", post(otb::undo))
+        .route("/api/otb/{id}/end", post(otb::end))
+        .route("/api/broadcast/{id}/events", get(otb::events))
+        .route("/broadcast/{id}", get(otb::page))
         .route("/api/push/devices", post(mobile::add_device))
         .route("/api/push/devices/{token}", axum::routing::delete(mobile::remove_device))
         .route("/api/account/email", get(account::email))
@@ -276,6 +291,11 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/account/passkeys/remove", post(web::account_passkey_remove))
         .route("/account/password", post(web::account_password))
         .route("/account/password/remove", post(web::account_password_remove))
+        .route("/auth/apple", get(apple::start))
+        .route("/auth/apple/callback", post(apple::callback))
+        .route("/auth/apple/name", post(apple::choose_name))
+        .route("/auth/apple/notifications", post(apple::notification))
+        .route("/account/apple/remove", post(apple::account_remove))
         .route("/account/staff/options", post(web::account_staff_options))
         .route("/account/staff", post(web::account_staff))
         .route("/api/account/passkey/options", post(web::api_staff_options))

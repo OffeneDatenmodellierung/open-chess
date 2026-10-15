@@ -32,6 +32,9 @@ final class GameViewModel: ObservableObject, Identifiable {
     /// A result decided here that the core doesn't name (time out).
     @Published private(set) var statusOverride: String?
     @Published private(set) var onlineConnected = false
+    /// The piece to shake after an illegal tap, and a counter per shake.
+    @Published private(set) var shakeSquare: Int?
+    @Published private(set) var shakes = 0
 
     private(set) var session: GameSession
     private weak var app: AppModel?
@@ -50,6 +53,12 @@ final class GameViewModel: ObservableObject, Identifiable {
     /// A result decided here or by the server that the core doesn't hold
     /// (time out, an online result): Lichess status name and winner.
     private var endRaw: (status: String, winner: String?)?
+    /// Set once the game is on screen: feedback (haptics, sounds, speech)
+    /// only for what happens from then on, not for opening a saved game.
+    private var live = false
+    private var checkedPly: UInt32 = UInt32.max
+    private var agreedDraw = false
+    private var endAnnounced = false
 
     // MARK: Creating
 
@@ -92,6 +101,7 @@ final class GameViewModel: ObservableObject, Identifiable {
             serverMoves = state.uci
         }
         afterChange(animateBot: true)
+        live = true
     }
 
     /// A saved game, opened again.
@@ -140,7 +150,9 @@ final class GameViewModel: ObservableObject, Identifiable {
         }
         serverMoves = saved.moves
         moveTimes = saved.times
+        endAnnounced = saved.finished
         afterChange(animateBot: true)
+        live = true
     }
 
     static func mode(for kind: GameKind) -> GameMode {
@@ -187,6 +199,79 @@ final class GameViewModel: ObservableObject, Identifiable {
         return statusText(state.status, winner: state.winner)
     }
 
+    /// The king in check, for the board's red square.
+    var checkSquare: Int? {
+        state.check ? placement.kingSquare(white: whiteToMove) : nil
+    }
+
+    /// The result, once the game is over.
+    var result: ResultSummary? {
+        guard isFinished else { return nil }
+        if let e = endRaw {
+            return GameText.result(status: e.status, winner: e.winner, fen: state.fen)
+        }
+        return GameText.result(status: state.status, winner: state.winner, fen: state.fen, agreed: agreedDraw)
+    }
+
+    /// Whether the player on this device lost (for the haptic).
+    private var playerLost: Bool {
+        let winner = endRaw?.winner ?? state.winner
+        guard let winner else { return false }
+        switch kind {
+        case .computer(_, let playerWhite): return winner != (playerWhite ? "white" : "black")
+        case .online(let link): return winner != (link.myColorWhite ? "white" : "black")
+        case .passAndPlay: return false
+        }
+    }
+
+    /// "Analyse a copy": allowed while help is, and in any game once it's over.
+    var analysisAllowed: Bool { helpAllowed || isFinished }
+
+    /// The game's moves in a new analysis board (the game's own help
+    /// counter is untouched).
+    func analysisCopy() -> AnalysisBoardModel? {
+        guard analysisAllowed else { return nil }
+        let st = state
+        let fen: String? = st.initialFen == GameViewModel.startFen ? nil : st.initialFen
+        do {
+            return try AnalysisBoardModel(fen: fen, moves: st.uci, title: "Analysis · \(title)", flipped: flipped)
+        } catch {
+            message = describe(error)
+            return nil
+        }
+    }
+
+    /// The same game again with colours swapped (computer, pass and play).
+    func rematch() -> GameViewModel? {
+        guard let app else { return nil }
+        do {
+            switch kind {
+            case .computer(let level, let playerWhite):
+                return try GameViewModel(
+                    app: app, kind: .computer(level: level, playerWhite: !playerWhite), fen: nil, time: time,
+                    white: blackName, black: whiteName
+                )
+            case .passAndPlay:
+                return try GameViewModel(
+                    app: app, kind: .passAndPlay, fen: nil, time: time,
+                    white: blackName, black: whiteName, keepLocal: recordedLocally
+                )
+            case .online:
+                return nil
+            }
+        } catch {
+            message = describe(error)
+            return nil
+        }
+    }
+
+    /// Pass and play with no account on one side stays on the device.
+    private var recordedLocally: Bool {
+        app?.settings.username.isEmpty ?? true
+    }
+
+    var canRematch: Bool { onlineLink == nil }
+
     var title: String {
         switch kind {
         case .computer(let level, _): return "Computer · level \(level)"
@@ -199,36 +284,21 @@ final class GameViewModel: ObservableObject, Identifiable {
 
     func tap(_ sq: Int) {
         guard myTurn else { return }
-        if let from = selected {
-            if from == sq {
-                clearSelection()
-                return
-            }
-            let candidates = legal.filter { m in
-                guard let u = UCIMove(m) else { return false }
-                return u.from == from && u.to == sq
-            }
-            if candidates.count > 1 {
-                pendingPromotion = (from: from, to: sq)
-                return
-            }
-            if let m = candidates.first {
-                clearSelection()
-                userMove(m)
-                return
-            }
-            // Not a move: maybe a different piece of mine.
-        }
-        select(sq)
-    }
-
-    private func select(_ sq: Int) {
-        let moves = legal.compactMap { UCIMove($0) }.filter { $0.from == sq }
-        if moves.isEmpty {
-            clearSelection()
-        } else {
-            selected = sq
-            targets = Set(moves.map { $0.to })
+        var input = MoveInput(selected: selected, targets: targets)
+        let outcome = input.tap(sq, legal: legal, placement: placement, whiteToMove: whiteToMove)
+        selected = input.selected
+        targets = input.targets
+        switch outcome {
+        case .none:
+            break
+        case .move(let m):
+            userMove(m)
+        case .promote(let from, let to):
+            pendingPromotion = (from: from, to: to)
+        case .illegal(let square):
+            shakeSquare = square
+            shakes += 1
+            Feedback.illegal()
         }
     }
 
@@ -297,6 +367,10 @@ final class GameViewModel: ObservableObject, Identifiable {
         }
         save()
         updateClock()
+        if live && state.check && !isFinished && state.ply != checkedPly {
+            checkedPly = state.ply
+            Feedback.check()
+        }
         if isFinished {
             finish()
             return
@@ -337,6 +411,7 @@ final class GameViewModel: ObservableObject, Identifiable {
                 let played = try s.play(mv: move.uci, atMs: nowMs())
                 self.applyIncrement(moverWhite: self.whiteToMove)
                 self.app?.chessnut.opponentMove(played.uci)
+                Feedback.speakMove(san: played.san, after: s.state())
                 self.afterChange(animateBot: true)
             } catch {
                 self.message = describe(error)
@@ -446,6 +521,7 @@ final class GameViewModel: ObservableObject, Identifiable {
     /// Pass and play: both players agreed a draw.
     func agreeDraw() {
         guard isPassAndPlay, !isFinished else { return }
+        agreedDraw = true
         session.agreeDraw()
         afterChange(animateBot: false)
     }
@@ -525,6 +601,10 @@ final class GameViewModel: ObservableObject, Identifiable {
         thinking = false
         if finishedNote == nil {
             finishedNote = statusLine
+        }
+        if live && !endAnnounced {
+            endAnnounced = true
+            Feedback.gameOver(lost: playerLost, title: result?.title ?? statusLine)
         }
         guard !recorded, let app else { return }
         recorded = true
@@ -768,6 +848,7 @@ final class GameViewModel: ObservableObject, Identifiable {
                 do {
                     let played = try session.play(mv: m, atMs: nowMs())
                     app?.chessnut.opponentMove(played.uci)
+                    if live { Feedback.speakMove(san: played.san, after: session.state()) }
                 } catch {
                     message = describe(error)
                     break

@@ -22,14 +22,21 @@
 //! Build the Swift package with `scripts/build-xcframework.sh` (on a Mac).
 
 mod board;
+mod capture;
 mod game;
 pub mod ratings;
 mod store;
 #[cfg(feature = "vision")]
 mod vision;
 
-pub use board::{BoardEvent, ChessnutBoard, chessnut_read_characteristic, chessnut_write_characteristic};
-pub use game::{Assistance, BotMove, GameMode, GameSession, GameState, PlayedMove, check_fen, complete_fen};
+pub use board::{
+    BoardEvent, BoardNow, ChessnutBoard, chessnut_read_characteristic, chessnut_write_characteristic,
+};
+pub use capture::{Capture, CapturePolicy, FrameDecision, default_capture_policy};
+pub use game::{
+    Assistance, BotMove, GameMode, GameSession, GameState, PlayedMove, check_fen, complete_fen,
+    describe_moves,
+};
 pub use ratings::RatingValue;
 pub use store::{OutboxItem, PendingTotals, SpeedRating, Store};
 #[cfg(feature = "vision")]

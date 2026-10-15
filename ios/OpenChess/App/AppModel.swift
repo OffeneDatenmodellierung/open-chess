@@ -15,9 +15,13 @@ final class AppModel: ObservableObject {
     let sync: SyncEngine
     let chessnut: ChessnutManager
     let push: PushManager
+    /// A real-board game's moves on their way to the server.
+    let otb: OTBSender
 
     /// The game on screen (shown full screen over the tabs).
     @Published var activeGame: GameViewModel?
+    /// The real-board game on screen (shown full screen over the tabs).
+    @Published var liveBoard: LiveBoardModel?
     /// Saved games, most recent first (Games tab).
     @Published private(set) var savedGames: [SavedGame] = []
     /// Each speed's rating (server or provisional).
@@ -41,9 +45,13 @@ final class AppModel: ObservableObject {
         sync = SyncEngine(store: s.store, settings: settings, network: network, auth: auth)
         chessnut = ChessnutManager()
         push = PushManager(settings: settings, auth: auth)
+        otb = OTBSender(store: s.store, auth: auth)
         storeError = s.error
         sync.onApplied = { [weak self] in self?.reloadRatings() }
         AppModel.current = self
+        AppSettings.current = settings
+        Feedback.settings = settings
+        otb.kick()
         reloadGames()
         reloadRatings()
     }
@@ -150,6 +158,8 @@ final class AppModel: ObservableObject {
         case .active:
             sync.startForeground()
             push.refreshRegistration()
+            otb.kick()
+            settings.refreshAppearance()
         case .background:
             sync.stopForeground()
             SyncEngine.scheduleBackgroundRefresh(minutes: settings.syncMinutes)

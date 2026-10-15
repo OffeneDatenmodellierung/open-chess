@@ -37,7 +37,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.incre
 | Admin (ours) | `GET /api/admin/players` (`q`, `only=staff`), `GET/POST /api/admin/players/{username}`, `POST …/tokens/revoke`, `POST …/passkeys/reset`, `GET/POST /api/admin/partners`, `POST /api/admin/partners/{id}/revoke` (see [Admins](#admins-managers-and-partners)) |
 | Training app (ours) | see [below](#training-app-endpoints) |
 | The iOS app (ours) | `POST /api/games/offline`, `POST /api/games/{id}/confirm`, `GET /api/sync`, `POST /api/photos`, `POST /api/push/devices`, `DELETE /api/push/devices/{token}`, `DELETE /api/account` (see [below](#the-ios-app)) |
-| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,photos,photo-licence,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them), `GET /docs` and `/docs/{guide}` (these guides, read in the app: `/app/#docs/{guide}`, or on GitHub when the app isn't installed), `GET /favicon.svg` (`/favicon.ico` too: the logo), `GET /@/{username}` (a player's profile, in the app: `/app/#@/{username}`) |
+| Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,photos,photo-licence,privacy,ios,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them), `GET /docs` and `/docs/{guide}` (these guides, read in the app: `/app/#docs/{guide}`, or on GitHub when the app isn't installed), `GET /favicon.svg` (`/favicon.ico` too: the logo), `GET /@/{username}` (a player's profile, in the app: `/app/#@/{username}`) |
 | Operations (the metrics port, `CHESS_METRICS_BIND`) | `GET /metrics` (Prometheus), `/healthz` (the process is up), `/readyz` (it can reach Postgres) |
 
 **`GET /`** answers what the server is, for the app and for tools:
@@ -103,12 +103,50 @@ What the iPhone and iPad app needs beyond the Lichess API
 | `GET /api/sync` | `since` (Unix ms): `{now, username, ratings: {perf: {rating, deviation, volatility, provisional, games}}, playing: [{gameId, color, fen, lastMove, isMyTurn, speed, rated, daysPerTurn, secondsLeft, opponent}], confirmations: […], challenges: […], finished: [games finished since]}`, gzipped when asked. One small answer for slow, metered links |
 | `POST /api/photos` | `{clientId, image (base64 JPEG, up to 4 MB), placement, confidence, model}`: a board photo with the position the player confirmed, kept as training data under the [photo licence](photo-licence.md) (accept it first: `POST /api/esl/photo-terms`). `{id}`; the same `clientId` again gives the same id |
 | `POST /api/push/devices`, `DELETE /api/push/devices/{token}` | `{token: the APNs device token in hex, sandbox}`: where to send "your move" in correspondence games and results to confirm |
-| `DELETE /api/account` | Close the account: games in progress are resigned, finished games stay under a placeholder name, tokens and sessions are revoked. 204 |
+| `DELETE /api/account` | Close the account: games in progress are resigned, finished games stay under a placeholder name, tokens and sessions are revoked, and Apple is told if an Apple ID was linked. 204 |
+| `POST /api/auth/apple` | Sign in with Apple, no token needed: `{identityToken, authorizationCode, nonce (raw; Apple holds its SHA-256, hex), clientId, scopes, name, username}` → `{access_token, token_type, expires_in, username, created, linked}`. An Apple ID not linked yet makes an account: first 409 `{"error": "choose_username", "suggestion"}`, then the same again with `username` (400 `bad_username` if it can't be had). 409 `email_in_use` when an account here has the Apple ID's email. With a bearer token it links the Apple ID to that account instead (`{linked: true, username}`, no new token; 409 `apple_linked_elsewhere` or `already_linked`) |
+| `DELETE /api/auth/apple` | Unlink the caller's Apple ID (Apple is told). 409 `only_sign_in` when it's the account's only way in. `GET /api/account` has `apple: true` while one is linked |
+| `POST /api/otb` | A game on a real board, recorded live by one of its players: `{white, black, speed, rated, board: chessnut\|photos\|manual, broadcast}` (both players need accounts) → `{id, url, broadcastUrl}`. Followed live like any game (the public stream, the feed when it ends) |
+| `POST /api/otb/{id}/move`, `/undo`, `/end` | The recorder's moves as they're made (`{uci}` → `{san, fen, status}`), taking back misread ones (`{plies}`), and a result decided off the board (`{status: resign\|outoftime\|draw\|aborted, winner}`). Mate and stalemate end it by themselves. A rated one is rated, and reaches the feed, once the other player confirms (`POST /api/games/{id}/confirm`; it's in their `/api/sync` `confirmations` with `kind: "otb"`) |
+| `GET /broadcast/{id}?key=` | The live board overlay for a stream (OBS: a Browser Source): the board, the last five moves, the players and the result, updating as moves are made. `bg=transparent`, `theme=light`, `orientation=black`. Open only with the key in the `broadcastUrl` the recorder was given; `GET /api/broadcast/{id}/events?key=` is the event stream behind it |
+
+`POST /api/photos` also takes `labelSource: "board"` with the `gameId` of a
+real-board game the sender recorded, for photos and video frames labelled
+by a connected board, plus `angle`, `atMs` and `distance` (squares the
+board reader got wrong).
 
 Push notifications go out when `CHESS_APNS_KEY` (the `.p8` key, or its
 path), `CHESS_APNS_KEY_ID` and `CHESS_APNS_TEAM_ID` are set;
 `CHESS_APNS_TOPIC` is the app's bundle id
-(`org.offenedatenmodellierung.openchess`). The app signs in with OAuth
+(`org.offenedatenmodellierung.openchess`).
+
+Sign in with Apple works when `CHESS_APPLE_KEY` (a key made for Sign in
+with Apple: Keys › +, Sign in with Apple; the `.p8`, or its path) and
+`CHESS_APPLE_KEY_ID` are set; the team id is `CHESS_APPLE_TEAM_ID`, or
+`CHESS_APNS_TEAM_ID`. `CHESS_APPLE_CLIENT_IDS` lists the ids Apple's tokens
+may be for (default: the app's bundle id, `CHESS_APNS_TOPIC`). The server
+checks the identity token with Apple's keys and trades the one-time code
+with Apple, which also gives the token it uses to revoke the link later.
+
+The website signs in with Apple too when `CHESS_APPLE_SERVICES_ID` names a
+Services ID whose return URL is `{CHESS_PUBLIC_URL}/auth/apple/callback`
+(https). The sign-in and sign-up pages then offer "Sign in with Apple"
+(`GET /auth/apple?return=…`); Apple posts its answer back, a new Apple ID
+chooses a username on a page of its own, and the account page links or
+unlinks an Apple ID. The same Apple ID signs in to the same account in the
+app and on the website.
+
+Apple's server-to-server notifications go to
+`{CHESS_PUBLIC_URL}/auth/apple/notifications` (register it on the app id's
+Sign in with Apple settings). Each is checked as Apple's, then: when
+someone stops using their Apple ID here (`consent-revoked`) the link goes
+and so do the tokens it signed in, or every token and session if Apple was
+the account's only way in; when someone deletes their Apple Account
+(`account-delete`) the same, and an account with no other way in is closed
+as `DELETE /api/account` closes one. Email forwarding changes are noted
+only.
+
+The app also signs in with OAuth
 (PKCE) and the redirect `org.offenedatenmodellierung.openchess:/oauth`:
 native apps' reversed-domain schemes are accepted ([RFC 8252](https://www.rfc-editor.org/rfc/rfc8252#section-7.1)).
 
@@ -136,9 +174,13 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d level=4 -d clock.limit=600 -d 
 ## Live games
 
 Three streams follow games as they happen. Every server replica hears each
-move at once (Postgres notifications), so streams scale with the API.
+move at once (Postgres notifications), so streams scale with the API. To
+learn which games there are, without knowing their ids, follow
+[the live feed](#the-live-feed): one stream of every game on the server,
+with a `start` event as each begins, its moves, and its `end`.
 
-**Spectators: `GET /api/stream/game/{id}`.** No token needed. The first line
+**Spectators: `GET /api/stream/game/{id}`.** Any player's token, or a
+partner's with `read`. The first line
 describes the game; then one line per position from the start; then, when
 the game ends, the description again with its result:
 

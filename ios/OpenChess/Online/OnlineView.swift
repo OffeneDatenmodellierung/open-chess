@@ -89,14 +89,14 @@ struct OnlineView: View {
     @EnvironmentObject var auth: AuthManager
     @StateObject var vm = OnlineViewModel()
     @State var lichessToken = ""
+    @State var showTokenField = false
     @State var error: String?
 
     var body: some View {
         Form {
             if !auth.signedIn {
                 Section {
-                    Text("Sign in to the open-chess server under Account to play online.")
-                        .foregroundStyle(Color.ocMuted)
+                    SignInPrompt(message: "Sign in to play online: correspondence and real-time games, and challenges.", inList: true)
                 }
                 .listRowBackground(Color.ocPanel)
             }
@@ -234,32 +234,40 @@ struct OnlineView: View {
                 HStack {
                     Text("Lichess")
                     Spacer()
-                    Text(vm.lichessName ?? "token saved").foregroundStyle(Color.ocMuted)
+                    Text(vm.lichessName ?? "Signed in").foregroundStyle(Color.ocMuted)
                 }
-                Button("Remove Lichess token", role: .destructive) {
-                    auth.setLichessToken(nil)
-                    vm.lichessName = nil
-                    vm.lichessGames = []
+                Button("Sign out of Lichess", role: .destructive) {
+                    Task {
+                        await auth.signOutLichess()
+                        vm.lichessName = nil
+                        vm.lichessGames = []
+                    }
                 }
             } else {
-                SecureField("Paste a Lichess token", text: $lichessToken)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button("Save token") {
-                    auth.setLichessToken(lichessToken)
-                    lichessToken = ""
-                    Task { await vm.loadLichess(app: model) }
+                SignInPrompt(message: "Sign in with your Lichess account to play your Lichess games here.", service: .lichess, inList: true)
+                DisclosureGroup("Advanced: paste a token instead", isExpanded: $showTokenField) {
+                    SecureField("Paste a Lichess token", text: $lichessToken)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button("Save token") {
+                        auth.setLichessToken(lichessToken)
+                        lichessToken = ""
+                        Task { await vm.loadLichess(app: model) }
+                    }
+                    .disabled(lichessToken.trimmed.isEmpty)
+                    Link("Create a token on lichess.org",
+                         destination: URL(string: "https://lichess.org/account/oauth/token/create?scopes%5B%5D=board:play&scopes%5B%5D=challenge:read&scopes%5B%5D=challenge:write&description=open-chess")!)
                 }
-                .disabled(lichessToken.trimmed.isEmpty)
-                Link("Create a token on lichess.org",
-                     destination: URL(string: "https://lichess.org/account/oauth/token/create?scopes%5B%5D=board:play&scopes%5B%5D=challenge:write&description=open-chess")!)
             }
         } header: {
             SectionTitle(text: "Also play on Lichess")
         } footer: {
-            Text("Create a personal token at lichess.org/account/oauth/token with board:play and challenge:write, and paste it here. It stays in this device's Keychain.")
+            Text("Signing in opens lichess.org; the app gets permission to play games and to send and read challenges. The token stays in this device's Keychain, and signing out revokes it.")
         }
         .listRowBackground(Color.ocPanel)
+        .onChange(of: auth.hasLichess) { _, has in
+            if has { Task { await vm.loadLichess(app: model) } }
+        }
     }
 
     private func opponentText(_ g: PlayingGame) -> String {

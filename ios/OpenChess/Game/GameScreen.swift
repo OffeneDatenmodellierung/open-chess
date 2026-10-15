@@ -12,6 +12,8 @@ struct GameScreen: View {
     @Environment(\.horizontalSizeClass) var hSize
     @State var confirmResign = false
     @State var confirmDraw = false
+    @State var analysis: AnalysisBoardModel?
+    @State var hideResult = false
 
     var body: some View {
         NavigationStack {
@@ -91,7 +93,36 @@ struct GameScreen: View {
                 game.attachBoard()
                 game.startOnline()
             }
+            .fullScreenCover(item: $analysis) { a in
+                AnalysisCover(board: a) { analysis = nil }
+                    .ocAppearance()
+            }
         }
+    }
+
+    private func close() {
+        game.detach()
+        model.activeGame = nil
+    }
+
+    private func rematch() {
+        guard let next = game.rematch() else { return }
+        close()
+        let app = model
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            app.showGame(next)
+        }
+    }
+
+    private func analyseCopy() {
+        analysis = game.analysisCopy()
+    }
+
+    private var resultDetail: String? {
+        if game.usedHelp { return "Help was used, so this game is unrated." }
+        if game.onlineLink != nil { return nil }
+        return "Saved. It goes to the server with the next sync."
     }
 
     // MARK: Board column
@@ -111,8 +142,24 @@ struct GameScreen: View {
                 lastMove: game.lastMove,
                 hint: game.hintsOn ? game.hintSquares : nil,
                 targets: game.targets,
+                check: game.checkSquare,
+                shakeSquare: game.shakeSquare,
+                shakes: game.shakes,
                 onTap: { game.tap($0) }
             )
+            .overlay {
+                if let summary = game.result, !hideResult {
+                    ResultCard(
+                        summary: summary,
+                        detail: resultDetail,
+                        onAnalyse: game.analysisAllowed ? { analyseCopy() } : nil,
+                        onRematch: game.canRematch ? { rematch() } : nil,
+                        onDone: { close() },
+                        onHide: { hideResult = true }
+                    )
+                    .padding(12)
+                }
+            }
             PlayerRow(
                 name: game.flipped ? game.blackName : game.whiteName,
                 white: !game.flipped,
@@ -145,7 +192,12 @@ struct GameScreen: View {
                     .font(OCFont.text(13))
                     .foregroundStyle(Color.ocMuted)
             }
-            MoveListView(san: game.state.san, startsWhite: startsWhite)
+            if MoveWords.enabled, let last = game.state.san.last, let words = MoveWords.words(for: game.state).last {
+                Text("Last move: \(last) · \(words)")
+                    .font(OCFont.text(13))
+                    .foregroundStyle(Color.ocMuted)
+            }
+            MoveListView(san: game.state.san, startsWhite: startsWhite, words: MoveWords.words(for: game.state))
             if game.hintsOn {
                 HintPanel(game: game)
             }
@@ -186,6 +238,12 @@ struct GameScreen: View {
             if game.onlineLink != nil {
                 Button("Refresh") { game.refreshOnline() }
             }
+            if game.analysisAllowed {
+                Button("Analyse a copy") { analyseCopy() }
+            }
+            if game.isFinished && hideResult {
+                Button("Show result") { hideResult = false }
+            }
             Button("Resign") { confirmResign = true }
                 .disabled(game.isFinished)
         }
@@ -198,11 +256,8 @@ struct GameScreen: View {
             Text(game.usedHelp ? "Help was used, so this game is unrated." : "Saved. It goes to the server with the next sync.")
                 .font(OCFont.text(13))
                 .foregroundStyle(Color.ocMuted)
-            Button("Close") {
-                game.detach()
-                model.activeGame = nil
-            }
-            .buttonStyle(OCButtonStyle(kind: .primary))
+            Button("Close") { close() }
+                .buttonStyle(OCButtonStyle(kind: .primary))
         }
         .ocCard()
     }
@@ -239,17 +294,27 @@ struct PlayerRow: View {
     }
 }
 
-/// The moves in SAN, numbered.
+/// The moves in SAN, numbered; with "Moves in plain English" on, each
+/// move's words beside it.
 @MainActor
 struct MoveListView: View {
     let san: [String]
     let startsWhite: Bool
+    /// One sentence per move (empty: SAN only).
+    var words: [String] = []
 
     private struct Row: Identifiable {
         let id: Int
         let number: Int
         let white: String?
         let black: String?
+    }
+
+    private struct PlyRow: Identifiable {
+        let id: Int
+        let label: String
+        let san: String
+        let words: String
     }
 
     private var rows: [Row] {
@@ -271,6 +336,17 @@ struct MoveListView: View {
         return out
     }
 
+    private var plyRows: [PlyRow] {
+        var out: [PlyRow] = []
+        for (i, m) in san.enumerated() {
+            let ply = startsWhite ? i : i + 1
+            let number = ply / 2 + 1
+            let label = ply % 2 == 0 ? "\(number)." : "\(number)…"
+            out.append(PlyRow(id: i, label: label, san: m, words: i < words.count ? words[i] : ""))
+        }
+        return out
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionTitle(text: "Moves")
@@ -279,6 +355,36 @@ struct MoveListView: View {
                 Text("No moves yet.")
                     .font(OCFont.text(14))
                     .foregroundStyle(Color.ocMuted)
+            } else if !words.isEmpty {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(plyRows) { r in
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(r.label)
+                                        .font(OCFont.mono(14))
+                                        .foregroundStyle(Color.ocMuted)
+                                        .frame(width: 44, alignment: .leading)
+                                    Text(r.san)
+                                        .font(OCFont.mono(15, weight: .medium))
+                                        .frame(width: 64, alignment: .leading)
+                                    Text(r.words)
+                                        .font(OCFont.text(13))
+                                        .foregroundStyle(Color.ocMuted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 0)
+                                }
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(r.words.isEmpty ? "\(r.label) \(r.san)" : "\(r.label) \(r.words)")
+                                .id(r.id)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
+                    .onChange(of: san.count) { _, _ in
+                        if let last = plyRows.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                    }
+                }
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -330,6 +436,9 @@ struct HintPanel: View {
                 HStack(spacing: 6) {
                     Text("Best move").font(OCFont.text(14)).foregroundStyle(Color.ocMuted)
                     Text(best.san).font(OCFont.mono(18, weight: .bold)).foregroundStyle(Color.ocAction)
+                }
+                if let words = MoveWords.move(fen: game.state.fen, uci: best.uci) {
+                    Text(words).font(OCFont.text(13)).foregroundStyle(Color.ocMuted)
                 }
             } else if !game.myTurn && !game.isFinished {
                 Text("Hints show on your move.").font(OCFont.text(14)).foregroundStyle(Color.ocMuted)

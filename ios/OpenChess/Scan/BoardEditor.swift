@@ -19,6 +19,8 @@ final class BoardEditorModel: ObservableObject {
     @Published var brush = 0
     @Published var unsure: Set<Int> = []
     @Published var error: String?
+    /// Bumped to ask the editor's view to run the advice again (live advice).
+    @Published var adviceRequest = 0
 
     init(placement: Placement) {
         self.placement = placement
@@ -60,7 +62,9 @@ final class BoardEditorModel: ObservableObject {
     }
 }
 
-/// The board editor: tap a square to put the chosen piece there.
+/// The board editor: tap a square to put the chosen piece there. Then
+/// Advice (here, at once, nothing saved), Analyse (the free analysis
+/// board) or play from the position.
 @MainActor
 struct BoardEditorView: View {
     @ObservedObject var editor: BoardEditorModel
@@ -69,11 +73,15 @@ struct BoardEditorView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var sync: SyncEngine
+    @EnvironmentObject var auth: AuthManager
+    @StateObject var advice = AdviceModel()
     @State var playFen: String?
     @State var showPlay = false
     @State var showPassAndPlay = false
     @State var showLicence = false
     @State var savedNote: String?
+    @State var showAdvice = false
+    @State var analysis: AnalysisBoardModel?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -83,7 +91,7 @@ struct BoardEditorView: View {
                 unsure: editor.unsure,
                 onTap: { editor.tap($0) }
             )
-            palette
+            PiecePalette(editor: editor)
             Picker("To move", selection: $editor.whiteToMove) {
                 Text("White to move").tag(true)
                 Text("Black to move").tag(false)
@@ -103,13 +111,33 @@ struct BoardEditorView: View {
                 Text(n).font(OCFont.text(13)).foregroundStyle(Color.ocMuted)
             }
 
+            Button {
+                runAdvice(delay: 0)
+            } label: {
+                Label("Advice", systemImage: "lightbulb")
+            }
+            .buttonStyle(OCButtonStyle(kind: .primary))
+            .accessibilityHint("Shows the best moves, the odds and the threats for this position, without starting a game.")
+            if showAdvice {
+                AdvicePanel(advice: advice)
+            }
+            Button("Analyse") {
+                if let fen = editor.fen() {
+                    do {
+                        analysis = try AnalysisBoardModel(fen: fen, moves: [], flipped: editor.flipped)
+                    } catch {
+                        editor.error = describe(error)
+                    }
+                }
+            }
+            .buttonStyle(OCButtonStyle(kind: .secondary))
             Button("Play the computer from here") {
                 if let fen = editor.fen() {
                     playFen = fen
                     showPlay = true
                 }
             }
-            .buttonStyle(OCButtonStyle(kind: .primary))
+            .buttonStyle(OCButtonStyle(kind: .secondary))
             Button("Pass and play from here") {
                 if let fen = editor.fen() {
                     playFen = fen
@@ -118,77 +146,61 @@ struct BoardEditorView: View {
             }
             .buttonStyle(OCButtonStyle(kind: .secondary))
             if photo != nil {
-                Button("Save correction") { saveCorrection() }
-                    .buttonStyle(OCButtonStyle(kind: .secondary))
-                    .disabled(!settings.photoUploads || settings.photoConsent == "declined")
-                if !settings.photoUploads {
-                    Text("Photo uploads are off in Sync and data.")
-                        .font(OCFont.text(12)).foregroundStyle(Color.ocMuted)
-                } else if settings.photoConsent == "declined" {
-                    Text("You chose not to share photos. Change it under Account.")
-                        .font(OCFont.text(12)).foregroundStyle(Color.ocMuted)
+                if auth.signedIn {
+                    Button("Save correction") { saveCorrection() }
+                        .buttonStyle(OCButtonStyle(kind: .secondary))
+                        .disabled(!settings.photoUploads || settings.photoConsent == "declined")
+                    if !settings.photoUploads {
+                        Text("Photo uploads are off in Sync and data.")
+                            .font(OCFont.text(12)).foregroundStyle(Color.ocMuted)
+                    } else if settings.photoConsent == "declined" {
+                        Text("You chose not to share photos. Change it under Account.")
+                            .font(OCFont.text(12)).foregroundStyle(Color.ocMuted)
+                    }
+                } else {
+                    SignInPrompt(message: "Sign in to send this photo with its corrected position, to help train the board reader.")
                 }
             }
         }
+        .onChange(of: editor.placement) { _, _ in
+            if showAdvice { runAdvice(delay: 0.5) }
+        }
+        .onChange(of: editor.whiteToMove) { _, _ in
+            if showAdvice { runAdvice(delay: 0) }
+        }
+        .onChange(of: editor.adviceRequest) { _, _ in
+            runAdvice(delay: 0)
+        }
         .sheet(isPresented: $showPlay) {
             NewComputerGameView(fen: playFen, training: true)
+                .ocAppearance()
         }
         .sheet(isPresented: $showPassAndPlay) {
             NewPassAndPlayView(fen: playFen)
+                .ocAppearance()
         }
         .sheet(isPresented: $showLicence) {
             PhotoLicenceSheet { accepted in
                 showLicence = false
                 if accepted { saveCorrection() }
             }
+            .ocAppearance()
+        }
+        .fullScreenCover(item: $analysis) { a in
+            AnalysisCover(board: a) { analysis = nil }
+                .ocAppearance()
         }
     }
 
-    private var palette: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
-        return LazyVGrid(columns: columns, spacing: 4) {
-            ForEach(0..<14, id: \.self) { i in
-                paletteButton(i)
-            }
+    /// Advice for the position as set up, with the chosen side to move.
+    func runAdvice(delay: Double) {
+        guard let fen = editor.fen() else {
+            showAdvice = false
+            advice.clear()
+            return
         }
-    }
-
-    @ViewBuilder
-    private func paletteButton(_ i: Int) -> some View {
-        if i < Piece.palette.count {
-            let piece = Piece.palette[i]
-            Button {
-                editor.brush = i
-            } label: {
-                ZStack {
-                    Rectangle().fill(i % 2 == 0 ? Color.ocSqLight : Color.ocSqDark)
-                    if let piece {
-                        PieceGlyph(piece: piece, size: 36)
-                    } else {
-                        Image(systemName: "xmark").foregroundStyle(Color.ocBSeg)
-                    }
-                }
-                .frame(height: 42)
-                .overlay(
-                    Rectangle().stroke(editor.brush == i ? Color.ocAction : Color.ocRule,
-                                       lineWidth: editor.brush == i ? 3 : 1)
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(piece.map { String($0.letter) } ?? "Empty")
-        } else {
-            // The 14th slot: clear the whole board.
-            Button {
-                editor.clear()
-            } label: {
-                Image(systemName: "trash")
-                    .frame(maxWidth: .infinity, minHeight: 42)
-                    .foregroundStyle(Color.ocDanger)
-                    .overlay(Rectangle().stroke(Color.ocRule, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Clear the board")
-        }
+        showAdvice = true
+        advice.run(fen: fen, delay: delay)
     }
 
     /// Queue the photo with the corrected placement (outbox kind "photo").
@@ -281,4 +293,57 @@ enum PhotoLicence {
 
     You can withdraw on the Account screen at any time; that stops photos being kept from then on. Models already trained, the licence for photos already sent, and CC0 dedications can't be undone.
     """
+}
+
+/// The editor's pieces: tap one, then tap squares; the last slot clears.
+@MainActor
+struct PiecePalette: View {
+    @ObservedObject var editor: BoardEditorModel
+
+    var body: some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+        return LazyVGrid(columns: columns, spacing: 4) {
+            ForEach(0..<14, id: \.self) { i in
+                paletteButton(i)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func paletteButton(_ i: Int) -> some View {
+        if i < Piece.palette.count {
+            let piece = Piece.palette[i]
+            Button {
+                editor.brush = i
+            } label: {
+                ZStack {
+                    Rectangle().fill(i % 2 == 0 ? Color.ocSqLight : Color.ocSqDark)
+                    if let piece {
+                        PieceGlyph(piece: piece, size: 36)
+                    } else {
+                        Image(systemName: "xmark").foregroundStyle(Color.ocBSeg)
+                    }
+                }
+                .frame(height: 42)
+                .overlay(
+                    Rectangle().stroke(editor.brush == i ? Color.ocAction : Color.ocRule,
+                                       lineWidth: editor.brush == i ? 3 : 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(piece.map { String($0.letter) } ?? "Empty")
+        } else {
+            // The 14th slot: clear the whole board.
+            Button {
+                editor.clear()
+            } label: {
+                Image(systemName: "trash")
+                    .frame(maxWidth: .infinity, minHeight: 42)
+                    .foregroundStyle(Color.ocDanger)
+                    .overlay(Rectangle().stroke(Color.ocRule, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Clear the board")
+        }
+    }
 }

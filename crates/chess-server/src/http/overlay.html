@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>open-chess live board</title>
+<style>
+:root {
+  --paper: #06114a; --panel: #0d1e6a; --ink: #ffffff; --muted: #a9bdee; --rule: #253f9c;
+  --sq-light: #c9d4ee; --sq-dark: #5b77c9; --action: #ff7a1a; --last-light: #ffd2a6; --last-dark: #e8873a;
+}
+:root[data-theme="light"] {
+  --paper: #eef2fb; --panel: #ffffff; --ink: #06114a; --muted: #4d5f8b; --rule: #c9d4ee;
+  --sq-light: #e3eafa; --sq-dark: #7b8bb0; --action: #d94a00;
+}
+html, body { margin: 0; height: 100%; }
+body { background: var(--paper); color: var(--ink); font: 500 16px/1.3 Inter, -apple-system, system-ui, sans-serif; }
+body.clear { background: transparent; }
+.card { display: inline-flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--panel);
+        border: 1px solid var(--rule); border-top: 3px solid var(--action); border-radius: 2px; }
+.player { display: flex; justify-content: space-between; gap: 16px; font-weight: 700; }
+.player span:last-child { color: var(--muted); font-family: "JetBrains Mono", ui-monospace, monospace; font-weight: 500; }
+.board { display: grid; grid-template-columns: repeat(8, 1fr); width: min(42vh, 90vw); aspect-ratio: 1; }
+.sq { display: flex; align-items: center; justify-content: center; font-size: calc(min(42vh, 90vw) / 9.5); line-height: 1;
+      font-family: "DejaVu Sans", "Apple Symbols", "Segoe UI Symbol", serif; }
+.l { background: var(--sq-light); } .d { background: var(--sq-dark); }
+.l.last { background: var(--last-light); } .d.last { background: var(--last-dark); }
+.w { color: #fff; text-shadow: 0 0 1px #020825, 0 0 1px #020825, 0 1px 1px #020825; } .b { color: #020825; }
+.moves { display: grid; grid-template-columns: auto 1fr 1fr; gap: 2px 10px; font-family: "JetBrains Mono", ui-monospace, monospace; }
+.moves .n { color: var(--muted); } .moves .now { color: var(--action); font-weight: 700; }
+.result { font-weight: 700; color: var(--action); }
+.gone { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="player" id="black"><span></span><span></span></div>
+  <div class="board" id="board" role="img" aria-label="The live board"></div>
+  <div class="player" id="white"><span></span><span></span></div>
+  <div class="moves" id="moves"></div>
+  <div class="result" id="result"></div>
+</div>
+<script>
+(() => {
+  const q = new URLSearchParams(location.search);
+  const id = location.pathname.split("/").filter(Boolean).pop();
+  if (q.get("bg") === "transparent") document.body.classList.add("clear");
+  if (q.get("theme") === "light") document.documentElement.dataset.theme = "light";
+  const flip = q.get("orientation") === "black";
+  const glyph = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+  const board = document.getElementById("board");
+  const files = "abcdefgh";
+  function draw(s) {
+    const rows = s.fen.split(" ")[0].split("/");
+    const last = s.lastMove ? [s.lastMove.slice(0, 2), s.lastMove.slice(2, 4)] : [];
+    const cells = [];
+    for (let r = 0; r < 8; r++) {
+      let f = 0;
+      for (const ch of rows[r]) {
+        if (/[1-8]/.test(ch)) { for (let k = 0; k < +ch; k++) cells.push([r, f++, null]); }
+        else cells.push([r, f++, ch]);
+      }
+    }
+    if (flip) cells.reverse();
+    board.replaceChildren(...cells.map(([r, f, ch]) => {
+      const d = document.createElement("div");
+      const name = files[f] + (8 - r);
+      d.className = "sq " + ((r + f) % 2 ? "d" : "l") + (last.includes(name) ? " last" : "");
+      if (ch) { d.textContent = glyph[ch.toLowerCase()] + "︎"; d.classList.add(ch === ch.toUpperCase() ? "w" : "b"); }
+      return d;
+    }));
+    const [top, bottom] = flip ? ["white", "black"] : ["black", "white"];
+    for (const [el, side] of [["black", top], ["white", bottom]]) {
+      const spans = document.getElementById(el).children;
+      spans[0].textContent = s[side].name; spans[1].textContent = s[side].rating;
+    }
+    // The last five moves, by move number.
+    const moves = document.getElementById("moves");
+    const plies = s.sans.map((san, i) => [s.firstPly + i, san]).slice(-5);
+    const rowsOut = [];
+    for (const [ply, san] of plies) {
+      const n = Math.floor(ply / 2) + 1;
+      let row = rowsOut.find((x) => x.n === n);
+      if (!row) { row = { n, w: "", b: "" }; rowsOut.push(row); }
+      row[ply % 2 ? "b" : "w"] = san;
+    }
+    const lastPly = s.ply - 1;
+    moves.replaceChildren(...rowsOut.flatMap((row) => {
+      const n = document.createElement("span"); n.className = "n"; n.textContent = row.n + ".";
+      const w = document.createElement("span"); w.textContent = row.w || "…";
+      const b = document.createElement("span"); b.textContent = row.b;
+      if (lastPly === (row.n - 1) * 2) w.className = "now";
+      if (lastPly === (row.n - 1) * 2 + 1) b.className = "now";
+      return [n, w, b];
+    }));
+    const over = { mate: "Checkmate", resign: "Resignation", draw: "Draw", stalemate: "Stalemate",
+                   outoftime: "Time", aborted: "Aborted", timeout: "Abandoned" }[s.status];
+    document.getElementById("result").textContent = over
+      ? `${over}${s.winner ? " · " + (s.winner === "white" ? "1-0" : "0-1") : s.status === "aborted" ? "" : " · ½-½"}`
+      : "";
+  }
+  const es = new EventSource(`{{base}}/api/broadcast/${encodeURIComponent(id)}/events?key=${encodeURIComponent(q.get("key") || "")}`);
+  es.addEventListener("state", (e) => draw(JSON.parse(e.data)));
+  es.onerror = () => document.getElementById("result").classList.toggle("gone", true);
+})();
+</script>
+</body>
+</html>

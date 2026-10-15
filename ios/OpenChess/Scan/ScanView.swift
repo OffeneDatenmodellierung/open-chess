@@ -67,11 +67,22 @@ struct ScanView: View {
     @StateObject var scan = ScanViewModel()
     @State var showCamera = false
     @State var source: UIImagePickerController.SourceType = .camera
+    @StateObject var live = LiveAdviceModel()
+    @State var liveOn = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if scan.result == nil {
+                if CameraFeed.available {
+                    Toggle("Live advice", isOn: $liveOn)
+                        .font(OCFont.text(15, weight: .semibold))
+                        .accessibilityHint("Keeps the camera on the board and updates the advice as the position changes.")
+                        .ocCard(padding: 12)
+                }
+                if liveOn {
+                    LiveAdviceHeader(live: live)
+                    BoardEditorView(editor: scan.editor, photo: nil)
+                } else if scan.result == nil {
                     intro
                 } else {
                     if let img = scan.result?.image {
@@ -102,6 +113,20 @@ struct ScanView: View {
         .ocScreen()
         .navigationTitle("Scan a board")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: liveOn) { _, on in
+            if on {
+                live.start(app: model, editor: scan.editor)
+            } else {
+                live.stop()
+            }
+        }
+        .onDisappear {
+            liveOn = false
+            live.stop()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            live.orientationChanged()
+        }
         .sheet(isPresented: $showCamera) {
             CameraPicker(source: source) { image in
                 showCamera = false

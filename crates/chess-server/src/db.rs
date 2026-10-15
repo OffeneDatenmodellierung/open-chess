@@ -849,6 +849,63 @@ ALTER TABLE chess.board_photos ADD CONSTRAINT board_photos_reason_check
 ALTER TABLE chess.board_photos ADD COLUMN client_id text;
 CREATE UNIQUE INDEX board_photos_client_idx ON chess.board_photos (player_id, client_id) WHERE client_id IS NOT NULL;
 ",
+    r"
+-- 9. Games on a real board, recorded live from the app (source 'otb'):
+-- the recorder (one of the players) sends the moves as they're played. A
+-- rated one waits for the other player to confirm the result before it is
+-- rated and reaches the feed. broadcast_key: the secret in the link of the
+-- live board overlay (for a stream), when the recorder made one.
+CREATE TABLE chess.otb_games (
+    game_id text PRIMARY KEY REFERENCES chess.games ON DELETE CASCADE,
+    recorder_id bigint NOT NULL REFERENCES chess.accounts ON DELETE CASCADE,
+    opponent_id bigint NOT NULL REFERENCES chess.accounts ON DELETE CASCADE,
+    board text NOT NULL CHECK (board IN ('chessnut', 'photos', 'manual')),
+    rated_requested boolean NOT NULL,
+    confirm text NOT NULL DEFAULT 'none' CHECK (confirm IN ('none', 'pending', 'confirmed', 'declined')),
+    broadcast_key text UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX otb_games_confirm_idx ON chess.otb_games (opponent_id) WHERE confirm = 'pending';
+
+-- Photos and video frames labelled by a connected board during a game.
+ALTER TABLE chess.board_photos DROP CONSTRAINT IF EXISTS board_photos_label_source_check;
+ALTER TABLE chess.board_photos ADD CONSTRAINT board_photos_label_source_check
+    CHECK (label_source IN ('player', 'reviewer', 'consensus', 'admin', 'board'));
+ALTER TABLE chess.board_photos ADD COLUMN game_id text;
+",
+    r"
+-- 10. Sign in with Apple: the Apple ID (Apple's stable id for the person,
+-- `sub`) linked to an account, one each way. refresh_token: what Apple gave
+-- for the link, kept to revoke it when the player unlinks or closes their
+-- account (Apple asks for that); client_id: which of our ids it was for.
+CREATE TABLE chess.apple_ids (
+    sub text PRIMARY KEY,
+    player_id bigint NOT NULL UNIQUE REFERENCES chess.players ON DELETE CASCADE,
+    client_id text NOT NULL,
+    refresh_token text,
+    email text,
+    private_email boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    last_used_at timestamptz NOT NULL DEFAULT now());
+
+-- The website's Sign in with Apple: a browser on its way to Apple (state,
+-- nonce, where to go after, the account it links to), and an Apple ID that
+-- still needs a username (ticket: the secret in the form that chooses it).
+CREATE TABLE chess.apple_flows (
+    state_hash text PRIMARY KEY,
+    nonce text NOT NULL,
+    return_to text NOT NULL,
+    player_id bigint REFERENCES chess.players ON DELETE CASCADE,
+    expires_at timestamptz NOT NULL);
+CREATE TABLE chess.apple_pending (
+    ticket_hash text PRIMARY KEY,
+    sub text NOT NULL,
+    client_id text NOT NULL,
+    refresh_token text,
+    email text,
+    private_email boolean NOT NULL DEFAULT false,
+    return_to text NOT NULL,
+    expires_at timestamptz NOT NULL);
+",
 ];
 
 #[cfg(test)]

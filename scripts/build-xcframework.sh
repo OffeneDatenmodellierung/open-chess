@@ -29,6 +29,11 @@ if [[ "${METAL:-0}" == 1 ]]; then features=(--features metal); fi
 # exported functions with them: keep them (Xcode strips the app).
 export CARGO_PROFILE_RELEASE_STRIP=none
 
+# Where cargo builds: CARGO_TARGET_DIR or a cargo config's target-dir may
+# move it from ./target.
+target=$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
+target=${target:-target}
+
 # The oldest iOS the app supports.
 export IPHONEOS_DEPLOYMENT_TARGET=${IPHONEOS_DEPLOYMENT_TARGET:-17.0}
 
@@ -41,7 +46,7 @@ done
 cargo build --release --locked -p open-chess-mobile --lib ${features[@]+"${features[@]}"}
 cargo build --release --locked -p open-chess-mobile --features bindgen --bin uniffi-bindgen
 gen=$(mktemp -d)
-target/release/uniffi-bindgen generate --library target/release/libopen_chess_mobile.dylib \
+"$target/release/uniffi-bindgen" generate --library "$target/release/libopen_chess_mobile.dylib" \
   --language swift --out-dir "$gen"
 
 pkg=$out/OpenChessCore
@@ -54,7 +59,7 @@ cp "$gen"/*.swift "$pkg/Sources/OpenChessCore/"
 
 args=()
 for t in "${targets[@]}"; do
-  args+=(-library "target/$t/release/libopen_chess_mobile.a" -headers "$gen/headers")
+  args+=(-library "$target/$t/release/libopen_chess_mobile.a" -headers "$gen/headers")
 done
 xcodebuild -create-xcframework "${args[@]}" -output "$pkg/open_chess_mobileFFI.xcframework"
 

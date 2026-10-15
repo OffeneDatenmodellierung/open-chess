@@ -108,6 +108,12 @@ async fn setup_with(pre: &str, tweak: impl FnOnce(&mut Config)) -> Option<Env> {
         apns_key_id: None,
         apns_team_id: None,
         apns_topic: "org.example.test".into(),
+        apple_key: None,
+        apple_key_id: None,
+        apple_team_id: None,
+        apple_client_ids: Vec::new(),
+        apple_services_id: None,
+        apple_url: "http://apple.invalid".into(),
     };
     tweak(&mut cfg);
     let (stop, rx) = watch::channel(false);
@@ -2475,5 +2481,638 @@ async fn native_apps_sign_in_with_their_own_scheme() {
         .await
         .unwrap();
     assert_ne!(r.status(), 400, "accepted (sign-in or consent comes next)");
+    env.teardown().await;
+}
+
+/// A game on a real board, recorded live from the app: moves as they're
+/// made, the live overlay behind its key, a correction, the result
+/// confirmed by the other player before it's rated and in the feed, and
+/// frames labelled by the board.
+#[tokio::test]
+async fn real_board_games_are_recorded_live_and_rated_once_confirmed() {
+    let Some(env) = setup(|c| c.public_delay_plies = 0).await else { return };
+    let (_, ann) = env.player("Ann", HUMAN).await;
+    let (_, ben) = env.player("Ben", HUMAN).await;
+    let http = reqwest::Client::new();
+    let base = env.base[0].clone();
+    for t in [&ann, &ben] {
+        env.client(0, t).account().await.unwrap();
+    }
+    let post = |path: String, token: &str, body: serde_json::Value| {
+        http.post(format!("{base}{path}")).bearer_auth(token).json(&body).send()
+    };
+    let r = post(
+        "/api/otb".into(),
+        &ann,
+        serde_json::json!({"white": "Ben", "black": "Cid", "speed": "rapid", "board": "chessnut"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 404, "both players need accounts");
+    let r = post(
+        "/api/otb".into(),
+        &ann,
+        serde_json::json!({"white": "Ben", "black": "Ben", "speed": "rapid", "board": "chessnut"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 400);
+    let g: serde_json::Value = post(
+        "/api/otb".into(),
+        &ann,
+        serde_json::json!({"white": "Ann", "black": "Ben", "speed": "rapid", "rated": true, "board": "chessnut", "broadcast": true}),
+    )
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let id = g["id"].as_str().unwrap().to_owned();
+    let overlay = g["broadcastUrl"].as_str().unwrap().replace("http://chess.test", &base);
+
+    // The overlay: only with its key; the live state after each move.
+    let page = http.get(&overlay).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    assert!(page.text().await.unwrap().contains("/api/broadcast/"));
+    let wrong = overlay.replace("key=", "key=x");
+    assert_eq!(http.get(&wrong).send().await.unwrap().status(), 404);
+    let events = overlay.replace("/broadcast/", "/api/broadcast/").replace("?key=", "/events?key=");
+    let mut live = sse(http.get(&events).send().await.unwrap());
+    let (kind, _, first) = next_sse(&mut live).await;
+    assert_eq!((kind.as_str(), first["ply"].as_i64()), ("state", Some(0)));
+
+    // Ben can't record Ann's game; a bad move is refused; a misread one
+    // is taken back.
+    assert_eq!(
+        post(format!("/api/otb/{id}/move"), &ben, serde_json::json!({"uci": "e2e4"})).await.unwrap().status(),
+        404
+    );
+    assert_eq!(
+        post(format!("/api/otb/{id}/move"), &ann, serde_json::json!({"uci": "e2e5"})).await.unwrap().status(),
+        400
+    );
+    for m in ["e2e4", "e7e5", "g1f3", "a7a6"] {
+        let r = post(format!("/api/otb/{id}/move"), &ann, serde_json::json!({"uci": m})).await.unwrap();
+        assert!(r.status().is_success(), "{m}");
+    }
+    let u: serde_json::Value = post(format!("/api/otb/{id}/undo"), &ann, serde_json::json!({"plies": 1}))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(u["ply"], 3);
+    post(format!("/api/otb/{id}/move"), &ann, serde_json::json!({"uci": "b8c6"})).await.unwrap();
+    let state = loop {
+        let (_, _, s) = next_sse(&mut live).await;
+        if s["ply"] == 4 && s["lastMove"] == "b8c6" {
+            break s;
+        }
+    };
+    assert_eq!(state["sans"], serde_json::json!(["e4", "e5", "Nf3", "Nc6"]));
+    // Not aborted by the sweeper for slow first moves: a real board keeps its own time.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // A frame labelled by the board, in this game.
+    post("/api/esl/photo-terms".into(), &ann, serde_json::json!({"accept": true})).await.unwrap();
+    let frame = serde_json::json!({"clientId": "f1", "image": "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==", "labelSource": "board",
+        "gameId": id, "angle": 1, "atMs": 1, "distance": 2,
+        "placement": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R"});
+    let r = post("/api/photos".into(), &ann, frame.clone()).await.unwrap();
+    assert!(r.status().is_success(), "{}", r.text().await.unwrap());
+    let r = post("/api/photos".into(), &ann, serde_json::json!({"clientId": "f2", "image": "/9j/2Q==", "labelSource": "board", "placement": "8/8/8/8/8/8/8/8"}))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400, "a board's label needs its game");
+
+    // Ann resigns on the board: over, but not rated or in the feed until Ben confirms.
+    let mut feed = sse(http.get(format!("{base}/api/feed?only=end")).bearer_auth(&ann).send().await.unwrap());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let e: serde_json::Value =
+        post(format!("/api/otb/{id}/end"), &ann, serde_json::json!({"status": "resign", "winner": "black"}))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(e["confirmation"], "pending", "{e}");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(700), feed.recv()).await.is_err(),
+        "not in the feed yet"
+    );
+    let g = env.client(0, &ann).export_game(&id).await.unwrap();
+    assert!(!g.rated && g.status == Status::Resign);
+    let s: serde_json::Value =
+        http.get(format!("{base}/api/sync")).bearer_auth(&ben).send().await.unwrap().json().await.unwrap();
+    let waiting =
+        s["confirmations"].as_array().unwrap().iter().find(|c| c["id"] == id.as_str()).expect("Ben is asked");
+    assert_eq!((waiting["kind"].as_str(), waiting["uploadedBy"].as_str()), (Some("otb"), Some("Ann")));
+    assert_eq!(
+        post(format!("/api/games/{id}/confirm"), &ann, serde_json::json!({"accept": true}))
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    let c: serde_json::Value =
+        post(format!("/api/games/{id}/confirm"), &ben, serde_json::json!({"accept": true}))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(c["status"], "rated", "{c}");
+    assert!(c["ratingDiff"].as_i64().unwrap() > 0, "Ben won: {c}");
+    let (kind, _, end) = next_sse(&mut feed).await;
+    assert_eq!(
+        (kind.as_str(), end["id"].as_str(), end["rated"].as_bool()),
+        ("end", Some(id.as_str()), Some(true))
+    );
+    assert_eq!(
+        post(format!("/api/games/{id}/confirm"), &ben, serde_json::json!({"accept": true}))
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    assert_eq!(
+        post(format!("/api/otb/{id}/move"), &ann, serde_json::json!({"uci": "f1c4"})).await.unwrap().status(),
+        409,
+        "over"
+    );
+    env.teardown().await;
+}
+
+/// A pretend appleid.apple.com: its keys, codes and revocations.
+mod apple_mock {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use aws_lc_rs::rand::SystemRandom;
+    use aws_lc_rs::rsa::KeySize;
+    use aws_lc_rs::signature::{KeyPair, RSA_PKCS1_SHA256, RsaKeyPair};
+    use axum::Router;
+    use axum::extract::{Form, State};
+    use axum::routing::{get, post};
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+    use serde_json::{Value, json};
+
+    #[derive(Clone)]
+    pub struct Mock {
+        pub url: String,
+        key: Arc<RsaKeyPair>,
+        /// Codes not yet used, and whose they are.
+        codes: Arc<Mutex<HashMap<String, String>>>,
+        pub revoked: Arc<Mutex<Vec<String>>>,
+        /// Our ids Apple knows: the app's bundle id, the website's Services ID.
+        client_ids: Vec<String>,
+    }
+
+    impl Mock {
+        pub async fn start(client_ids: &[&str]) -> Mock {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let m = Mock {
+                url: format!("http://{}", l.local_addr().unwrap()),
+                key: Arc::new(RsaKeyPair::generate(KeySize::Rsa2048).unwrap()),
+                codes: Arc::default(),
+                revoked: Arc::default(),
+                client_ids: client_ids.iter().map(|s| (*s).to_owned()).collect(),
+            };
+            let app = Router::new()
+                .route("/auth/keys", get(keys))
+                .route("/auth/token", post(token))
+                .route("/auth/revoke", post(revoke))
+                .with_state(m.clone());
+            tokio::spawn(async move { axum::serve(l, app).await });
+            m
+        }
+
+        pub fn jwt(&self, claims: &Value) -> String {
+            let h = B64.encode(json!({"alg": "RS256", "kid": "k1"}).to_string());
+            let c = B64.encode(claims.to_string());
+            let input = format!("{h}.{c}");
+            let mut sig = vec![0; self.key.public_modulus_len()];
+            self.key.sign(&RSA_PKCS1_SHA256, &SystemRandom::new(), input.as_bytes(), &mut sig).unwrap();
+            format!("{input}.{}", B64.encode(sig))
+        }
+
+        /// What the app gets from Apple: an identity token for `sub` and a
+        /// fresh code, for this raw nonce.
+        pub fn sign_in(&self, sub: &str, email: Option<&str>, nonce: &str, aud: &str) -> (String, String) {
+            self.sign_in_hashed(sub, email, &open_chess_server::apple::nonce_hash(nonce), aud)
+        }
+
+        /// The same, with the nonce as Apple holds it (the website's flow).
+        pub fn sign_in_hashed(
+            &self,
+            sub: &str,
+            email: Option<&str>,
+            nonce: &str,
+            aud: &str,
+        ) -> (String, String) {
+            let now = chrono::Utc::now().timestamp();
+            let mut claims = json!({
+                "iss": self.url, "aud": aud, "sub": sub, "iat": now, "exp": now + 600, "nonce": nonce,
+            });
+            if let Some(e) = email {
+                claims["email"] = json!(e);
+                claims["email_verified"] = json!(true);
+                claims["is_private_email"] = json!(e.contains("privaterelay"));
+            }
+            let code = format!("c{}", open_chess_server::auth::random_token(12));
+            self.codes.lock().unwrap().insert(code.clone(), sub.to_owned());
+            (self.jwt(&claims), code)
+        }
+    }
+
+    async fn keys(State(m): State<Mock>) -> axum::Json<Value> {
+        let pk = m.key.public_key();
+        axum::Json(json!({"keys": [{
+            "kty": "RSA", "kid": "k1", "use": "sig", "alg": "RS256",
+            "n": B64.encode(pk.modulus().big_endian_without_leading_zero()),
+            "e": B64.encode(pk.exponent().big_endian_without_leading_zero()),
+        }]}))
+    }
+
+    /// The client secret: an ES256 JWT for our client id.
+    fn secret_ok(m: &Mock, f: &HashMap<String, String>) -> bool {
+        let s = f.get("client_secret").map_or("", String::as_str);
+        let parts: Vec<&str> = s.split('.').collect();
+        let Some(claims) = parts.get(1).and_then(|c| B64.decode(c).ok()) else { return false };
+        let claims: Value = serde_json::from_slice(&claims).unwrap_or_default();
+        let client = f.get("client_id").cloned().unwrap_or_default();
+        parts.len() == 3
+            && claims["sub"] == client.as_str()
+            && claims["aud"] == m.url.as_str()
+            && claims["iss"] == "TEAM123456"
+            && m.client_ids.contains(&client)
+    }
+
+    async fn token(
+        State(m): State<Mock>,
+        Form(f): Form<HashMap<String, String>>,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let code = f.get("code").cloned().unwrap_or_default();
+        let sub = m.codes.lock().unwrap().remove(&code);
+        match sub {
+            Some(sub) if secret_ok(&m, &f) => {
+                let now = chrono::Utc::now().timestamp();
+                let id = m.jwt(
+                    &json!({"iss": m.url, "aud": f.get("client_id").cloned().unwrap_or_default(), "sub": sub, "iat": now, "exp": now + 600}),
+                );
+                axum::Json(json!({"refresh_token": format!("r-{code}"), "id_token": id})).into_response()
+            }
+            _ => (axum::http::StatusCode::BAD_REQUEST, axum::Json(json!({"error": "invalid_grant"})))
+                .into_response(),
+        }
+    }
+
+    async fn revoke(State(m): State<Mock>, Form(f): Form<HashMap<String, String>>) -> axum::http::StatusCode {
+        if !secret_ok(&m, &f) {
+            return axum::http::StatusCode::BAD_REQUEST;
+        }
+        m.revoked.lock().unwrap().push(f.get("token").cloned().unwrap_or_default());
+        axum::http::StatusCode::OK
+    }
+}
+
+/// Sign in with Apple from the app: a new account (after choosing a name),
+/// signing in again, linking to an existing account, unlinking, and Apple
+/// told when an account closes.
+#[tokio::test]
+async fn sign_in_with_apple_makes_links_and_revokes() {
+    use p256::pkcs8::EncodePrivateKey;
+    let apple = apple_mock::Mock::start(&["org.example.test"]).await;
+    let pem = p256::ecdsa::SigningKey::from_slice(&[9u8; 32])
+        .unwrap()
+        .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+        .unwrap()
+        .to_string();
+    let url = apple.url.clone();
+    let Some(env) = setup(move |c| {
+        c.apple_key = Some(pem);
+        c.apple_key_id = Some("SIWAKEY123".into());
+        c.apple_team_id = Some("TEAM123456".into());
+        c.apple_client_ids = vec!["org.example.test".into()];
+        c.apple_url = url;
+    })
+    .await
+    else {
+        return;
+    };
+    let http = reqwest::Client::new();
+    let base = env.base[0].clone();
+    let send = |body: serde_json::Value, bearer: Option<&str>| {
+        let mut r = http.post(format!("{base}/api/auth/apple")).json(&body);
+        if let Some(t) = bearer {
+            r = r.bearer_auth(t);
+        }
+        async move {
+            let r = r.send().await.unwrap();
+            let status = r.status().as_u16();
+            (status, r.json::<serde_json::Value>().await.unwrap_or_default())
+        }
+    };
+    let body = |token: &str, code: &str, nonce: &str| {
+        serde_json::json!({"identityToken": token, "authorizationCode": code, "nonce": nonce,
+                           "clientId": "open-chess iOS", "scopes": HUMAN, "name": "Carla Díaz"})
+    };
+
+    // A new Apple ID: choose a name first (the code isn't spent), then the account.
+    let (tok, code) =
+        apple.sign_in("001.carla", Some("c@privaterelay.appleid.com"), "nonce-1", "org.example.test");
+    let (s, v) = send(body(&tok, &code, "nonce-1"), None).await;
+    assert_eq!((s, v["error"].as_str()), (409, Some("choose_username")), "{v}");
+    assert_eq!(v["suggestion"], "carladaz", "{v}");
+    let mut b = body(&tok, &code, "nonce-1");
+    b["username"] = "ai-level-3".into();
+    let (s, v) = send(b.clone(), None).await;
+    assert_eq!((s, v["error"].as_str()), (400, Some("bad_username")), "{v}");
+    b["username"] = "Carla".into();
+    let (s, v) = send(b.clone(), None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!((v["created"].as_bool(), v["username"].as_str()), (Some(true), Some("Carla")));
+    let carla = v["access_token"].as_str().unwrap().to_owned();
+    let me: serde_json::Value = http
+        .get(format!("{base}/api/account"))
+        .bearer_auth(&carla)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!((me["username"].as_str(), me["apple"].as_bool()), (Some("Carla"), Some(true)), "{me}");
+    // The same answer again: Apple's code is spent.
+    assert_eq!(send(b, None).await.0, 403);
+    // A wrong nonce, or a token for another app.
+    let (tok, code) = apple.sign_in("001.carla", None, "nonce-2", "org.example.test");
+    assert_eq!(send(body(&tok, &code, "nonce-x"), None).await.0, 403);
+    let (tok, code) = apple.sign_in("001.carla", None, "nonce-3", "org.other.app");
+    assert_eq!(send(body(&tok, &code, "nonce-3"), None).await.0, 403);
+    // Signing in again: the same account, a new token.
+    let (tok, code) = apple.sign_in("001.carla", None, "nonce-4", "org.example.test");
+    let (s, v) = send(body(&tok, &code, "nonce-4"), None).await;
+    assert_eq!((s, v["created"].as_bool(), v["username"].as_str()), (200, Some(false), Some("Carla")), "{v}");
+
+    // An Apple ID with the email of an account here: sign in there and link.
+    let (ann_id, ann) = env.player("Ann", HUMAN).await;
+    let (_, ben) = env.player("Ben", HUMAN).await;
+    env.pg
+        .execute(
+            &format!(
+                "UPDATE {}.players SET email = 'ann@example.test', password_hash = 'x' WHERE id = $1",
+                env.chess
+            ),
+            &[&ann_id],
+        )
+        .await
+        .unwrap();
+    let (tok, code) = apple.sign_in("002.ann", Some("ann@example.test"), "nonce-5", "org.example.test");
+    let (s, v) = send(body(&tok, &code, "nonce-5"), None).await;
+    assert_eq!((s, v["error"].as_str()), (409, Some("email_in_use")), "{v}");
+    let (s, v) = send(body(&tok, &code, "nonce-5"), Some(&ann)).await;
+    assert_eq!((s, v["linked"].as_bool(), v["username"].as_str()), (200, Some(true), Some("Ann")), "{v}");
+    assert!(v.get("access_token").is_none(), "linking gives no new token: {v}");
+    let (tok, code) = apple.sign_in("002.ann", None, "nonce-6", "org.example.test");
+    let (s, v) = send(body(&tok, &code, "nonce-6"), Some(&ben)).await;
+    assert_eq!((s, v["error"].as_str()), (409, Some("apple_linked_elsewhere")), "{v}");
+    // Ann signs in with Apple now.
+    let (tok, code) = apple.sign_in("002.ann", None, "nonce-7", "org.example.test");
+    let (s, v) = send(body(&tok, &code, "nonce-7"), None).await;
+    assert_eq!((s, v["username"].as_str()), (200, Some("Ann")), "{v}");
+
+    // Unlinking: Ann has a password, so she may; Carla has only Apple.
+    let del = |t: &str| http.delete(format!("{base}/api/auth/apple")).bearer_auth(t.to_owned()).send();
+    assert_eq!(del(&ann).await.unwrap().status(), 204);
+    assert_eq!(apple.revoked.lock().unwrap().len(), 1, "Apple is told");
+    assert_eq!(del(&carla).await.unwrap().status(), 409);
+
+    // Closing Carla's account tells Apple too.
+    assert_eq!(
+        http.delete(format!("{base}/api/account")).bearer_auth(&carla).send().await.unwrap().status(),
+        204
+    );
+    assert_eq!(apple.revoked.lock().unwrap().len(), 2);
+    let left: i64 =
+        env.pg.query_one(&format!("SELECT count(*) FROM {}.apple_ids", env.chess), &[]).await.unwrap().get(0);
+    assert_eq!(left, 0);
+    env.teardown().await;
+}
+
+/// Sign in with Apple on the website: a new account (choosing a name on
+/// the way), an account made in the app signing in on the web, and linking
+/// from the account page.
+#[tokio::test]
+async fn sign_in_with_apple_on_the_website() {
+    use p256::pkcs8::EncodePrivateKey;
+    let apple = apple_mock::Mock::start(&["org.example.test", "org.example.web"]).await;
+    let pem = p256::ecdsa::SigningKey::from_slice(&[9u8; 32])
+        .unwrap()
+        .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+        .unwrap()
+        .to_string();
+    let url = apple.url.clone();
+    let Some(env) = setup(move |c| {
+        c.apple_key = Some(pem);
+        c.apple_key_id = Some("SIWAKEY123".into());
+        c.apple_team_id = Some("TEAM123456".into());
+        c.apple_client_ids = vec!["org.example.test".into()];
+        c.apple_services_id = Some("org.example.web".into());
+        c.apple_url = url;
+    })
+    .await
+    else {
+        return;
+    };
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let base = env.base[0].clone();
+    let set_cookie = |r: &reqwest::Response, name: &str| -> Option<String> {
+        r.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()).find_map(|v| {
+            let kv = v.split(';').next()?;
+            let (k, val) = kv.split_once('=')?;
+            (k == name && !val.is_empty()).then(|| val.to_owned())
+        })
+    };
+    // The sign-in page offers Apple.
+    let login = http.get(format!("{base}/login")).send().await.unwrap().text().await.unwrap();
+    assert!(login.contains("Sign in with Apple"), "{login}");
+
+    // Off to Apple: the state and the nonce's hash go along.
+    let start = |q: &'static str, session: Option<String>| {
+        let mut r = http.get(format!("{base}/auth/apple?{q}"));
+        if let Some(s) = session {
+            r = r.header("cookie", format!("oc_session={s}"));
+        }
+        async move {
+            let r = r.send().await.unwrap();
+            assert_eq!(r.status(), 303, "to Apple");
+            let state_cookie = set_cookie(&r, "oc_apple").expect("state cookie");
+            let to = url::Url::parse(r.headers()["location"].to_str().unwrap()).unwrap();
+            let q: std::collections::HashMap<String, String> = to.query_pairs().into_owned().collect();
+            assert_eq!(q["client_id"], "org.example.web");
+            assert_eq!(q["response_mode"], "form_post");
+            assert_eq!(q["redirect_uri"], "http://chess.test/auth/apple/callback");
+            assert_eq!(q["state"], state_cookie);
+            (q["state"].clone(), q["nonce"].clone())
+        }
+    };
+    let callback = |form: Vec<(&'static str, String)>, state_cookie: String| {
+        http.post(format!("{base}/auth/apple/callback"))
+            .header("cookie", format!("oc_apple={state_cookie}"))
+            .form(&form)
+            .send()
+    };
+
+    // A new Apple ID: a page to choose the name, then signed in.
+    let (state, nonce) = start("return=/account", None).await;
+    let (tok, code) =
+        apple.sign_in_hashed("003.dora", Some("d@privaterelay.appleid.com"), &nonce, "org.example.web");
+    let user = r#"{"name":{"firstName":"Dora","lastName":"Ek"},"email":"d@privaterelay.appleid.com"}"#;
+    let form = vec![("state", state.clone()), ("code", code), ("id_token", tok), ("user", user.to_owned())];
+    // Without the browser's state cookie: refused.
+    let (state2, nonce2) = start("return=/account", None).await;
+    let (tok2, code2) = apple.sign_in_hashed("003.dora", None, &nonce2, "org.example.web");
+    let r =
+        callback(vec![("state", state2), ("code", code2), ("id_token", tok2)], "other".into()).await.unwrap();
+    assert_eq!(r.status(), 403);
+    let r = callback(form.clone(), state.clone()).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let page = r.text().await.unwrap();
+    assert!(page.contains("Choose a username") && page.contains("value=\"doraek\""), "{page}");
+    let ticket = page.split("name=\"ticket\" value=\"").nth(1).unwrap().split('"').next().unwrap().to_owned();
+    // The same answer twice: the state is spent.
+    assert_eq!(callback(form, state).await.unwrap().status(), 400);
+    let name = |n: &str| {
+        http.post(format!("{base}/auth/apple/name"))
+            .form(&[("ticket", ticket.clone()), ("name", n.to_owned())])
+            .send()
+    };
+    assert_eq!(name("x").await.unwrap().status(), 400);
+    let r = name("Dora").await.unwrap();
+    assert_eq!((r.status().as_u16(), r.headers()["location"].to_str().unwrap()), (303, "/account"));
+    let session = set_cookie(&r, "oc_session").expect("a session");
+    let account = http
+        .get(format!("{base}/account"))
+        .header("cookie", format!("oc_session={session}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        account.contains("<b>Dora</b>") && account.contains("Linked (with a private email address)"),
+        "{account}"
+    );
+    assert!(!account.contains("Unlink your Apple ID"), "her only way in stays: {account}");
+    assert_eq!(name("Dora").await.unwrap().status(), 400, "the ticket is spent");
+
+    // An account made in the app signs in on the website.
+    let (tok, code) = apple.sign_in("004.erik", None, "n1", "org.example.test");
+    let r = reqwest::Client::new()
+        .post(format!("{base}/api/auth/apple"))
+        .json(&serde_json::json!({"identityToken": tok, "authorizationCode": code, "nonce": "n1", "username": "Erik"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let (state, nonce) = start("return=/oauth?x=1", None).await;
+    let (tok, code) = apple.sign_in_hashed("004.erik", None, &nonce, "org.example.web");
+    let r = callback(vec![("state", state.clone()), ("code", code), ("id_token", tok)], state).await.unwrap();
+    assert_eq!((r.status().as_u16(), r.headers()["location"].to_str().unwrap()), (303, "/oauth?x=1"));
+    assert!(set_cookie(&r, "oc_session").is_some());
+
+    // Linking from the account page: Fay has a password; Apple is told when she unlinks.
+    let (fay_id, _) = env.player("Fay", HUMAN).await;
+    env.pg
+        .execute(&format!("UPDATE {}.players SET password_hash = 'x' WHERE id = $1", env.chess), &[&fay_id])
+        .await
+        .unwrap();
+    let fay_session = random_token(40);
+    env.pg
+        .execute(
+            &format!(
+                "INSERT INTO {}.sessions (token_hash, player_id, expires_at) VALUES ($1, $2, now() + interval '1 day')",
+                env.chess
+            ),
+            &[&hash_key(&fay_session), &fay_id],
+        )
+        .await
+        .unwrap();
+    let account = |s: String| {
+        let (http, base) = (http.clone(), base.clone());
+        async move {
+            http.get(format!("{base}/account"))
+                .header("cookie", format!("oc_session={s}"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+    assert!(account(fay_session.clone()).await.contains("Link your Apple ID"));
+    let (state, nonce) = start("link=1&return=/account", Some(fay_session.clone())).await;
+    let (tok, code) = apple.sign_in_hashed("005.fay", None, &nonce, "org.example.web");
+    let r = callback(vec![("state", state.clone()), ("code", code), ("id_token", tok)], state).await.unwrap();
+    assert_eq!(r.status(), 303);
+    let page = account(fay_session.clone()).await;
+    assert!(page.contains("Unlink your Apple ID"), "{page}");
+    let csrf = page.split("name=\"csrf\" value=\"").nth(1).unwrap().split('"').next().unwrap().to_owned();
+    let r = http
+        .post(format!("{base}/account/apple/remove"))
+        .header("cookie", format!("oc_session={fay_session}"))
+        .form(&[("csrf", csrf)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 303);
+    assert!(account(fay_session).await.contains("Link your Apple ID"));
+    assert_eq!(apple.revoked.lock().unwrap().len(), 1);
+
+    // Apple's notifications: Erik stops using his Apple ID here (his
+    // tokens stop); Dora deletes her Apple Account (hers was the only way
+    // in, so her account closes). One not signed by Apple is refused.
+    let notify = |kind: &str, sub: &str, aud: &str| {
+        let now = chrono::Utc::now().timestamp();
+        let events = serde_json::json!({"type": kind, "sub": sub, "event_time": now}).to_string();
+        let jwt = apple.jwt(
+            &serde_json::json!({"iss": apple.url, "aud": aud, "iat": now, "jti": "j1", "events": events}),
+        );
+        http.post(format!("{base}/auth/apple/notifications"))
+            .json(&serde_json::json!({"payload": jwt}))
+            .send()
+    };
+    let erik_q = format!(
+        "SELECT count(*) FROM {c}.api_tokens t JOIN {c}.accounts a ON a.player_id = t.player_id
+          WHERE a.username = 'Erik' AND t.revoked_at IS NULL",
+        c = env.chess
+    );
+    assert_eq!(env.pg.query_one(&erik_q, &[]).await.unwrap().get::<_, i64>(0), 1);
+    assert_eq!(notify("consent-revoked", "004.erik", "org.example.test").await.unwrap().status(), 200);
+    assert_eq!(env.pg.query_one(&erik_q, &[]).await.unwrap().get::<_, i64>(0), 0);
+    assert_eq!(notify("account-delete", "003.dora", "org.example.other").await.unwrap().status(), 400);
+    assert_eq!(notify("account-delete", "003.dora", "org.example.web").await.unwrap().status(), 200);
+    let gone: i64 = env
+        .pg
+        .query_one(
+            &format!(
+                "SELECT count(*) FROM {}.players WHERE name = 'deleted' AND disabled_at IS NOT NULL",
+                env.chess
+            ),
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(gone, 1, "Dora's account is closed");
+    assert_eq!(notify("email-disabled", "nobody", "org.example.web").await.unwrap().status(), 200);
+    let links: i64 =
+        env.pg.query_one(&format!("SELECT count(*) FROM {}.apple_ids", env.chess), &[]).await.unwrap().get(0);
+    assert_eq!(links, 0);
     env.teardown().await;
 }
