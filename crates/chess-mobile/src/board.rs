@@ -57,6 +57,15 @@ impl BoardEvent {
     }
 }
 
+/// What a connected board shows right now.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BoardNow {
+    /// FEN placement, White's side.
+    pub placement: String,
+    /// It has been still long enough to count (not a move in progress).
+    pub settled: bool,
+}
+
 /// The characteristic the board notifies on.
 #[uniffi::export]
 pub fn chessnut_read_characteristic() -> String {
@@ -140,6 +149,12 @@ impl ChessnutBoard {
         self.lock().lights_off();
     }
 
+    /// What the board shows now, for labelling photos and video frames
+    /// ([`crate::Capture::board_state`]).
+    pub fn board_now(&self) -> Option<BoardNow> {
+        self.lock().board_now().map(|(p, settled)| BoardNow { placement: p.fen(), settled })
+    }
+
     /// The game as the board has followed it: its FEN.
     pub fn fen(&self) -> String {
         self.lock().game().fen()
@@ -180,5 +195,7 @@ mod tests {
         assert_eq!(square("e2"), Some(12));
         assert_eq!(square("z9"), None);
         assert_eq!(chessnut_write_characteristic().len(), 36);
+        let now = b.board_now().unwrap();
+        assert!(now.settled && now.placement.starts_with("rnbqkbnr/pppppppp/8/8/4P3"), "{now:?}");
     }
 }

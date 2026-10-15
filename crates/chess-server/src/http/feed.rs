@@ -155,6 +155,11 @@ async fn run(
             }
         };
         let event = if !row.status.is_ongoing() {
+            // Over but not yet recorded (a real-board game waiting for the
+            // other player to confirm it): it comes when it is.
+            if row.feed_ms.is_none() {
+                continue;
+            }
             seen.remove(&row.id);
             if !ended.insert(row.id.clone()) {
                 continue;

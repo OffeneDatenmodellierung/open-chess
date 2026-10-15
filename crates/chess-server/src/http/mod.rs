@@ -10,6 +10,7 @@ pub mod games;
 pub mod lab;
 pub mod mobile;
 pub mod oauth;
+pub mod otb;
 pub mod play;
 pub mod streams;
 pub mod web;

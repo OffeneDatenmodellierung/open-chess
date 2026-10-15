@@ -849,6 +849,29 @@ ALTER TABLE chess.board_photos ADD CONSTRAINT board_photos_reason_check
 ALTER TABLE chess.board_photos ADD COLUMN client_id text;
 CREATE UNIQUE INDEX board_photos_client_idx ON chess.board_photos (player_id, client_id) WHERE client_id IS NOT NULL;
 ",
+    r"
+-- 9. Games on a real board, recorded live from the app (source 'otb'):
+-- the recorder (one of the players) sends the moves as they're played. A
+-- rated one waits for the other player to confirm the result before it is
+-- rated and reaches the feed. broadcast_key: the secret in the link of the
+-- live board overlay (for a stream), when the recorder made one.
+CREATE TABLE chess.otb_games (
+    game_id text PRIMARY KEY REFERENCES chess.games ON DELETE CASCADE,
+    recorder_id bigint NOT NULL REFERENCES chess.accounts ON DELETE CASCADE,
+    opponent_id bigint NOT NULL REFERENCES chess.accounts ON DELETE CASCADE,
+    board text NOT NULL CHECK (board IN ('chessnut', 'photos', 'manual')),
+    rated_requested boolean NOT NULL,
+    confirm text NOT NULL DEFAULT 'none' CHECK (confirm IN ('none', 'pending', 'confirmed', 'declined')),
+    broadcast_key text UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX otb_games_confirm_idx ON chess.otb_games (opponent_id) WHERE confirm = 'pending';
+
+-- Photos and video frames labelled by a connected board during a game.
+ALTER TABLE chess.board_photos DROP CONSTRAINT IF EXISTS board_photos_label_source_check;
+ALTER TABLE chess.board_photos ADD CONSTRAINT board_photos_label_source_check
+    CHECK (label_source IN ('player', 'reviewer', 'consensus', 'admin', 'board'));
+ALTER TABLE chess.board_photos ADD COLUMN game_id text;
+",
 ];
 
 #[cfg(test)]

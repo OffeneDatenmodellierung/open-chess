@@ -2477,3 +2477,162 @@ async fn native_apps_sign_in_with_their_own_scheme() {
     assert_ne!(r.status(), 400, "accepted (sign-in or consent comes next)");
     env.teardown().await;
 }
+
+/// A game on a real board, recorded live from the app: moves as they're
+/// made, the live overlay behind its key, a correction, the result
+/// confirmed by the other player before it's rated and in the feed, and
+/// frames labelled by the board.
+#[tokio::test]
+async fn real_board_games_are_recorded_live_and_rated_once_confirmed() {
+    let Some(env) = setup(|c| c.public_delay_plies = 0).await else { return };
+    let (_, ann) = env.player("Ann", HUMAN).await;
+    let (_, ben) = env.player("Ben", HUMAN).await;
+    let http = reqwest::Client::new();
+    let base = env.base[0].clone();
+    for t in [&ann, &ben] {
+        env.client(0, t).account().await.unwrap();
+    }
+    let post = |path: String, token: &str, body: serde_json::Value| {
+        http.post(format!("{base}{path}")).bearer_auth(token).json(&body).send()
+    };
+    let r = post(
+        "/api/otb".into(),
+        &ann,
+        serde_json::json!({"white": "Ben", "black": "Cid", "speed": "rapid", "board": "chessnut"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 404, "both players need accounts");
+    let r = post(
+        "/api/otb".into(),
+        &ann,
+        serde_json::json!({"white": "Ben", "black": "Ben", "speed": "rapid", "board": "chessnut"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.status(), 400);
+    let g: serde_json::Value = post(
+        "/api/otb".into(),
+        &ann,
+        serde_json::json!({"white": "Ann", "black": "Ben", "speed": "rapid", "rated": true, "board": "chessnut", "broadcast": true}),
+    )
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let id = g["id"].as_str().unwrap().to_owned();
+    let overlay = g["broadcastUrl"].as_str().unwrap().replace("http://chess.test", &base);
+
+    // The overlay: only with its key; the live state after each move.
+    let page = http.get(&overlay).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    assert!(page.text().await.unwrap().contains("/api/broadcast/"));
+    let wrong = overlay.replace("key=", "key=x");
+    assert_eq!(http.get(&wrong).send().await.unwrap().status(), 404);
+    let events = overlay.replace("/broadcast/", "/api/broadcast/").replace("?key=", "/events?key=");
+    let mut live = sse(http.get(&events).send().await.unwrap());
+    let (kind, _, first) = next_sse(&mut live).await;
+    assert_eq!((kind.as_str(), first["ply"].as_i64()), ("state", Some(0)));
+
+    // Ben can't record Ann's game; a bad move is refused; a misread one
+    // is taken back.
+    assert_eq!(
+        post(format!("/api/otb/{id}/move"), &ben, serde_json::json!({"uci": "e2e4"})).await.unwrap().status(),
+        404
+    );
+    assert_eq!(
+        post(format!("/api/otb/{id}/move"), &ann, serde_json::json!({"uci": "e2e5"})).await.unwrap().status(),
+        400
+    );
+    for m in ["e2e4", "e7e5", "g1f3", "a7a6"] {
+        let r = post(format!("/api/otb/{id}/move"), &ann, serde_json::json!({"uci": m})).await.unwrap();
+        assert!(r.status().is_success(), "{m}");
+    }
+    let u: serde_json::Value = post(format!("/api/otb/{id}/undo"), &ann, serde_json::json!({"plies": 1}))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(u["ply"], 3);
+    post(format!("/api/otb/{id}/move"), &ann, serde_json::json!({"uci": "b8c6"})).await.unwrap();
+    let state = loop {
+        let (_, _, s) = next_sse(&mut live).await;
+        if s["ply"] == 4 && s["lastMove"] == "b8c6" {
+            break s;
+        }
+    };
+    assert_eq!(state["sans"], serde_json::json!(["e4", "e5", "Nf3", "Nc6"]));
+    // Not aborted by the sweeper for slow first moves: a real board keeps its own time.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // A frame labelled by the board, in this game.
+    post("/api/esl/photo-terms".into(), &ann, serde_json::json!({"accept": true})).await.unwrap();
+    let frame = serde_json::json!({"clientId": "f1", "image": "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==", "labelSource": "board",
+        "gameId": id, "angle": 1, "atMs": 1, "distance": 2,
+        "placement": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R"});
+    let r = post("/api/photos".into(), &ann, frame.clone()).await.unwrap();
+    assert!(r.status().is_success(), "{}", r.text().await.unwrap());
+    let r = post("/api/photos".into(), &ann, serde_json::json!({"clientId": "f2", "image": "/9j/2Q==", "labelSource": "board", "placement": "8/8/8/8/8/8/8/8"}))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400, "a board's label needs its game");
+
+    // Ann resigns on the board: over, but not rated or in the feed until Ben confirms.
+    let mut feed = sse(http.get(format!("{base}/api/feed?only=end")).bearer_auth(&ann).send().await.unwrap());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let e: serde_json::Value =
+        post(format!("/api/otb/{id}/end"), &ann, serde_json::json!({"status": "resign", "winner": "black"}))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(e["confirmation"], "pending", "{e}");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(700), feed.recv()).await.is_err(),
+        "not in the feed yet"
+    );
+    let g = env.client(0, &ann).export_game(&id).await.unwrap();
+    assert!(!g.rated && g.status == Status::Resign);
+    let s: serde_json::Value =
+        http.get(format!("{base}/api/sync")).bearer_auth(&ben).send().await.unwrap().json().await.unwrap();
+    let waiting =
+        s["confirmations"].as_array().unwrap().iter().find(|c| c["id"] == id.as_str()).expect("Ben is asked");
+    assert_eq!((waiting["kind"].as_str(), waiting["uploadedBy"].as_str()), (Some("otb"), Some("Ann")));
+    assert_eq!(
+        post(format!("/api/games/{id}/confirm"), &ann, serde_json::json!({"accept": true}))
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    let c: serde_json::Value =
+        post(format!("/api/games/{id}/confirm"), &ben, serde_json::json!({"accept": true}))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(c["status"], "rated", "{c}");
+    assert!(c["ratingDiff"].as_i64().unwrap() > 0, "Ben won: {c}");
+    let (kind, _, end) = next_sse(&mut feed).await;
+    assert_eq!(
+        (kind.as_str(), end["id"].as_str(), end["rated"].as_bool()),
+        ("end", Some(id.as_str()), Some(true))
+    );
+    assert_eq!(
+        post(format!("/api/games/{id}/confirm"), &ben, serde_json::json!({"accept": true}))
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    assert_eq!(
+        post(format!("/api/otb/{id}/move"), &ann, serde_json::json!({"uci": "f1c4"})).await.unwrap().status(),
+        409,
+        "over"
+    );
+    env.teardown().await;
+}

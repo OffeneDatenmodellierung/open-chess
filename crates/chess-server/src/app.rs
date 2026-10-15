@@ -210,7 +210,7 @@ async fn cors(req: Request, next: Next) -> Response {
 
 pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
     use http::{
-        account, admin, app_files, challenges, fairplay, feed, games, lab, mobile, oauth, streams, web,
+        account, admin, app_files, challenges, fairplay, feed, games, lab, mobile, oauth, otb, streams, web,
     };
     let api = Router::new()
         // OAuth (PKCE) and tokens
@@ -242,6 +242,12 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
             "/api/photos",
             post(mobile::photo).layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024)),
         )
+        .route("/api/otb", post(otb::start))
+        .route("/api/otb/{id}/move", post(otb::make_move))
+        .route("/api/otb/{id}/undo", post(otb::undo))
+        .route("/api/otb/{id}/end", post(otb::end))
+        .route("/api/broadcast/{id}/events", get(otb::events))
+        .route("/broadcast/{id}", get(otb::page))
         .route("/api/push/devices", post(mobile::add_device))
         .route("/api/push/devices/{token}", axum::routing::delete(mobile::remove_device))
         .route("/api/account/email", get(account::email))

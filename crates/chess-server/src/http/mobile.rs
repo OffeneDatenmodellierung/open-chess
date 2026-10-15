@@ -360,6 +360,10 @@ pub async fn confirm(
     Json(body): Json<Confirm>,
 ) -> ApiResult<Response> {
     let id = who.need(&["board:play"])?.clone();
+    // A game recorded live on a real board?
+    if let Some(answer) = crate::http::otb::confirm(&ctx, id.player, &game_id, body.accept).await? {
+        return Ok(Json(answer).into_response());
+    }
     let mut c = ctx.db.conn().await?;
     let tx = c.transaction().await?;
     let row = tx
@@ -458,7 +462,7 @@ pub async fn sync(
             }))
         })
         .collect();
-    let confirmations: Vec<Value> = c
+    let mut confirmations: Vec<Value> = c
         .query(
             &ctx.db.sql(
                 "SELECT o.game_id, o.record, a.username, (extract(epoch from o.created_at) * 1000)::bigint
@@ -473,9 +477,10 @@ pub async fn sync(
             let rec: Value = r.get(1);
             json!({"id": r.get::<_, String>(0), "white": rec["white"], "black": rec["black"], "winner": rec["winner"],
                    "status": rec["status"], "speed": rec["speed"], "moves": rec["moves"].as_array().map_or(0, Vec::len),
-                   "uploadedBy": r.get::<_, String>(2), "createdAt": r.get::<_, i64>(3)})
+                   "uploadedBy": r.get::<_, String>(2), "createdAt": r.get::<_, i64>(3), "kind": "offline"})
         })
         .collect();
+    confirmations.extend(crate::http::otb::waiting_for(&ctx, &*c, player).await?);
     let challenges: Vec<Value> = c
         .query(
             &ctx.db.sql(
@@ -543,6 +548,22 @@ pub struct Photo {
     confidence: Option<f32>,
     #[serde(default)]
     model: Option<String>,
+    /// Who says what it shows: "player" (they confirmed it; the default)
+    /// or "board" (a connected board, during the game `gameId`).
+    #[serde(default)]
+    label_source: Option<String>,
+    /// The real-board game it was taken in.
+    #[serde(default)]
+    game_id: Option<String>,
+    /// Which camera, when there were several.
+    #[serde(default)]
+    angle: Option<u8>,
+    /// When it was taken (Unix ms).
+    #[serde(default)]
+    at_ms: Option<i64>,
+    /// Squares the board reader got wrong.
+    #[serde(default)]
+    distance: Option<u32>,
 }
 
 /// `POST /api/photos`: a photo with its confirmed position, kept as
@@ -565,18 +586,38 @@ pub async fn photo(State(ctx): State<Ctx>, who: Who, Json(p): Json<Photo>) -> Ap
     if bytes.len() > MAX_PHOTO || !bytes.starts_with(&[0xff, 0xd8]) {
         return Err(ApiError::bad("image is a JPEG of at most 4 MB"));
     }
-    let reading =
-        json!({"placement": placement, "confidence": p.confidence, "model": p.model, "from": "ios"});
+    let source = p.label_source.as_deref().unwrap_or("player");
+    if !matches!(source, "player" | "board") {
+        return Err(ApiError::bad("labelSource is player or board"));
+    }
     let c = ctx.db.conn().await?;
+    if let Some(g) = &p.game_id {
+        let recorded: bool = c
+            .query_one(
+                &ctx.db.sql(
+                    "SELECT EXISTS (SELECT 1 FROM chess.otb_games WHERE game_id = $1 AND recorder_id = $2)",
+                ),
+                &[g, &player],
+            )
+            .await?
+            .get(0);
+        if !recorded {
+            return Err(ApiError::bad("gameId isn't a real-board game you recorded"));
+        }
+    } else if source == "board" {
+        return Err(ApiError::bad("a board's label comes with the gameId it was played in"));
+    }
+    let reading = json!({"placement": placement, "confidence": p.confidence, "model": p.model, "from": "ios",
+                         "angle": p.angle, "atMs": p.at_ms, "distance": p.distance});
     let row = c
         .query_opt(
             &ctx.db.sql(
                 "INSERT INTO chess.board_photos (player_id, image, mime, reason, reading, label, label_source,
-                        labelled_by, labelled_at, terms, public, client_id)
-                 VALUES ($1, $2, 'image/jpeg', 'contributed', $3, $4, 'player', $1, now(), $5, $6, $7)
+                        labelled_by, labelled_at, terms, public, client_id, game_id)
+                 VALUES ($1, $2, 'image/jpeg', 'contributed', $3, $4, $8, $1, now(), $5, $6, $7, $9)
                  ON CONFLICT (player_id, client_id) WHERE client_id IS NOT NULL DO NOTHING RETURNING id",
             ),
-            &[&player, &bytes, &reading, &placement, &crate::http::lab::PHOTO_TERMS, &public, &p.client_id],
+            &[&player, &bytes, &reading, &placement, &crate::http::lab::PHOTO_TERMS, &public, &p.client_id, &source, &p.game_id],
         )
         .await?;
     let id: i64 = match row {

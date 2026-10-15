@@ -172,7 +172,9 @@ pub async fn make_move(
 /// The game is over on time before anything else can happen: a flag (the
 /// side to move's clock ran out) or a first move that never came.
 fn timed_out(ctx: &Ctx, row: &GameRow, game: &Game) -> Option<(Status, Option<Side>)> {
-    if !row.status.is_ongoing() {
+    // A game on a real board keeps its own time (a real clock, or none):
+    // whoever records it ends it.
+    if !row.status.is_ongoing() || row.source == "otb" {
         return None;
     }
     if let Some(left) = row.days_left_ms() {
@@ -453,7 +455,7 @@ pub async fn finish(
 
 /// Glicko-2 update for both players (rows locked in player-id order so two
 /// games finishing at once can't deadlock).
-async fn rate(
+pub(crate) async fn rate(
     ctx: &Ctx,
     tx: &Transaction<'_>,
     row: &GameRow,
@@ -570,7 +572,7 @@ pub async fn sweep(ctx: &Ctx) -> Result<usize> {
         .query(
             &ctx.db.sql(
                 "SELECT id FROM chess.games
-                  WHERE status = 20 AND (
+                  WHERE status = 20 AND source <> 'otb' AND (
                         (days_per_turn IS NOT NULL AND clock_timestamp() > turn_started_at + make_interval(days => days_per_turn))
                      OR (days_per_turn IS NULL AND ply < 2
                          AND clock_timestamp() > turn_started_at + make_interval(secs => ($1::float8 + $2::float8) / 1000.0))
