@@ -87,12 +87,16 @@ own, as `open-chess-device`.
 
 1. Move the version: `version` under `[workspace.package]` and every
    `version` under `[workspace.dependencies]` in the root `Cargo.toml`, then
-   `cargo check` to update `Cargo.lock`. Merge that.
+   `cargo check` to update `Cargo.lock`. In `CHANGELOG.md`, rename
+   `## Unreleased` to `## 0.2.0 — <date>` and start a new, empty
+   Unreleased above it. Merge that.
 2. Tag main and push the tag:
    ```sh
    git tag v0.2.0 && git push origin v0.2.0
    ```
-3. The workflow checks the tag matches the version, builds every binary and
+3. The workflow checks the tag matches the version and the changelog has a
+   section for it (it becomes the release's notes, above GitHub's list of
+   pull requests, and the Chess lab's What's new), builds every binary and
    the app, creates the GitHub release with them and `SHA256SUMS`, pushes
    the images to ghcr.io, and publishes the crates.
 

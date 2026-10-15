@@ -53,6 +53,12 @@ jobs:
             echo "::error::tag ${GITHUB_REF_NAME} doesn't match Cargo.toml's version $v"
             exit 1
           fi
+          # Every release says what changed (CHANGELOG.md, also the Chess
+          # lab's What's new).
+          if [ "$RELEASING" = true ] && ! python3 scripts/changelog.py "$v" > /dev/null; then
+            echo "::error::CHANGELOG.md has no section for $v: rename its Unreleased heading to '## $v — <date>'"
+            exit 1
+          fi
 
   binaries:
     needs: version
@@ -226,10 +232,15 @@ jobs:
           path: dist
           merge-multiple: true
       - run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: src
+      # The changelog's section first, then GitHub's list of pull requests.
+      - run: python3 src/scripts/changelog.py "$VERSION" > notes.md
       - if: env.RELEASING == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "v$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --title "open-chess $VERSION" --generate-notes --verify-tag
+        run: gh release create "v$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --title "open-chess $VERSION" --notes-file notes.md --generate-notes --verify-tag
 
   image:
     needs: [version, release]
