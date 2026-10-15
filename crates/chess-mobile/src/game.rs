@@ -617,3 +617,20 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod finished_positions {
+    use super::check_fen;
+
+    #[test]
+    fn mate_and_stalemate_tell_apart() {
+        // The app's advice: a position with no move is mate when, with the
+        // turn passed, the other side could take the king (not legal).
+        let mate = "1k1rR3/1pp2P1p/p7/P6q/3pB3/7K/8/6r1 w - - 0 30";
+        assert!(check_fen(mate.into()).unwrap().contains("already over"));
+        assert!(check_fen("1k1rR3/1pp2P1p/p7/P6q/3pB3/7K/8/6r1 b - - 0 30".into()).is_some());
+        let stalemate = "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1";
+        assert!(check_fen(stalemate.into()).unwrap().contains("already over"));
+        assert!(check_fen("7k/5Q2/6K1/8/8/8/8/8 w - - 0 1".into()).is_none());
+    }
+}

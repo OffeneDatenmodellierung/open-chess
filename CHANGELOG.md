@@ -7,6 +7,9 @@ renames that heading to the version and date.
 
 ## Unreleased
 
+- The iOS app's analysis of a finished game says "Checkmate · Black wins"
+  (or stalemate) instead of an error, at the top and in the advice.
+
 - The Chess lab has the esports-lab look unless `CHESS_APP_THEME` says
   otherwise (`none` for the app's own), so a deployment can't lose it by
   leaving the setting out.

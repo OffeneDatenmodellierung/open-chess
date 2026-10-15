@@ -49,7 +49,17 @@ enum AdviceEngine {
         do {
             session = try GameSession(fen: fen, mode: .passAndPlay)
         } catch {
-            out.error = describe(error)
+            // No move to play: mate if the side to move is in check (with
+            // the turn passed, its king could be taken: not a legal
+            // position), else stalemate. Said as the result, not an error.
+            if describe(error).contains("already over") {
+                let inCheck = GameText.otherSideToMove(fen: fen).map { checkFen(fen: $0) != nil } ?? false
+                out.status = inCheck ? "mate" : "stalemate"
+                out.check = inCheck
+                out.winner = inCheck ? (white ? "black" : "white") : nil
+            } else {
+                out.error = describe(error)
+            }
             return out
         }
         let st = session.state()
