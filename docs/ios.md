@@ -125,11 +125,21 @@ signed release and uploads it to App Store Connect. Once:
    automatic signing does this too on the first signed build).
 3. **The app record** in App Store Connect (My Apps › +): name, primary
    language, the bundle id, a SKU.
-4. **An API key** (Users and Access › Integrations › App Store Connect API,
-   role App Manager), and these repository secrets: `APPLE_TEAM_ID`,
+4. **An API key** for uploads (Users and Access › Integrations › App
+   Store Connect API › Team Keys, access **Admin**, which Xcode's
+   cloud-managed signing needs), and these repository secrets:
    `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`,
-   `APP_STORE_CONNECT_KEY` (the `.p8`'s text). Optional:
+   `APP_STORE_CONNECT_KEY` (the `.p8`, as text or base64), plus
+   `APPLE_TEAM_ID`, which the macOS release already has. Optional:
    `BOARD_READER_URL` (weights to bundle).
+
+   The macOS release's secrets ([releases.md](releases.md#secrets)) stay
+   as they are: its Developer ID certificate signs the Mac binary, and its
+   Developer-access key notarises it. The app is signed with an *Apple
+   Distribution* certificate that Xcode makes and keeps in the team
+   ("cloud-managed"), so nothing is exported and the Developer ID
+   certificate isn't touched. Releases are tagged `v*` and app builds
+   `ios-v*`, so neither starts the other.
 5. **Push**: an APNs key (Keys › +, Apple Push Notifications service) for
    the server: `CHESS_APNS_KEY`, `CHESS_APNS_KEY_ID`, `CHESS_APNS_TEAM_ID`.
 

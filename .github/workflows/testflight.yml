@@ -7,10 +7,14 @@ name: TestFlight
 # `ios-v1.0.0` (the version shown in the App Store; the build number is
 # this workflow's run number). Needs these repository secrets:
 #
-#   APPLE_TEAM_ID                  the Apple Developer team id (10 characters)
-#   APP_STORE_CONNECT_KEY_ID       an App Store Connect API key's id (role: App Manager or Admin)
+#   APPLE_TEAM_ID                  the Apple Developer team id (shared with release.yml)
+#   APP_STORE_CONNECT_KEY_ID       an App Store Connect API key's id (role: Admin)
 #   APP_STORE_CONNECT_ISSUER_ID    the keys page's issuer id
-#   APP_STORE_CONNECT_KEY          the key's .p8 file, its whole text
+#   APP_STORE_CONNECT_KEY          the key's .p8 file, its text or base64
+#
+# These are separate from the macOS release's Developer ID certificate and
+# notarising key (APPLE_CERTIFICATE*, APPLE_API_KEY*), which this workflow
+# never reads, so the two can't break each other.
 #
 # Signing is automatic: Xcode makes the certificate and profile in the
 # team with the key ("cloud-managed"), so no certificates are kept here.
@@ -91,7 +95,10 @@ jobs:
         run: |
           set -euo pipefail
           key="$RUNNER_TEMP/AuthKey_$KEY_ID.p8"
-          printf '%s\n' "$KEY" > "$key"
+          case "$KEY" in
+            *"BEGIN PRIVATE KEY"*) printf '%s\n' "$KEY" > "$key" ;;
+            *) printf '%s' "$KEY" | base64 --decode > "$key" ;;
+          esac
           auth=(-allowProvisioningUpdates -authenticationKeyPath "$key" -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER")
           brew install xcodegen
           cd ios && xcodegen
