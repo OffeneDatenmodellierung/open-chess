@@ -49,9 +49,6 @@ These need a real team and its provisioning profile:
   `registerForRemoteNotifications` fails, and the setting shows the
   reason. The token goes to `POST /api/push/devices` with
   `sandbox: true` in Debug builds and `false` in Release.
-- **App Attest**: `com.apple.developer.devicecheck.appattest-environment`
-  is in the entitlements file, but the app doesn't call `DCAppAttestService`
-  yet (see Stubs below).
 - **Device builds** of any kind, and Bluetooth (the simulator has none).
 
 ## Layout
@@ -106,8 +103,9 @@ These need a real team and its provisioning profile:
 
 ## Stubs and known gaps
 
-- **App Attest** is entitled but not called. Sending an attestation with
-  sign-in or uploads needs a server endpoint first.
+- **App Attest** isn't used yet, so the app doesn't ask for it. Adding it
+  needs a server endpoint first, then the
+  `com.apple.developer.devicecheck.appattest-environment` entitlement.
 - **Lichess** uses a personal token pasted by the player (Keychain), not
   OAuth. Its games in play come from `GET /api/account/playing`.
   Challenges to the player on Lichess aren't listed.

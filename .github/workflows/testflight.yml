@@ -97,7 +97,7 @@ jobs:
           cd ios && xcodegen
           xcodebuild -project OpenChess.xcodeproj -scheme OpenChess -configuration Release \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/OpenChess.xcarchive" \
-            DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
+            DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Development" CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
             MARKETING_VERSION="${{ steps.v.outputs.version }}" CURRENT_PROJECT_VERSION="${{ steps.v.outputs.build }}" \
             "${auth[@]}" archive | tail -40
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/OpenChess.xcarchive" \
