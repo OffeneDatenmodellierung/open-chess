@@ -60,8 +60,11 @@ final class AuthManager: ObservableObject {
 
     // MARK: Sign in
 
+    static let needServer = "Enter your open-chess server under Account › Server first."
+
     func signIn() async {
         error = nil
+        guard settings.hasServer else { error = AuthManager.needServer; return }
         busy = true
         defer { busy = false }
         let pkce = PKCE()
@@ -205,7 +208,7 @@ final class AuthManager: ObservableObject {
         switch result {
         case .failure(let error):
             if let e = error as? ASAuthorizationError, e.code == .canceled { return }
-            appleError = (origin: origin, message: "Sign in with Apple didn't finish: \(error.localizedDescription)")
+            appleError = (origin: origin, message: "Sign in with Apple didn't finish: \(describe(error))")
         case .success(let authorization):
             guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
                   let tokenData = credential.identityToken,
@@ -257,6 +260,10 @@ final class AuthManager: ObservableObject {
     }
 
     private func sendApple(_ pending: ApplePending, username: String?) async {
+        guard settings.hasServer else {
+            appleError = (origin: pending.origin, message: AuthManager.needServer)
+            return
+        }
         appleBusy = true
         defer { appleBusy = false }
         var body: [String: Any] = [

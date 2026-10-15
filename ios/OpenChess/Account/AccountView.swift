@@ -71,7 +71,7 @@ struct AccountView: View {
             .listRowBackground(Color.ocPanel)
 
             Section {
-                TextField("Server", text: $serverDraft)
+                TextField("https://your-server", text: $serverDraft)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -79,9 +79,11 @@ struct AccountView: View {
                 if serverDraft.trimmed != settings.serverURL {
                     Button("Use this server") { saveServer() }
                 }
-                Button("Reset to default") {
-                    serverDraft = AppSettings.defaultServer
-                    saveServer()
+                if !AppSettings.defaultServer.isEmpty && settings.serverURL != AppSettings.defaultServer {
+                    Button("Reset to default") {
+                        serverDraft = AppSettings.defaultServer
+                        saveServer()
+                    }
                 }
             } header: {
                 SectionTitle(text: "Server")
@@ -184,7 +186,7 @@ struct AccountView: View {
 
     private func saveServer() {
         let s = serverDraft.trimmed
-        guard let u = URL(string: s), u.scheme == "https" || u.scheme == "http", u.host != nil else {
+        guard AppSettings.isServerAddress(s) else {
             auth.error = "That isn't a server address (https://…)."
             return
         }
