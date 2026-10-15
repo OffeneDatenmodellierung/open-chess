@@ -108,6 +108,11 @@ async fn setup_with(pre: &str, tweak: impl FnOnce(&mut Config)) -> Option<Env> {
         apns_key_id: None,
         apns_team_id: None,
         apns_topic: "org.example.test".into(),
+        apple_key: None,
+        apple_key_id: None,
+        apple_team_id: None,
+        apple_client_ids: Vec::new(),
+        apple_url: "http://apple.invalid".into(),
     };
     tweak(&mut cfg);
     let (stop, rx) = watch::channel(false);
@@ -2634,5 +2639,251 @@ async fn real_board_games_are_recorded_live_and_rated_once_confirmed() {
         409,
         "over"
     );
+    env.teardown().await;
+}
+
+/// A pretend appleid.apple.com: its keys, codes and revocations.
+mod apple_mock {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use aws_lc_rs::rand::SystemRandom;
+    use aws_lc_rs::rsa::KeySize;
+    use aws_lc_rs::signature::{KeyPair, RSA_PKCS1_SHA256, RsaKeyPair};
+    use axum::Router;
+    use axum::extract::{Form, State};
+    use axum::routing::{get, post};
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+    use serde_json::{Value, json};
+
+    #[derive(Clone)]
+    pub struct Mock {
+        pub url: String,
+        key: Arc<RsaKeyPair>,
+        /// Codes not yet used, and whose they are.
+        codes: Arc<Mutex<HashMap<String, String>>>,
+        pub revoked: Arc<Mutex<Vec<String>>>,
+        pub client_id: String,
+    }
+
+    impl Mock {
+        pub async fn start(client_id: &str) -> Mock {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let m = Mock {
+                url: format!("http://{}", l.local_addr().unwrap()),
+                key: Arc::new(RsaKeyPair::generate(KeySize::Rsa2048).unwrap()),
+                codes: Arc::default(),
+                revoked: Arc::default(),
+                client_id: client_id.to_owned(),
+            };
+            let app = Router::new()
+                .route("/auth/keys", get(keys))
+                .route("/auth/token", post(token))
+                .route("/auth/revoke", post(revoke))
+                .with_state(m.clone());
+            tokio::spawn(async move { axum::serve(l, app).await });
+            m
+        }
+
+        fn jwt(&self, claims: &Value) -> String {
+            let h = B64.encode(json!({"alg": "RS256", "kid": "k1"}).to_string());
+            let c = B64.encode(claims.to_string());
+            let input = format!("{h}.{c}");
+            let mut sig = vec![0; self.key.public_modulus_len()];
+            self.key.sign(&RSA_PKCS1_SHA256, &SystemRandom::new(), input.as_bytes(), &mut sig).unwrap();
+            format!("{input}.{}", B64.encode(sig))
+        }
+
+        /// What the app gets from Apple: an identity token for `sub` and a
+        /// fresh code, for this raw nonce.
+        pub fn sign_in(&self, sub: &str, email: Option<&str>, nonce: &str, aud: &str) -> (String, String) {
+            let now = chrono::Utc::now().timestamp();
+            let mut claims = json!({
+                "iss": self.url, "aud": aud, "sub": sub, "iat": now, "exp": now + 600,
+                "nonce": open_chess_server::apple::nonce_hash(nonce),
+            });
+            if let Some(e) = email {
+                claims["email"] = json!(e);
+                claims["email_verified"] = json!(true);
+            }
+            let code = format!("c{}", open_chess_server::auth::random_token(12));
+            self.codes.lock().unwrap().insert(code.clone(), sub.to_owned());
+            (self.jwt(&claims), code)
+        }
+    }
+
+    async fn keys(State(m): State<Mock>) -> axum::Json<Value> {
+        let pk = m.key.public_key();
+        axum::Json(json!({"keys": [{
+            "kty": "RSA", "kid": "k1", "use": "sig", "alg": "RS256",
+            "n": B64.encode(pk.modulus().big_endian_without_leading_zero()),
+            "e": B64.encode(pk.exponent().big_endian_without_leading_zero()),
+        }]}))
+    }
+
+    /// The client secret: an ES256 JWT for our client id.
+    fn secret_ok(m: &Mock, f: &HashMap<String, String>) -> bool {
+        let s = f.get("client_secret").map_or("", String::as_str);
+        let parts: Vec<&str> = s.split('.').collect();
+        let Some(claims) = parts.get(1).and_then(|c| B64.decode(c).ok()) else { return false };
+        let claims: Value = serde_json::from_slice(&claims).unwrap_or_default();
+        parts.len() == 3
+            && claims["sub"] == m.client_id.as_str()
+            && claims["aud"] == m.url.as_str()
+            && claims["iss"] == "TEAM123456"
+            && f.get("client_id") == Some(&m.client_id)
+    }
+
+    async fn token(
+        State(m): State<Mock>,
+        Form(f): Form<HashMap<String, String>>,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let code = f.get("code").cloned().unwrap_or_default();
+        let sub = m.codes.lock().unwrap().remove(&code);
+        match sub {
+            Some(sub) if secret_ok(&m, &f) => {
+                let now = chrono::Utc::now().timestamp();
+                let id = m.jwt(
+                    &json!({"iss": m.url, "aud": m.client_id, "sub": sub, "iat": now, "exp": now + 600}),
+                );
+                axum::Json(json!({"refresh_token": format!("r-{code}"), "id_token": id})).into_response()
+            }
+            _ => (axum::http::StatusCode::BAD_REQUEST, axum::Json(json!({"error": "invalid_grant"})))
+                .into_response(),
+        }
+    }
+
+    async fn revoke(State(m): State<Mock>, Form(f): Form<HashMap<String, String>>) -> axum::http::StatusCode {
+        if !secret_ok(&m, &f) {
+            return axum::http::StatusCode::BAD_REQUEST;
+        }
+        m.revoked.lock().unwrap().push(f.get("token").cloned().unwrap_or_default());
+        axum::http::StatusCode::OK
+    }
+}
+
+/// Sign in with Apple from the app: a new account (after choosing a name),
+/// signing in again, linking to an existing account, unlinking, and Apple
+/// told when an account closes.
+#[tokio::test]
+async fn sign_in_with_apple_makes_links_and_revokes() {
+    use p256::pkcs8::EncodePrivateKey;
+    let apple = apple_mock::Mock::start("org.example.test").await;
+    let pem = p256::ecdsa::SigningKey::from_slice(&[9u8; 32])
+        .unwrap()
+        .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+        .unwrap()
+        .to_string();
+    let url = apple.url.clone();
+    let Some(env) = setup(move |c| {
+        c.apple_key = Some(pem);
+        c.apple_key_id = Some("SIWAKEY123".into());
+        c.apple_team_id = Some("TEAM123456".into());
+        c.apple_client_ids = vec!["org.example.test".into()];
+        c.apple_url = url;
+    })
+    .await
+    else {
+        return;
+    };
+    let http = reqwest::Client::new();
+    let base = env.base[0].clone();
+    let send = |body: serde_json::Value, bearer: Option<&str>| {
+        let mut r = http.post(format!("{base}/api/auth/apple")).json(&body);
+        if let Some(t) = bearer {
+            r = r.bearer_auth(t);
+        }
+        async move {
+            let r = r.send().await.unwrap();
+            let status = r.status().as_u16();
+            (status, r.json::<serde_json::Value>().await.unwrap_or_default())
+        }
+    };
+    let body = |token: &str, code: &str, nonce: &str| {
+        serde_json::json!({"identityToken": token, "authorizationCode": code, "nonce": nonce,
+                           "clientId": "open-chess iOS", "scopes": HUMAN, "name": "Carla Díaz"})
+    };
+
+    // A new Apple ID: choose a name first (the code isn't spent), then the account.
+    let (tok, code) =
+        apple.sign_in("001.carla", Some("c@privaterelay.appleid.com"), "nonce-1", "org.example.test");
+    let (s, v) = send(body(&tok, &code, "nonce-1"), None).await;
+    assert_eq!((s, v["error"].as_str()), (409, Some("choose_username")), "{v}");
+    assert_eq!(v["suggestion"], "carladaz", "{v}");
+    let mut b = body(&tok, &code, "nonce-1");
+    b["username"] = "ai-level-3".into();
+    let (s, v) = send(b.clone(), None).await;
+    assert_eq!((s, v["error"].as_str()), (400, Some("bad_username")), "{v}");
+    b["username"] = "Carla".into();
+    let (s, v) = send(b.clone(), None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!((v["created"].as_bool(), v["username"].as_str()), (Some(true), Some("Carla")));
+    let carla = v["access_token"].as_str().unwrap().to_owned();
+    let me: serde_json::Value = http
+        .get(format!("{base}/api/account"))
+        .bearer_auth(&carla)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!((me["username"].as_str(), me["apple"].as_bool()), (Some("Carla"), Some(true)), "{me}");
+    // The same answer again: Apple's code is spent.
+    assert_eq!(send(b, None).await.0, 403);
+    // A wrong nonce, or a token for another app.
+    let (tok, code) = apple.sign_in("001.carla", None, "nonce-2", "org.example.test");
+    assert_eq!(send(body(&tok, &code, "nonce-x"), None).await.0, 403);
+    let (tok, code) = apple.sign_in("001.carla", None, "nonce-3", "org.other.app");
+    assert_eq!(send(body(&tok, &code, "nonce-3"), None).await.0, 403);
+    // Signing in again: the same account, a new token.
+    let (tok, code) = apple.sign_in("001.carla", None, "nonce-4", "org.example.test");
+    let (s, v) = send(body(&tok, &code, "nonce-4"), None).await;
+    assert_eq!((s, v["created"].as_bool(), v["username"].as_str()), (200, Some(false), Some("Carla")), "{v}");
+
+    // An Apple ID with the email of an account here: sign in there and link.
+    let (ann_id, ann) = env.player("Ann", HUMAN).await;
+    let (_, ben) = env.player("Ben", HUMAN).await;
+    env.pg
+        .execute(
+            &format!(
+                "UPDATE {}.players SET email = 'ann@example.test', password_hash = 'x' WHERE id = $1",
+                env.chess
+            ),
+            &[&ann_id],
+        )
+        .await
+        .unwrap();
+    let (tok, code) = apple.sign_in("002.ann", Some("ann@example.test"), "nonce-5", "org.example.test");
+    let (s, v) = send(body(&tok, &code, "nonce-5"), None).await;
+    assert_eq!((s, v["error"].as_str()), (409, Some("email_in_use")), "{v}");
+    let (s, v) = send(body(&tok, &code, "nonce-5"), Some(&ann)).await;
+    assert_eq!((s, v["linked"].as_bool(), v["username"].as_str()), (200, Some(true), Some("Ann")), "{v}");
+    assert!(v.get("access_token").is_none(), "linking gives no new token: {v}");
+    let (tok, code) = apple.sign_in("002.ann", None, "nonce-6", "org.example.test");
+    let (s, v) = send(body(&tok, &code, "nonce-6"), Some(&ben)).await;
+    assert_eq!((s, v["error"].as_str()), (409, Some("apple_linked_elsewhere")), "{v}");
+    // Ann signs in with Apple now.
+    let (tok, code) = apple.sign_in("002.ann", None, "nonce-7", "org.example.test");
+    let (s, v) = send(body(&tok, &code, "nonce-7"), None).await;
+    assert_eq!((s, v["username"].as_str()), (200, Some("Ann")), "{v}");
+
+    // Unlinking: Ann has a password, so she may; Carla has only Apple.
+    let del = |t: &str| http.delete(format!("{base}/api/auth/apple")).bearer_auth(t.to_owned()).send();
+    assert_eq!(del(&ann).await.unwrap().status(), 204);
+    assert_eq!(apple.revoked.lock().unwrap().len(), 1, "Apple is told");
+    assert_eq!(del(&carla).await.unwrap().status(), 409);
+
+    // Closing Carla's account tells Apple too.
+    assert_eq!(
+        http.delete(format!("{base}/api/account")).bearer_auth(&carla).send().await.unwrap().status(),
+        204
+    );
+    assert_eq!(apple.revoked.lock().unwrap().len(), 2);
+    let left: i64 =
+        env.pg.query_one(&format!("SELECT count(*) FROM {}.apple_ids", env.chess), &[]).await.unwrap().get(0);
+    assert_eq!(left, 0);
     env.teardown().await;
 }

@@ -27,6 +27,8 @@ pub struct Ctx {
     pub reader: Option<Arc<chess_vision::Reader>>,
     /// Apple push notifications for the iOS app, when configured.
     pub apns: Option<Arc<crate::push::Apns>>,
+    /// Sign in with Apple, when configured.
+    pub apple: Option<Arc<crate::apple::Apple>>,
     slots: Arc<Mutex<HashMap<(i64, &'static str), usize>>>,
 }
 
@@ -61,6 +63,7 @@ impl Ctx {
             metrics: Metrics::new(),
             reader: None,
             apns: None,
+            apple: None,
             slots: Arc::default(),
         }
     }
@@ -82,6 +85,10 @@ impl Ctx {
         self.apns = crate::push::Apns::from_config(&self.cfg)?;
         if self.apns.is_some() {
             tracing::info!(topic = self.cfg.apns_topic, "push notifications on");
+        }
+        self.apple = crate::apple::Apple::from_config(&self.cfg)?;
+        if self.apple.is_some() {
+            tracing::info!("Sign in with Apple on");
         }
         Ok(self)
     }
@@ -210,7 +217,8 @@ async fn cors(req: Request, next: Next) -> Response {
 
 pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
     use http::{
-        account, admin, app_files, challenges, fairplay, feed, games, lab, mobile, oauth, otb, streams, web,
+        account, admin, app_files, apple, challenges, fairplay, feed, games, lab, mobile, oauth, otb,
+        streams, web,
     };
     let api = Router::new()
         // OAuth (PKCE) and tokens
@@ -230,6 +238,7 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/api/feed", get(feed::feed))
         .route("/api/token", post(oauth::token).delete(oauth::revoke))
         .route("/api/token/test", post(oauth::test))
+        .route("/api/auth/apple", post(apple::sign_in).delete(apple::unlink))
         // account and users
         .route("/api/account", get(account::me).delete(mobile::delete_account))
         .route(

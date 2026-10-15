@@ -415,7 +415,7 @@ pub async fn signup(State(ctx): State<Ctx>, body: Bytes) -> ApiResult<Response> 
 }
 
 /// What's wrong with a new account's name or email, if anything.
-fn name_problem(name: &str, email: &str) -> Option<&'static str> {
+pub(crate) fn name_problem(name: &str, email: &str) -> Option<&'static str> {
     let valid = name.len() >= 2
         && name.len() <= 20
         && name.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
@@ -433,7 +433,7 @@ fn name_problem(name: &str, email: &str) -> Option<&'static str> {
 }
 
 /// The name or email someone here already has, if so.
-async fn taken(
+pub(crate) async fn taken(
     ctx: &Ctx,
     c: &impl tokio_postgres::GenericClient,
     name: &str,
@@ -460,7 +460,7 @@ fn hash_password(password: &str) -> ApiResult<String> {
 }
 
 /// A new player and their chess account.
-async fn make_account(
+pub(crate) async fn make_account(
     ctx: &Ctx,
     c: &impl tokio_postgres::GenericClient,
     name: &str,

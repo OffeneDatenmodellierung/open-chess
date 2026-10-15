@@ -872,6 +872,21 @@ ALTER TABLE chess.board_photos ADD CONSTRAINT board_photos_label_source_check
     CHECK (label_source IN ('player', 'reviewer', 'consensus', 'admin', 'board'));
 ALTER TABLE chess.board_photos ADD COLUMN game_id text;
 ",
+    r"
+-- 10. Sign in with Apple: the Apple ID (Apple's stable id for the person,
+-- `sub`) linked to an account, one each way. refresh_token: what Apple gave
+-- for the link, kept to revoke it when the player unlinks or closes their
+-- account (Apple asks for that); client_id: which of our ids it was for.
+CREATE TABLE chess.apple_ids (
+    sub text PRIMARY KEY,
+    player_id bigint NOT NULL UNIQUE REFERENCES chess.players ON DELETE CASCADE,
+    client_id text NOT NULL,
+    refresh_token text,
+    email text,
+    private_email boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    last_used_at timestamptz NOT NULL DEFAULT now());
+",
 ];
 
 #[cfg(test)]

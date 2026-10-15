@@ -3,6 +3,7 @@
 pub mod account;
 pub mod admin;
 pub mod app_files;
+pub mod apple;
 pub mod challenges;
 pub mod fairplay;
 pub mod feed;

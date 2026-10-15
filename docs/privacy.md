@@ -12,6 +12,7 @@ a streaming service you set up yourself.
 | What | Why | How long |
 |---|---|---|
 | Your account: username, a password hash or passkeys, your email if you give one | Signing in, telling you about your account | Until you close it |
+| If you sign in with Apple: Apple's id for you, the email Apple shares (perhaps a private relay address), and Apple's token for the link | Signing you in with Apple; ending the link with Apple | Until you unlink it or close your account, when Apple is told |
 | Your games: moves, times, results, ratings | Playing, ratings, your history; fair-play checks | Kept with your games after you close your account, under a placeholder name, as they're the other players' history too |
 | Games played offline and recorded on a real board | The same, once uploaded | As above |
 | Board photos and video frames you choose to send, with the position they show | Training and testing the board reader, under the [photo licence](photo-licence.md) | As the licence says; your name is removed when you close your account |

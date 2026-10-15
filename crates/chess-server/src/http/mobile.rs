@@ -694,9 +694,17 @@ pub async fn delete_account(State(ctx): State<Ctx>, who: Who) -> ApiResult<Respo
         }
     }
     let mut c = ctx.db.conn().await?;
+    let apple: Option<(String, Option<String>)> = c
+        .query_opt(
+            &ctx.db.sql("SELECT client_id, refresh_token FROM chess.apple_ids WHERE player_id = $1"),
+            &[&player],
+        )
+        .await?
+        .map(|r| (r.get(0), r.get(1)));
     let tx = c.transaction().await?;
     for q in [
         "UPDATE chess.accounts SET username = 'deleted-' || player_id WHERE player_id = $1",
+        "DELETE FROM chess.apple_ids WHERE player_id = $1",
         "UPDATE chess.players SET name = 'deleted', email = NULL, key_hash = NULL, password_hash = NULL,
                 esports_id = NULL, disabled_at = now() WHERE id = $1",
         "UPDATE chess.api_tokens SET revoked_at = now(), revoked_by = 'account closed'
@@ -713,6 +721,10 @@ pub async fn delete_account(State(ctx): State<Ctx>, who: Who) -> ApiResult<Respo
     }
     tx.commit().await?;
     ctx.auth.forget_player(player);
+    // Apple asks to be told when an account linked to an Apple ID closes.
+    if let Some((client, refresh)) = apple {
+        crate::http::apple::revoke(&ctx, client, refresh).await;
+    }
     tracing::info!(player, "account closed");
     Ok(StatusCode::NO_CONTENT.into_response())
 }

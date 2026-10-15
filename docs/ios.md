@@ -142,6 +142,12 @@ signed release and uploads it to App Store Connect. Once:
    `ios-v*`, so neither starts the other.
 5. **Push**: an APNs key (Keys › +, Apple Push Notifications service) for
    the server: `CHESS_APNS_KEY`, `CHESS_APNS_KEY_ID`, `CHESS_APNS_TEAM_ID`.
+6. **Sign in with Apple**: tick Sign In with Apple on the app id (step 2),
+   and make a key for it (Keys › +, Sign in with Apple, primary app id
+   `org.offenedatenmodellierung.openchess`) for the server:
+   `CHESS_APPLE_KEY`, `CHESS_APPLE_KEY_ID` (the team id comes from
+   `CHESS_APNS_TEAM_ID`). Without them the app's Apple button answers that
+   the server isn't set up for it.
 
 Each release: run *TestFlight* from the Actions tab (or push a tag
 `ios-v1.0.0`). The build appears in App Store Connect › TestFlight after

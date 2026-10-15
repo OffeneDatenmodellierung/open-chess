@@ -224,6 +224,30 @@ pub struct Config {
     /// The app's bundle id, which notifications are addressed to.
     #[arg(long, env = "CHESS_APNS_TOPIC", default_value = "org.offenedatenmodellierung.openchess")]
     pub apns_topic: String,
+
+    /// Sign in with Apple: the `.p8` key made for it in the Apple Developer
+    /// account (Keys › Sign in with Apple; its PEM, or the path of the
+    /// file). With its id below (and the team id), the app's "Sign in with
+    /// Apple" works; without them it's refused.
+    #[arg(long, env = "CHESS_APPLE_KEY", hide_env_values = true)]
+    pub apple_key: Option<String>,
+
+    /// The Sign in with Apple key's id.
+    #[arg(long, env = "CHESS_APPLE_KEY_ID")]
+    pub apple_key_id: Option<String>,
+
+    /// The Apple Developer team id (default: CHESS_APNS_TEAM_ID).
+    #[arg(long, env = "CHESS_APPLE_TEAM_ID")]
+    pub apple_team_id: Option<String>,
+
+    /// Who Apple's sign-ins are for: the app's bundle id (default:
+    /// CHESS_APNS_TOPIC), comma-separated with any others accepted.
+    #[arg(long, env = "CHESS_APPLE_CLIENT_IDS", value_delimiter = ',')]
+    pub apple_client_ids: Vec<String>,
+
+    /// Apple's sign-in service (only tests change it).
+    #[arg(long, env = "CHESS_APPLE_URL", default_value = "https://appleid.apple.com")]
+    pub apple_url: String,
 }
 
 impl Config {
