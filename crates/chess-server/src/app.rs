@@ -25,6 +25,8 @@ pub struct Ctx {
     pub metrics: Metrics,
     /// Our board reader, when CHESS_VISION_LOCAL_MODEL names one.
     pub reader: Option<Arc<chess_vision::Reader>>,
+    /// Apple push notifications for the iOS app, when configured.
+    pub apns: Option<Arc<crate::push::Apns>>,
     slots: Arc<Mutex<HashMap<(i64, &'static str), usize>>>,
 }
 
@@ -58,6 +60,7 @@ impl Ctx {
             cfg: Arc::new(cfg),
             metrics: Metrics::new(),
             reader: None,
+            apns: None,
             slots: Arc::default(),
         }
     }
@@ -75,6 +78,10 @@ impl Ctx {
                 "board reader loaded"
             );
             self.reader = Some(Arc::new(r));
+        }
+        self.apns = crate::push::Apns::from_config(&self.cfg)?;
+        if self.apns.is_some() {
+            tracing::info!(topic = self.cfg.apns_topic, "push notifications on");
         }
         Ok(self)
     }
@@ -202,7 +209,9 @@ async fn cors(req: Request, next: Next) -> Response {
 }
 
 pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
-    use http::{account, admin, app_files, challenges, fairplay, feed, games, lab, oauth, streams, web};
+    use http::{
+        account, admin, app_files, challenges, fairplay, feed, games, lab, mobile, oauth, streams, web,
+    };
     let api = Router::new()
         // OAuth (PKCE) and tokens
         .route("/oauth", get(oauth::authorize).post(oauth::decide))
@@ -222,7 +231,19 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/api/token", post(oauth::token).delete(oauth::revoke))
         .route("/api/token/test", post(oauth::test))
         // account and users
-        .route("/api/account", get(account::me))
+        .route("/api/account", get(account::me).delete(mobile::delete_account))
+        .route(
+            "/api/games/offline",
+            post(mobile::upload).layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
+        .route("/api/games/{id}/confirm", post(mobile::confirm))
+        .route("/api/sync", get(mobile::sync).layer(tower_http::compression::CompressionLayer::new()))
+        .route(
+            "/api/photos",
+            post(mobile::photo).layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
+        .route("/api/push/devices", post(mobile::add_device))
+        .route("/api/push/devices/{token}", axum::routing::delete(mobile::remove_device))
         .route("/api/account/email", get(account::email))
         .route("/api/account/playing", get(account::playing))
         .route("/api/user/{username}", get(account::user))

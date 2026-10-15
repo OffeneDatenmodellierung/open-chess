@@ -15,6 +15,7 @@ pub mod metrics;
 pub mod model;
 pub mod passkeys;
 pub mod play;
+pub mod push;
 pub mod vision;
 
 use std::time::Duration;

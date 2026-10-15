@@ -156,7 +156,7 @@ flowchart LR
 ### Consequences of the recommended option that need action
 
 - **Licence: relicense `chess-chessnut` as MIT OR Apache-2.0.** It is GPL-3.0-or-later only because its protocol knowledge came from PicoChess; it holds no PicoChess code or behaviour, just the Chessnut byte protocol and a debouncing session. PicoChess support already lives in `chess-device` (`pico.rs`, `picoini.rs`), which stays GPL, so no split or duplicated code is needed. Before relicensing, confirm the crate was written fresh rather than translated from PicoChess, and cross-check its byte values against the Go itself. Do it after the current driver fix. Check every crate in the xcframework with `cargo deny` against an allow-list with no GPL.
-- **Sign-in:** open-chess accounts through `ASWebAuthenticationSession` and OAuth PKCE (`ocp_` tokens). If "Sign in with esports" is offered in the app it may count as a third-party login, which requires Sign in with Apple as well.
+- **Sign-in:** open-chess accounts only, through `ASWebAuthenticationSession` and OAuth PKCE (`ocp_` tokens). Players belong to open-chess (decided 14 Oct 2026), so the app offers no "Sign in with esports"; an app's own accounts don't need Sign in with Apple alongside.
 - **Trust:** offline results are easier to fake than online ones. App Attest, move timestamps, board logs, second-player confirmation and fair-play screening reduce that risk without removing it.
 - **Late games:** rated when they arrive, against current ratings, not by rewriting history.
 - **Boards:** Bluetooth LE only. DGT USB and classic-Bluetooth boards would need Apple MFi certification.

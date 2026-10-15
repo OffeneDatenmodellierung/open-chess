@@ -800,6 +800,55 @@ CREATE TABLE chess.partners (
     last_used_at timestamptz,
     revoked_at timestamptz);
 ",
+    r"
+-- 8. The iOS app.
+--
+-- feed_at: when the server recorded a game as finished, which the live
+-- feed orders by. A game played offline arrives long after it finished;
+-- ordered by finished_at it would land behind a consumer's cursor and be
+-- missed.
+ALTER TABLE chess.games ADD COLUMN feed_at timestamptz;
+UPDATE chess.games SET feed_at = finished_at WHERE finished_at IS NOT NULL;
+CREATE INDEX games_feed_idx ON chess.games (feed_at) WHERE feed_at IS NOT NULL;
+
+-- Correspondence: days per move instead of a clock (`days` when
+-- challenging, as on Lichess). A side out of days loses on time.
+ALTER TABLE chess.challenges ADD COLUMN days integer CHECK (days IN (1, 2, 3, 5, 7, 10, 14));
+ALTER TABLE chess.games ADD COLUMN days_per_turn integer CHECK (days_per_turn IN (1, 2, 3, 5, 7, 10, 14));
+
+-- Games played offline in the app, uploaded later. Keyed by the app's own
+-- id for each, so a repeated upload is recognised. A game between two
+-- people on one device waits (pending) until the other player confirms
+-- the result; game_id is the id it will have.
+CREATE TABLE chess.offline_games (
+    player_id bigint NOT NULL REFERENCES chess.accounts ON DELETE CASCADE,
+    client_id text NOT NULL CHECK (length(client_id) BETWEEN 1 AND 64),
+    game_id text NOT NULL UNIQUE,
+    opponent_id bigint REFERENCES chess.accounts ON DELETE CASCADE,
+    record jsonb NOT NULL,
+    status text NOT NULL CHECK (status IN ('pending', 'recorded', 'declined')),
+    rated boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    decided_at timestamptz,
+    PRIMARY KEY (player_id, client_id));
+CREATE INDEX offline_games_opponent_idx ON chess.offline_games (opponent_id) WHERE status = 'pending';
+
+-- The app's devices, for push notifications (APNs device tokens).
+CREATE TABLE chess.push_devices (
+    token text PRIMARY KEY CHECK (token ~ '^[0-9a-f]{32,200}$'),
+    player_id bigint NOT NULL REFERENCES chess.players ON DELETE CASCADE,
+    sandbox boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX push_devices_player_idx ON chess.push_devices (player_id);
+
+-- Board photos the app sends with the position the player confirmed
+-- (training data straight away), recognised by the app's id for each.
+ALTER TABLE chess.board_photos DROP CONSTRAINT IF EXISTS board_photos_reason_check;
+ALTER TABLE chess.board_photos ADD CONSTRAINT board_photos_reason_check
+    CHECK (reason IN ('unsure', 'implausible', 'no_model', 'contributed'));
+ALTER TABLE chess.board_photos ADD COLUMN client_id text;
+CREATE UNIQUE INDEX board_photos_client_idx ON chess.board_photos (player_id, client_id) WHERE client_id IS NOT NULL;
+",
 ];
 
 #[cfg(test)]

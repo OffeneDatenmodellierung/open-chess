@@ -25,6 +25,10 @@ fi
 features=()
 if [[ "${METAL:-0}" == 1 ]]; then features=(--features metal); fi
 
+# The release profile strips symbols, which would take the library's
+# exported functions with them: keep them (Xcode strips the app).
+export CARGO_PROFILE_RELEASE_STRIP=none
+
 # The oldest iOS the app supports.
 export IPHONEOS_DEPLOYMENT_TARGET=${IPHONEOS_DEPLOYMENT_TARGET:-17.0}
 
@@ -65,7 +69,14 @@ let package = Package(
     products: [.library(name: "OpenChessCore", targets: ["OpenChessCore"])],
     targets: [
         .binaryTarget(name: "open_chess_mobileFFI", path: "open_chess_mobileFFI.xcframework"),
-        .target(name: "OpenChessCore", dependencies: ["open_chess_mobileFFI"], path: "Sources/OpenChessCore"),
+        .target(
+            name: "OpenChessCore",
+            dependencies: ["open_chess_mobileFFI"],
+            path: "Sources/OpenChessCore",
+            // What the Rust static library calls into: random numbers
+            // (getrandom uses Security's SecRandomCopyBytes) and the system.
+            linkerSettings: [.linkedFramework("Security"), .linkedFramework("SystemConfiguration")]
+        ),
     ]
 )
 SWIFT

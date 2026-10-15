@@ -12,11 +12,14 @@
 //!   `CHESS_PUBLIC_DELAY_PLIES` behind, as on the public stream.
 //! * `end`: it finished: the game as `/game/export/{id}` gives it in JSON
 //!   (players, ratings and rating changes, status, winner, moves, clock).
-//!   Its SSE id is when it finished (Unix ms).
+//!   Its SSE id is when the server recorded it finished (Unix ms): the
+//!   finish for a game played here, the upload for a game played offline
+//!   in the iOS app (which may have finished days before).
 //!
 //! A client that reconnects with `Last-Event-ID` (browsers do it
 //! themselves), or asks with `?since=<Unix ms>`, first gets the `end` of
-//! every game finished since then, oldest first, then the live events.
+//! every game recorded since then, oldest first, then the live events, so a
+//! consumer that keeps the last id misses nothing, late uploads included.
 //! `?game=<id>` follows one game; `?only=end` sends only finished games.
 //! A comment line every 15 seconds keeps proxies from closing the stream.
 
@@ -59,7 +62,7 @@ fn end_event(ctx: &Ctx, row: &GameRow) -> Option<Event> {
     let game = Game::from_moves(row.initial_fen.as_deref(), &row.moves).ok()?;
     let json = games::json(row, &game, &HashMap::new(), &ctx.cfg);
     let mut e = Event::default().event("end").json_data(json).ok()?;
-    if let Some(ms) = row.finished_ms {
+    if let Some(ms) = row.feed_ms.or(row.finished_ms) {
         e = e.id(ms.to_string());
     }
     Some(e)
@@ -116,7 +119,7 @@ async fn run(
             };
             let n = rows.len();
             for row in rows {
-                after = after.max(row.finished_ms.unwrap_or(after));
+                after = after.max(row.feed_ms.or(row.finished_ms).unwrap_or(after));
                 if let Some(e) = end_event(&ctx, &row)
                     && ended.insert(row.id.clone())
                     && tx.send(e).await.is_err()
@@ -178,7 +181,7 @@ async fn run(
     }
 }
 
-/// Games finished at or after `after` (Unix ms), oldest first.
+/// Games recorded finished at or after `after` (Unix ms), oldest first.
 async fn catch_up(ctx: &Ctx, filter: &Filter, after: i64) -> anyhow::Result<Vec<GameRow>> {
     let c = ctx.db.conn().await?;
     #[allow(clippy::cast_precision_loss)] // ms since 1970 fit an f64 exactly
@@ -186,8 +189,8 @@ async fn catch_up(ctx: &Ctx, filter: &Filter, after: i64) -> anyhow::Result<Vec<
     let rows = c
         .query(
             &ctx.db.sql(&format!(
-                "{GAME_SELECT} WHERE g.finished_at >= to_timestamp($1) AND ($2::text IS NULL OR g.id = $2)
-                  ORDER BY g.finished_at, g.id LIMIT {PAGE}"
+                "{GAME_SELECT} WHERE g.feed_at >= to_timestamp($1) AND ($2::text IS NULL OR g.id = $2)
+                  ORDER BY g.feed_at, g.id LIMIT {PAGE}"
             )),
             &[&at, &filter.game],
         )

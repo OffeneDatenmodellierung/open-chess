@@ -56,8 +56,14 @@ fn parse_request(q: &HashMap<String, String>) -> Result<AuthRequest, String> {
     }
     let redirect_uri = get("redirect_uri").ok_or("missing redirect_uri")?;
     let u = url::Url::parse(&redirect_uri).map_err(|_| "redirect_uri isn't a URL".to_owned())?;
-    if !matches!(u.scheme(), "http" | "https") || u.fragment().is_some() {
-        return Err("redirect_uri must be http(s) without a fragment".into());
+    // http(s), or a native app's private-use scheme: a reversed domain
+    // name, as RFC 8252 (7.1) asks (`org.example.app:/oauth`), which the
+    // iOS app's sign-in sheet catches.
+    let native = u.scheme().contains('.');
+    if !(matches!(u.scheme(), "http" | "https") || native) || u.fragment().is_some() {
+        return Err(
+            "redirect_uri must be http(s), or an app's reversed-domain scheme, without a fragment".into()
+        );
     }
     let scopes: Vec<String> = get("scope")
         .unwrap_or_default()
@@ -334,12 +340,25 @@ mod tests {
             ("code_challenge", "short"),
             ("redirect_uri", "javascript:alert(1)"),
             ("redirect_uri", "https://x.example/cb#frag"),
+            ("redirect_uri", "myapp://cb"),
+            ("redirect_uri", "data:text/html,hi"),
         ] {
             let mut p = good();
             p.retain(|(kk, _)| *kk != k);
             p.push((k, v));
             assert!(parse_request(&q(&p)).is_err(), "{k}={v}");
         }
+    }
+
+    #[test]
+    fn accepts_a_native_apps_scheme() {
+        let mut p = good();
+        p.retain(|(k, _)| *k != "redirect_uri");
+        p.push(("redirect_uri", "org.offenedatenmodellierung.openchess:/oauth"));
+        assert_eq!(
+            parse_request(&q(&p)).unwrap().redirect_uri,
+            "org.offenedatenmodellierung.openchess:/oauth"
+        );
     }
 
     #[test]

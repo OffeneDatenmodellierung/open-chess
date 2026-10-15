@@ -61,16 +61,33 @@ expensive, or off Wi-Fi with photos set to Wi-Fi only, it asks the store
 for `pending(includePhotos: false, maxBytes: …)`. Each outbox item's key
 is the app's own id for it, sent with the upload so a retry is harmless.
 
+## The app
+
+`ios/`: SwiftUI for iPhone and iPad, in the deployment's Chess lab colours
+(royal navy and orange for esports), built with XcodeGen against this
+package: `scripts/build-xcframework.sh`, then `cd ios && xcodegen` and
+open `OpenChess.xcodeproj` ([ios/README.md](../ios/README.md)). The iOS
+core workflow builds it for the simulator, unsigned, on pull requests that
+change it.
+
+It talks to the server's [iOS endpoints](api.md#the-ios-app): offline
+games and their confirmation, one sync answer, board photos, push devices
+and closing the account. Sign-in is OAuth (PKCE) with open-chess accounts
+only. Online games are correspondence games through the Board API (and
+real-time ones when low-data mode is off), open-chess first and Lichess
+second.
+
+**Bot games are rated** against the level's fixed rating
+(`Level::rating`, 800–2200), offline and on the server alike: the level is
+known, so the opponent's strength is too, and Glicko gives little for
+beating a bot far below you, so it can't be farmed. Games with any help
+stay unrated.
+
 ## Still to come
 
-- **Server:** `POST /api/games/offline`, `POST /api/games/{id}/confirm`,
-  `GET /api/sync?since=`, a contributor photo upload, APNs for "your
-  move", and `/api/feed` ids by receipt (a game uploaded late must still
-  reach esports). See the ADR.
-- **Bot games are rated** against the level's fixed rating
-  (`Level::rating`, 800–2200): the level is known, so the opponent's
-  strength is too, and Glicko gives little for beating a bot far below
-  you, so it can't be farmed. Games with any help stay unrated.
-  `offlineRecordJson` carries the level and its rating for the offline
-  endpoint. The server rates its own `ai-level-N` games the same way.
-- **The app:** in its own repository, against this package.
+- **An Apple Developer team:** push notifications, App Attest and device
+  builds need one (the bundle id is `org.offenedatenmodellierung.openchess`).
+  App Attest isn't checked yet: uploads are trusted as the server's other
+  games are, with fair-play screening.
+- **Board-reader weights** licensed to ship, in `ios/Resources/`.
+- **Lichess sign-in** by OAuth (today a pasted token).

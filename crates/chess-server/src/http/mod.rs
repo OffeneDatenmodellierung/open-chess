@@ -8,6 +8,7 @@ pub mod fairplay;
 pub mod feed;
 pub mod games;
 pub mod lab;
+pub mod mobile;
 pub mod oauth;
 pub mod play;
 pub mod streams;

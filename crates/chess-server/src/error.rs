@@ -39,6 +39,10 @@ impl ApiError {
         ApiError::forbidden(format!("Missing scope: {}", scopes.join(" or ")))
     }
 
+    pub fn conflict(message: impl Into<String>) -> ApiError {
+        ApiError::new(StatusCode::CONFLICT, message)
+    }
+
     pub fn too_many(message: impl Into<String>) -> ApiError {
         ApiError::new(StatusCode::TOO_MANY_REQUESTS, message)
     }

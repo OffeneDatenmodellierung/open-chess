@@ -213,6 +213,8 @@ pub struct GameRow {
     pub rules: Vec<String>,
     pub clock_initial_ms: Option<i64>,
     pub clock_increment_ms: Option<i64>,
+    /// Correspondence: days per move.
+    pub days_per_turn: Option<i32>,
     pub status: Status,
     pub winner: Option<Side>,
     pub moves: String,
@@ -233,6 +235,9 @@ pub struct GameRow {
     pub created_ms: i64,
     pub last_move_ms: Option<i64>,
     pub finished_ms: Option<i64>,
+    /// When the server recorded it finished (the feed's order): the finish
+    /// itself for games played here, the upload for games played offline.
+    pub feed_ms: Option<i64>,
     /// Milliseconds since the side to move's turn began (database clock).
     pub elapsed_ms: i64,
 }
@@ -281,6 +286,7 @@ impl GameRow {
             rules: r.get("rules"),
             clock_initial_ms: r.get("clock_initial_ms"),
             clock_increment_ms: r.get("clock_increment_ms"),
+            days_per_turn: r.get("days_per_turn"),
             status: Status::from_id(r.get("status")).unwrap_or(Status::UnknownFinish),
             winner: side_opt(r.get("winner")),
             moves: r.get("moves"),
@@ -301,6 +307,7 @@ impl GameRow {
             created_ms: r.get::<_, chrono::DateTime<chrono::Utc>>("created_at").timestamp_millis(),
             last_move_ms: ms(r.get("last_move_at")),
             finished_ms: ms(r.get("finished_at")),
+            feed_ms: ms(r.get("feed_at")),
             elapsed_ms: r.get("elapsed_ms"),
         }
     }
@@ -336,6 +343,12 @@ impl GameRow {
 
     pub fn has_clock(&self) -> bool {
         self.clock_initial_ms.is_some()
+    }
+
+    /// Correspondence: what's left of the side to move's days (ms).
+    pub fn days_left_ms(&self) -> Option<i64> {
+        let days = i64::from(self.days_per_turn?);
+        self.status.is_ongoing().then(|| (days * 86_400_000 - self.elapsed_ms).max(0))
     }
 
     /// Clocks run once each side has made a first move.
@@ -439,7 +452,7 @@ impl GameRow {
             black: self.event_player(Side::Black),
             initial_fen: self.initial_fen.clone().unwrap_or_else(|| "startpos".into()),
             state: self.state(first_move_ms),
-            days_per_turn: None,
+            days_per_turn: self.days_per_turn,
             tournament_id: None,
         }
     }
@@ -472,7 +485,11 @@ impl GameRow {
                 rating_diff: odiff,
             },
             is_my_turn: ongoing && self.turn() == side,
-            seconds_left: self.has_clock().then(|| self.live_ms(side) / 1000),
+            seconds_left: if self.has_clock() {
+                Some(self.live_ms(side) / 1000)
+            } else {
+                self.days_left_ms().map(|ms| ms / 1000)
+            },
             winner: self.winner,
             rating: Some(rating),
             rating_diff: diff,
@@ -533,6 +550,8 @@ pub struct ChallengeRow {
     pub rated: bool,
     pub clock_limit: Option<i32>,
     pub clock_increment: Option<i32>,
+    /// Correspondence: days per move.
+    pub days: Option<i32>,
     pub color: String,
     pub final_color: Side,
     pub rules: Vec<String>,
@@ -572,6 +591,7 @@ impl ChallengeRow {
             rated: r.get("rated"),
             clock_limit: r.get("clock_limit"),
             clock_increment: r.get("clock_increment"),
+            days: r.get("days"),
             color: r.get("color"),
             final_color: side_opt(r.get("final_color")).unwrap_or(Side::White),
             rules: r.get("rules"),
@@ -617,8 +637,9 @@ impl ChallengeRow {
             },
             rated: self.rated,
             speed,
-            time_control: match (self.clock_limit, self.clock_increment) {
-                (Some(l), Some(i)) => p::TimeControl::clock(l as u32, i as u32),
+            time_control: match (self.clock_limit, self.clock_increment, self.days) {
+                (Some(l), Some(i), _) => p::TimeControl::clock(l as u32, i as u32),
+                (_, _, Some(d)) => p::TimeControl::Correspondence { days_per_turn: d as u32 },
                 _ => p::TimeControl::Unlimited,
             },
             color: self.color.clone(),

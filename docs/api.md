@@ -30,12 +30,13 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -d clock.limit=300 -d clock.incre
 | Account | `GET /api/account` (Lichess's, plus `roles`, `staff` and `passkeys`, below), `/api/account/email`, `/api/account/playing` (`nb`), `/api/user/{username}`, `/api/player/autocomplete` (`term`, `object`, `nb`: players whose name starts with, then contains, `term`, for a type-ahead list), `POST /api/account/passkey/options` and `POST /api/account/passkey` (the staff passkey check, below) |
 | Bots | `POST /api/bot/account/upgrade`, `GET /api/bot/online` (`nb`) |
 | Streams | `GET /api/stream/event`, `/api/board/game/stream/{id}`, `/api/bot/game/stream/{id}`, `/api/stream/game/{id}` (see [Live games](#live-games)) |
-| Challenges | `POST /api/challenge/ai` (the computer, below), `POST /api/challenge/{username}` (with `keepAliveStream`, `rules` and `acceptByToken`), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline` (`reason`), `…/cancel` |
+| Challenges | `POST /api/challenge/ai` (the computer, below), `POST /api/challenge/{username}` (with `keepAliveStream`, `rules` and `acceptByToken`; a clock, or `days` per move for correspondence), `GET /api/challenge`, `GET /api/challenge/{id}/show`, `POST …/{id}/accept`, `…/decline` (`reason`), `…/cancel` |
 | Playing | `/api/board/game/{id}/…` and `/api/bot/game/{id}/…`: `move/{uci}` (`offeringDraw`), `resign`, `abort`, `draw/{yes\|no}`, `takeback/{yes\|no}`, `claim-victory`, `claim-draw`, `chat` (GET, and POST with `room` and `text`, up to 140 characters) |
 | Games | `GET /game/export/{id}` and `/api/games/export/{id}` (PGN, or JSON with `Accept: application/json`; `pgnInJson`, `clocks`, `moves`), `GET /api/games/user/{username}` (their games, newest first, NDJSON; `max`, default 20, up to 100; `ongoing=false`) |
 | Fair play (ours) | `GET /api/fairplay/queue` (`limit`, default 50, up to 500; `all=true` for reviewed games too), `/api/fairplay/games/{id}`, `/api/fairplay/players/{username}`, `POST /api/fairplay/reviews` (managers and admins, below) |
 | Admin (ours) | `GET /api/admin/players` (`q`, `only=staff`), `GET/POST /api/admin/players/{username}`, `POST …/tokens/revoke`, `POST …/passkeys/reset`, `GET/POST /api/admin/partners`, `POST /api/admin/partners/{id}/revoke` (see [Admins](#admins-managers-and-partners)) |
 | Training app (ours) | see [below](#training-app-endpoints) |
+| The iOS app (ours) | `POST /api/games/offline`, `POST /api/games/{id}/confirm`, `GET /api/sync`, `POST /api/photos`, `POST /api/push/devices`, `DELETE /api/push/devices/{token}`, `DELETE /api/account` (see [below](#the-ios-app)) |
 | Server | `GET /` (what this is, below; browsers are sent to the app), `GET /app/` (the Chess lab app; `/app` redirects there), `GET /app/theme.css` (the deployment's look, below), `GET /app/docs/{api,boards,photos,photo-licence,lichess,engine,releases}.md` (these guides, as markdown, for sites that show them), `GET /docs` and `/docs/{guide}` (these guides, read in the app: `/app/#docs/{guide}`, or on GitHub when the app isn't installed), `GET /favicon.svg` (`/favicon.ico` too: the logo), `GET /@/{username}` (a player's profile, in the app: `/app/#@/{username}`) |
 | Operations (the metrics port, `CHESS_METRICS_BIND`) | `GET /metrics` (Prometheus), `/healthz` (the process is up), `/readyz` (it can reach Postgres) |
 
@@ -66,10 +67,10 @@ An unmodified [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot)
 connects, accepts challenges, chats and plays.
 
 **Not implemented:** variants other than standard and from-position,
-correspondence games, seeks and the lobby, tournaments, studies, puzzles, the streams of several games at once
+seeks and the lobby, tournaments, studies, puzzles, the streams of several games at once
 (`/api/stream/games-by-users`, `/api/stream/games/{id}`) and TV. Paths that
 don't exist get an empty 404; unsupported options on paths that do (a
-variant, a correspondence clock) get Lichess's JSON errors. Rated games from
+variant) get Lichess's JSON errors. Rated games from
 a position, and rated unlimited games, are refused as on Lichess.
 
 **Signed in only.** Nothing is read anonymously: game export, the move
@@ -80,10 +81,36 @@ Only `GET /`, the app, the guides and the sign-in pages are open.
 **Differences worth knowing**
 * `acceptByToken` (start a game without either player clicking: the
   opponent's token, with a playing scope) isn't in Lichess's current spec.
+* Correspondence: `days` (1, 2, 3, 5, 7, 10 or 14) per move instead of a
+  clock, rated or not. A side out of days loses on time (a draw if the
+  other couldn't mate); a first move that doesn't come in time aborts the
+  game. `daysPerTurn` is in the game's stream, and `secondsLeft` in
+  `nowPlaying` counts down the days.
 * Clocks start after both sides' first move. A side that doesn't make its
   first move within `CHESS_FIRST_MOVE_SECS` gets the game aborted.
   Threefold repetition and the fifty-move rule draw automatically.
 * The public move stream runs behind live games (below).
+
+## The iOS app
+
+What the iPhone and iPad app needs beyond the Lichess API
+([ios.md](ios.md)). All take a token; JSON bodies.
+
+| Endpoint | |
+|---|---|
+| `POST /api/games/offline` | `{"games": [record, …]}` (up to 50): games played in the app, as its core records them (`clientId`, `mode` `computer` or `passAndPlay`, `botLevel`, `white`, `black`, `speed`, `moves` in UCI, `moveTimesMs`, `startedMs`, `status`, `winner`, `assistance`). Each is replayed: the board decides mate and stalemate, the record says resignations, agreed draws and time. Against the computer (`ai-level-N` as one side) the game is recorded at once, and rated at the level's fixed rating unless help was used, it started from a set position, or the move times don't add up. Between two people on one device it waits for the other to confirm. The answer, per game: `{clientId, gameId, status: rated\|unrated\|pending\|duplicate\|rejected, reason, ratingDiff}`. A `clientId` already sent is a `duplicate`, so retrying is safe |
+| `POST /api/games/{id}/confirm` | `{"accept": true\|false}`, by the other player of a `pending` game: recorded (and rated, if it can be) or dropped |
+| `GET /api/sync` | `since` (Unix ms): `{now, username, ratings: {perf: {rating, deviation, volatility, provisional, games}}, playing: [{gameId, color, fen, lastMove, isMyTurn, speed, rated, daysPerTurn, secondsLeft, opponent}], confirmations: […], challenges: […], finished: [games finished since]}`, gzipped when asked. One small answer for slow, metered links |
+| `POST /api/photos` | `{clientId, image (base64 JPEG, up to 4 MB), placement, confidence, model}`: a board photo with the position the player confirmed, kept as training data under the [photo licence](photo-licence.md) (accept it first: `POST /api/esl/photo-terms`). `{id}`; the same `clientId` again gives the same id |
+| `POST /api/push/devices`, `DELETE /api/push/devices/{token}` | `{token: the APNs device token in hex, sandbox}`: where to send "your move" in correspondence games and results to confirm |
+| `DELETE /api/account` | Close the account: games in progress are resigned, finished games stay under a placeholder name, tokens and sessions are revoked. 204 |
+
+Push notifications go out when `CHESS_APNS_KEY` (the `.p8` key, or its
+path), `CHESS_APNS_KEY_ID` and `CHESS_APNS_TEAM_ID` are set;
+`CHESS_APNS_TOPIC` is the app's bundle id
+(`org.offenedatenmodellierung.openchess`). The app signs in with OAuth
+(PKCE) and the redirect `org.offenedatenmodellierung.openchess:/oauth`:
+native apps' reversed-domain schemes are accepted ([RFC 8252](https://www.rfc-editor.org/rfc/rfc8252#section-7.1)).
 
 ## Playing the computer
 
@@ -238,7 +265,7 @@ game streams show):
 |---|---|
 | `start` | A game began: the public game description (as the first line of `/api/stream/game/{id}`) |
 | `move` | It moved on: the same description (position, last move, `turns`). While a game is live it runs `CHESS_PUBLIC_DELAY_PLIES` behind, as the public stream does |
-| `end` | It finished: the game as `/game/export/{id}` gives it in JSON (players, ratings and `ratingDiff`, status, winner, moves, clock). Its event id is when it finished (Unix ms) |
+| `end` | It finished: the game as `/game/export/{id}` gives it in JSON (players, ratings and `ratingDiff`, status, winner, moves, clock). Its event id is when the server recorded it finished (Unix ms): the finish for games played here, the upload for games played offline in the iOS app |
 
 A client that reconnects with `Last-Event-ID` (a browser's `EventSource`
 does it itself), or asks with `?since=<Unix ms>`, first gets the `end` of

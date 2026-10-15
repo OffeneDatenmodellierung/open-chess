@@ -1,11 +1,12 @@
 name: iOS core
 
 # The iOS app's core (crates/chess-mobile) as a Swift package: an
-# xcframework plus the UniFFI Swift bindings (scripts/build-xcframework.sh).
+# xcframework plus the UniFFI Swift bindings (scripts/build-xcframework.sh),
+# and the app (ios/) built against it for the simulator, unsigned.
 #
 # Runs on release tags, attaching OpenChessCore-vX.Y.Z.zip to the release
 # the Release workflow makes; on pull requests only when they change the
-# iOS core, its build script or this workflow (macOS minutes cost ten
+# iOS core, the app, the build script or this workflow (macOS minutes cost ten
 # times Linux ones, and CI already tests the crate on Linux); and by hand
 # (Actions › iOS core › Run workflow).
 
@@ -15,6 +16,7 @@ on:
   pull_request:
     paths:
       - crates/chess-mobile/**
+      - ios/**
       - scripts/build-xcframework.sh
       - .github/workflows/ios.yml
   workflow_dispatch:
@@ -46,6 +48,18 @@ jobs:
           save-if: false
       - name: Build the Swift package
         run: scripts/build-xcframework.sh dist/ios
+      - name: Build the app (simulator, unsigned)
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen
+          set -o pipefail
+          xcodebuild -project OpenChess.xcodeproj -scheme OpenChess -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build 2>&1 \
+            | tee ../xcodebuild.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
+          if ! grep -q "BUILD SUCCEEDED" ../xcodebuild.log; then
+            grep -E "error:|Undefined symbols|referenced from|^ld: |\"_[A-Za-z0-9_]+\"" ../xcodebuild.log | sort -u | head -60 | sed 's/^/::error::/'
+            exit 1
+          fi
       - name: Package
         id: pkg
         run: |

@@ -104,6 +104,10 @@ async fn setup_with(pre: &str, tweak: impl FnOnce(&mut Config)) -> Option<Env> {
         app_dir: None,
         app_theme: None,
         tablebase_url: String::new(),
+        apns_key: None,
+        apns_key_id: None,
+        apns_team_id: None,
+        apns_topic: "org.example.test".into(),
     };
     tweak(&mut cfg);
     let (stop, rx) = watch::channel(false);
@@ -2253,5 +2257,223 @@ async fn passkeys_make_accounts_sign_in_and_check_staff() {
     let r = api("/api/account/passkey").json(&key.get(&o)).send().await.unwrap();
     assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
     assert_eq!(admins().await.unwrap().status(), 200);
+    env.teardown().await;
+}
+
+/// What the iOS app needs: offline games (against the computer, and two
+/// people on one device, confirmed by the other), the sync answer, the feed
+/// catching late uploads, correspondence, photos, devices, closing an
+/// account.
+#[tokio::test]
+async fn the_ios_app_uploads_syncs_and_closes_accounts() {
+    let Some(env) = setup(|c| c.public_delay_plies = 0).await else { return };
+    let (_, ann) = env.player("Ann", HUMAN).await;
+    let (_, ben) = env.player("Ben", HUMAN).await;
+    let http = reqwest::Client::new();
+    let base = env.base[0].clone();
+    let post = |path: &str, token: &str, body: serde_json::Value| {
+        http.post(format!("{base}{path}")).bearer_auth(token).json(&body).send()
+    };
+    let get = |path: &str, token: &str| http.get(format!("{base}{path}")).bearer_auth(token).send();
+    // Both have accounts (as after signing in to the app).
+    for t in [&ann, &ben] {
+        env.client(0, t).account().await.unwrap();
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    let three_days_ago = now - 3 * 86_400_000;
+    let record = |client_id: &str, mode: &str, black: &str, hints: u32| {
+        serde_json::json!({
+            "clientId": client_id, "mode": mode, "botLevel": if mode == "computer" { Some(4) } else { None },
+            "white": "Ann", "black": black, "speed": "rapid",
+            "moves": ["f2f3", "e7e5", "g2g4", "d8h4"],
+            "moveTimesMs": [three_days_ago + 1_000, three_days_ago + 2_000, three_days_ago + 3_000, three_days_ago + 4_000],
+            "startedMs": three_days_ago, "status": "mate", "winner": "black",
+            "assistance": {"hints": hints, "takebacks": 0, "analysed": false}, "ratable": hints == 0,
+        })
+    };
+
+    // Against the computer, played three days ago: rated now, and in the
+    // feed after a cursor taken just before the upload.
+    let before_upload = now - 1;
+    let r: serde_json::Value = post(
+        "/api/games/offline",
+        &ann,
+        serde_json::json!({"games": [
+            record("g1", "computer", "ai-level-4", 0),
+            record("g2", "computer", "ai-level-4", 2),
+            record("g3", "computer", "ai-level-9", 0),
+        ]}),
+    )
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    let res = r["results"].as_array().unwrap();
+    assert_eq!(res[0]["status"], "rated", "{r}");
+    assert!(res[0]["ratingDiff"].as_i64().unwrap() < 0, "Ann lost: {r}");
+    assert_eq!(
+        (res[1]["status"].as_str(), res[1]["reason"].as_str()),
+        (Some("unrated"), Some("help was used"))
+    );
+    assert_eq!(res[2]["status"], "rejected");
+    let g1 = res[0]["gameId"].as_str().unwrap().to_owned();
+    let again: serde_json::Value = post(
+        "/api/games/offline",
+        &ann,
+        serde_json::json!({"games": [record("g1", "computer", "ai-level-4", 0)]}),
+    )
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        (again["results"][0]["status"].as_str(), again["results"][0]["gameId"].as_str()),
+        (Some("duplicate"), Some(g1.as_str()))
+    );
+    let exported = env.client(0, &ann).export_game(&g1).await.unwrap();
+    assert!(exported.rated && exported.players.black.rating_diff == Some(0), "the computer keeps its rating");
+    let mut feed = sse(http
+        .get(format!("{base}/api/feed?only=end&since={before_upload}"))
+        .bearer_auth(&ann)
+        .send()
+        .await
+        .unwrap());
+    let (kind, sid, v) = next_sse(&mut feed).await;
+    assert_eq!(
+        (kind.as_str(), v["id"].as_str()),
+        ("end", Some(g1.as_str())),
+        "a late upload still reaches the feed"
+    );
+    assert!(sid.unwrap().parse::<i64>().unwrap() >= before_upload, "its id is when it was recorded");
+    assert!(v["lastMoveAt"].as_i64().unwrap() < before_upload, "though it was played days ago");
+
+    // Two people on one device: waits for Ben, who confirms it.
+    let r: serde_json::Value = post(
+        "/api/games/offline",
+        &ann,
+        serde_json::json!({"games": [record("p1", "passAndPlay", "Ben", 0)]}),
+    )
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(r["results"][0]["status"], "pending", "{r}");
+    let pending = r["results"][0]["gameId"].as_str().unwrap().to_owned();
+    let s: serde_json::Value = get("/api/sync?since=0", &ben).await.unwrap().json().await.unwrap();
+    assert_eq!(s["confirmations"][0]["id"].as_str(), Some(pending.as_str()), "{s}");
+    assert_eq!(s["confirmations"][0]["uploadedBy"], "Ann");
+    let r = post(&format!("/api/games/{pending}/confirm"), &ann, serde_json::json!({"accept": true}))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404, "only Ben confirms");
+    let c: serde_json::Value =
+        post(&format!("/api/games/{pending}/confirm"), &ben, serde_json::json!({"accept": true}))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(c["status"], "rated", "{c}");
+    assert!(c["ratingDiff"].as_i64().unwrap() > 0, "Ben won: {c}");
+    let r = post(&format!("/api/games/{pending}/confirm"), &ben, serde_json::json!({"accept": true}))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 409, "once");
+
+    // Sync: ratings and finished games, gzipped when asked.
+    let r = http
+        .get(format!("{base}/api/sync?since={before_upload}"))
+        .bearer_auth(&ann)
+        .header("accept-encoding", "gzip")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.headers().get("content-encoding").and_then(|v| v.to_str().ok()), Some("gzip"));
+    let s: serde_json::Value =
+        get(&format!("/api/sync?since={before_upload}"), &ann).await.unwrap().json().await.unwrap();
+    assert!(s["ratings"]["rapid"]["rating"].as_f64().unwrap() < 1500.0, "{s}");
+    let finished: Vec<&str> =
+        s["finished"].as_array().unwrap().iter().filter_map(|f| f["gameId"].as_str()).collect();
+    assert!(finished.contains(&g1.as_str()) && finished.contains(&pending.as_str()), "{s}");
+
+    // Correspondence: three days a move, the clock in days.
+    let ann_c = env.client(0, &ann);
+    let ben_id = env.client(0, &ben).account().await.unwrap().id;
+    let r: serde_json::Value = http
+        .post(format!("{base}/api/challenge/{ben_id}"))
+        .bearer_auth(&ann)
+        .form(&[("days", "3"), ("rated", "true"), ("color", "white"), ("acceptByToken", ben.as_str())])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let corr = r["id"].as_str().or(r["game"]["id"].as_str()).expect("a game").to_owned();
+    ann_c.make_move(Api::Board, &corr, "e2e4", false).await.unwrap();
+    let s: serde_json::Value = get("/api/sync", &ben).await.unwrap().json().await.unwrap();
+    let g = s["playing"].as_array().unwrap().iter().find(|g| g["gameId"] == corr.as_str()).expect("playing");
+    assert_eq!(
+        (g["daysPerTurn"].as_i64(), g["isMyTurn"].as_bool(), g["speed"].as_str()),
+        (Some(3), Some(true), Some("correspondence"))
+    );
+    assert!(g["secondsLeft"].as_i64().unwrap() > 3 * 86_400 - 60, "{g}");
+
+    // Photos: only under the licence, once per app id.
+    let photo = serde_json::json!({"clientId": "ph1", "image": "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==",
+                                   "placement": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR", "confidence": 0.9, "model": "test"});
+    assert_eq!(post("/api/photos", &ann, photo.clone()).await.unwrap().status(), 403);
+    post("/api/esl/photo-terms", &ann, serde_json::json!({"accept": true})).await.unwrap();
+    let a: serde_json::Value = post("/api/photos", &ann, photo.clone()).await.unwrap().json().await.unwrap();
+    let b: serde_json::Value = post("/api/photos", &ann, photo).await.unwrap().json().await.unwrap();
+    assert!(a["id"].is_i64() && a["id"] == b["id"], "{a} {b}");
+
+    // Devices for push.
+    let dev = "a".repeat(64);
+    assert!(
+        post("/api/push/devices", &ben, serde_json::json!({"token": dev, "sandbox": true}))
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    assert_eq!(
+        post("/api/push/devices", &ben, serde_json::json!({"token": "nope"})).await.unwrap().status(),
+        400
+    );
+
+    env.client(0, &ben).make_move(Api::Board, &corr, "e7e5", false).await.unwrap();
+    // Closing Ben's account: his game in progress is resigned, his name
+    // goes, his token stops working.
+    let r = http.delete(format!("{base}/api/account")).bearer_auth(&ben).send().await.unwrap();
+    assert_eq!(r.status(), 204);
+    assert_eq!(get("/api/account", &ben).await.unwrap().status(), 401);
+    assert_eq!(
+        http.get(format!("{base}/api/user/Ben")).bearer_auth(&ann).send().await.unwrap().status(),
+        404
+    );
+    let g = ann_c.export_game(&corr).await.unwrap();
+    assert_eq!((g.status, g.winner), (Status::Resign, Some(Side::White)));
+    env.teardown().await;
+}
+
+/// The app signs in with a reversed-domain redirect (RFC 8252).
+#[tokio::test]
+async fn native_apps_sign_in_with_their_own_scheme() {
+    let Some(env) = setup(|_| {}).await else { return };
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+    let r = http
+        .get(format!(
+            "{}/oauth?response_type=code&client_id=open-chess-ios&redirect_uri=org.offenedatenmodellierung.openchess:/oauth&code_challenge={challenge}&code_challenge_method=S256&scope=board:play",
+            env.base[0]
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(r.status(), 400, "accepted (sign-in or consent comes next)");
     env.teardown().await;
 }
