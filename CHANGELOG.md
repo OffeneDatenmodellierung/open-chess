@@ -14,6 +14,10 @@ renames that heading to the version and date.
   push notification settings (and the other settings it had missed: admin
   emails, the tablebase, photo review, analysis threads), so setting them
   in Cloudflare takes effect.
+- The deploy to Cloudflare sets the server's settings from GitHub: a
+  repository variable or secret named like one of them (`DATABASE_URL`,
+  `CHESS_APPLE_KEY`, `CHESS_APP_THEME`, …) goes on the Worker as a var or
+  secret with each deploy.
 
 ## 0.1.6 — 2026-10-15
 
