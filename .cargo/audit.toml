@@ -1,3 +1,8 @@
 # cargo audit: the same exceptions as deny.toml, with the reasons there.
 [advisories]
 ignore = ["RUSTSEC-2024-0436"]
+
+# Yanked crates are cargo deny's to judge (deny.toml: yanked = "deny",
+# with its one exception, zip 8.6.0); cargo audit can't except one crate.
+[yanked]
+enabled = false

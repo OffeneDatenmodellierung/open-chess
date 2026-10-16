@@ -8,6 +8,12 @@ ignore = [
     # paste: a compile-time macro crate, finished rather than abandoned, with
     # no known vulnerability.
     { id = "RUSTSEC-2024-0436", reason = "unmaintained proc-macro, build time only" },
+    # zip: its maintainers yanked every release before 9.0.3 (October 2026),
+    # and candle-core 0.11 (the board reader) needs ^8.6. Candle uses it
+    # only for .npz and PyTorch .pth files: the app and server load
+    # safetensors; only the trainer reads a .pth, one we choose. Drop this
+    # once candle takes zip 9.
+    { crate = "zip@8.6.0", reason = "yanked upstream; candle-core 0.11 needs ^8.6; only .npz/.pth reading, not on untrusted input" },
 ]
 
 [licenses]
