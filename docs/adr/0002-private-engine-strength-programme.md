@@ -11,7 +11,7 @@ architectural-significance: HIGH
 domain: open-chess
 decision-makers: ["Mark Olliver, maintainer"]
 superseded-by:
-version: "1.0"
+version: "1.1"
 last-modified: 2026-10-16
 confluence-url:
 ---
@@ -23,7 +23,7 @@ confluence-url:
 | **State** | Accepted |
 | **Architectural Significance** | HIGH |
 | **Domain** | open-chess |
-| **Document version** | 1.0 |
+| **Document version** | 1.1 |
 
 ## Reference
 
@@ -123,10 +123,11 @@ flowchart LR
 - **Speed:** profile the bench; move generation and evaluation are the likely costs. Any speed-up is proven by an unchanged signature plus higher nps.
 - **First network:** a few million positions, `HIDDEN_SIZE = 256`, CPU backend, to prove the format round-trips; then Metal against CPU on a short run; then the real run.
 - **Private deployment:** a `CHESS_BOT_NET` secret (and later a book) read at start-up by the server's bot, falling back to the public net. Not yet built.
-- **Short clocks:** the in-repo match harness and the engine both lose on time below a one-second base; tests use 10+0.1 or longer.
+- **Short clocks (resolved):** games at a one-second base were lost on time. Instrumenting a game showed one move of 1.1 s against a 14 ms plan: the three-piece tablebases were being built on first probe, inside the search and outside the clock. `open-chess-uci` now builds them at start-up (`Searcher::prepare_tablebases`, about a second before `uciok`), subtracts a `Move Overhead` (default 10 ms) from each move's plan, and plays new moves onto the previous `position` instead of replaying the game. Per-move overruns are now a few milliseconds. The web app keeps building on demand, where there is no clock.
 
 ## Document version history
 
 | Version | Date | Notes |
 |---------|------|-------|
 | 1.0 | 2026-10-16 | Accepted with the Phase 0 implementation: `open-chess-uci`, bench, bulletformat datagen, test rig, bullet configuration. |
+| 1.1 | 2026-10-16 | Time losses at short clocks traced to on-demand tablebase builds; fixed. |

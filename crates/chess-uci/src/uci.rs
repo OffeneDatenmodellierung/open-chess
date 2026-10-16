@@ -2,7 +2,9 @@
 //!
 //! Options: `Hash` (MB), `Threads`, `MultiPV`, `EvalFile` (an NNUE weight
 //! file; empty for the hand-written evaluation), `UseTablebases` (the
-//! built-in three-piece tables), and every search tunable from
+//! built-in three-piece tables), `Move Overhead` (milliseconds taken off
+//! every move's time budget for the pipe round trip and the GUI's own
+//! clock, as other engines have), and every search tunable from
 //! [`chess_analysis::params::TUNABLES`] as a spin option under its own
 //! name, so tuning runs (OpenBench's SPSA, fastchess `option.name=value`)
 //! can set them without a rebuild.
@@ -37,6 +39,12 @@ pub struct Engine {
     net: Option<Arc<Network>>,
     net_path: String,
     params: SearchParams,
+    /// Milliseconds off each move's budget for everything outside the
+    /// search: pipe latency, the GUI's clock, the hard stop's granularity.
+    move_overhead_ms: u64,
+    /// The last `position` command's words, so a command that only adds
+    /// moves to it plays those on instead of replaying the game.
+    last_position: Vec<String>,
 }
 
 impl Default for Engine {
@@ -53,8 +61,11 @@ impl Engine {
     /// Never (the start position is valid).
     pub fn new() -> Engine {
         let hash_mb = 64;
+        let mut searcher = Searcher::new((hash_mb << 20) / 32);
+        // About a second, once, rather than inside the first endgame search.
+        searcher.prepare_tablebases();
         Engine {
-            searcher: Searcher::new((hash_mb << 20) / 32),
+            searcher,
             game: Game::new(None).expect("start position"),
             hash_mb,
             threads: 1,
@@ -62,6 +73,8 @@ impl Engine {
             net: None,
             net_path: String::new(),
             params: SearchParams::default(),
+            move_overhead_ms: 10,
+            last_position: Vec::new(),
         }
     }
 
@@ -73,11 +86,13 @@ impl Engine {
              option name Threads type spin default {} min 1 max 512\n\
              option name MultiPV type spin default {} min 1 max 64\n\
              option name EvalFile type string default <empty>\n\
-             option name UseTablebases type check default true\n",
+             option name UseTablebases type check default true\n\
+             option name Move Overhead type spin default {} min 0 max 5000\n",
             chess_analysis::engine_id(),
             self.hash_mb,
             self.threads,
-            self.multipv
+            self.multipv,
+            self.move_overhead_ms
         );
         for t in TUNABLES {
             let _ = writeln!(
@@ -107,6 +122,7 @@ impl Engine {
                 let mb: usize = value.parse().map_err(|_| format!("Hash {value:?} isn't a number"))?;
                 self.hash_mb = mb.clamp(1, 65_536);
                 self.searcher = Searcher::new((self.hash_mb << 20) / 32);
+                self.searcher.prepare_tablebases();
                 self.searcher.set_params(self.params);
                 self.searcher.set_network(self.net.clone());
             }
@@ -136,6 +152,12 @@ impl Engine {
             "usetablebases" => {
                 self.searcher.use_tablebases = value.eq_ignore_ascii_case("true");
             }
+            "move overhead" | "moveoverhead" => {
+                self.move_overhead_ms = value
+                    .parse::<u64>()
+                    .map_err(|_| format!("Move Overhead {value:?} isn't a number"))?
+                    .min(5000);
+            }
             other => {
                 let v: i32 = value.parse().map_err(|_| format!("{name} {value:?} isn't a number"))?;
                 if !self.params.set(other, v) {
@@ -147,8 +169,45 @@ impl Engine {
         Ok(())
     }
 
+    /// `position …`: the game, replayed from the start unless the command
+    /// only adds moves to the previous one.
+    fn position(&mut self, w: &[&str]) -> bool {
+        let words: Vec<String> = w.iter().map(|&x| x.to_string()).collect();
+        let extends = !self.last_position.is_empty()
+            && words.len() >= self.last_position.len()
+            && words[..self.last_position.len()] == self.last_position[..]
+            && words.contains(&"moves".to_string());
+        if extends {
+            // The previous command may have ended without `moves`.
+            let new_moves = if self.last_position.contains(&"moves".to_string()) {
+                &words[self.last_position.len()..]
+            } else {
+                &words[self.last_position.len() + 1..]
+            };
+            let mut g = self.game.clone();
+            if new_moves.iter().all(|m| g.play_uci(m).is_ok()) {
+                self.game = g;
+                self.last_position = words;
+                return true;
+            }
+        }
+        match position(w) {
+            Some(g) => {
+                self.game = g;
+                self.last_position = words;
+                true
+            }
+            None => false,
+        }
+    }
+
     fn go(&mut self, words: &[&str], out: &mut impl Write) {
-        let limits = Limits { multipv: self.multipv, ..limits(words, &self.game) };
+        let mut limits = Limits { multipv: self.multipv, ..limits(words, &self.game) };
+        if let Some(t) = limits.time_ms.as_mut()
+            && num(words, "movetime").is_none()
+        {
+            *t = t.saturating_sub(self.move_overhead_ms).max(1);
+        }
         let board = self.game.board().clone();
         let history = history_hashes(&self.game);
         let r = if self.threads > 1 {
@@ -204,8 +263,11 @@ pub fn info_lines(board: &cozy_chess::Board, r: &SearchResult) -> String {
         .join("\n")
 }
 
+/// The number after `key`; a fractional one is truncated and a negative
+/// one is zero, since a GUI's clock arithmetic occasionally produces either.
 fn num(w: &[&str], key: &str) -> Option<u64> {
-    w.iter().position(|&x| x == key).and_then(|i| w.get(i + 1)).and_then(|v| v.parse().ok())
+    let v = w.iter().position(|&x| x == key).and_then(|i| w.get(i + 1))?;
+    v.parse::<u64>().ok().or_else(|| v.parse::<f64>().ok().map(|f| f.max(0.0) as u64))
 }
 
 /// `go` arguments into limits. A clock becomes a budget of the time left
@@ -277,6 +339,7 @@ pub fn run(input: impl BufRead, out: impl Write + Send + 'static) -> std::io::Re
             Some("ucinewgame") => {
                 engine.searcher.clear();
                 engine.game = Game::new(None).expect("start position");
+                engine.last_position.clear();
             }
             Some("setoption") => {
                 let name_at = words.iter().position(|&w| w == "name");
@@ -290,11 +353,10 @@ pub fn run(input: impl BufRead, out: impl Write + Send + 'static) -> std::io::Re
                 }
             }
             Some("position") => {
-                if let Some(g) = position(&words[1..]) {
+                if engine.position(&words[1..]) {
                     if let Ok(mut b) = board_cell.lock() {
-                        *b = g.board().clone();
+                        *b = engine.game.board().clone();
                     }
-                    engine.game = g;
                 } else {
                     writeln!(sink, "info string bad position")?;
                 }
@@ -335,5 +397,48 @@ impl Write for SharedWriter {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         self.0.lock().map_or(Ok(()), |mut o| o.flush())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_position_that_adds_moves_is_played_on() {
+        let mut e = Engine::new();
+        assert!(e.position(&["startpos", "moves", "e2e4"]));
+        assert!(e.position(&["startpos", "moves", "e2e4", "e7e5"]));
+        assert_eq!(e.game.ply(), 2);
+        // An unrelated command replays from scratch.
+        assert!(e.position(&["startpos", "moves", "d2d4"]));
+        assert_eq!(e.game.uci_moves(), vec!["d2d4"]);
+        // `startpos` alone, then moves added to it.
+        assert!(e.position(&["startpos"]));
+        assert!(e.position(&["startpos", "moves", "c2c4"]));
+        assert_eq!(e.game.uci_moves(), vec!["c2c4"]);
+        // An illegal continuation falls back and fails cleanly.
+        assert!(!e.position(&["startpos", "moves", "c2c4", "e1e8"]));
+        assert_eq!(e.game.uci_moves(), vec!["c2c4"]);
+        assert!(!e.position(&["nonsense"]));
+    }
+
+    #[test]
+    fn clock_budgets_and_overhead() {
+        let g = Game::new(None).unwrap();
+        let l = limits(&["wtime", "1000", "btime", "1000", "winc", "10", "binc", "10"], &g);
+        assert_eq!(l.time_ms, Some(47));
+        let l = limits(&["wtime", "60", "btime", "60", "winc", "100", "binc", "100"], &g);
+        assert_eq!(l.time_ms, Some(20), "a third of what is left, whatever the increment");
+        let l = limits(&["wtime", "6", "btime", "6"], &g);
+        assert_eq!(l.time_ms, Some(5), "the floor");
+        let l = limits(&["movetime", "500"], &g);
+        assert_eq!(l.time_ms, Some(500));
+        let l = limits(&["wtime", "60000", "btime", "60000", "movestogo", "10"], &g);
+        assert_eq!(l.time_ms, Some(6000));
+        let l = limits(&["wtime", "967.4", "btime", "-3"], &g);
+        assert_eq!(l.time_ms, Some(38), "fractional and negative clocks still bound the search");
+        let l = limits(&["depth", "5", "nodes", "1234"], &g);
+        assert_eq!((l.depth, l.nodes, l.time_ms), (5, 1234, None));
     }
 }

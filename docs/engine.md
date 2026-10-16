@@ -44,7 +44,10 @@ tablebase server, when online).
 the engine-testing world uses run it. Its options are `Hash`, `Threads`,
 `MultiPV`, `EvalFile` (a network), `UseTablebases`, and every search
 tunable by name, so a test can change one number without a rebuild.
-It also carries `bench` and `datagen` (below).
+It also carries `bench` and `datagen` (below). It builds the three-piece
+tablebases before answering `uci` (about a second), so no clocked move
+pays for them; `Move Overhead` (10 ms) is taken off each move's plan for
+the pipe and the GUI's own clock.
 
 Strength is measured, never guessed, with `scripts/engine/` (see its
 README for the rules):

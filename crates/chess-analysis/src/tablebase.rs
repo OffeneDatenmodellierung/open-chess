@@ -118,6 +118,23 @@ impl Tablebases {
         decode(self.table(piece).values[idx])
     }
 
+    /// Build every table now, so no later probe pays for it. The first
+    /// probe of each ending otherwise builds its table in the middle of a
+    /// search (about a second for all of them), which is fine for an
+    /// analysis but not under a clock; an engine playing on a clock calls
+    /// this once at start-up.
+    pub fn prepare(&mut self) {
+        // Pawns promote, so this builds the piece tables too.
+        self.table(Piece::Pawn);
+    }
+
+    /// Whether every table has been built.
+    pub fn prepared(&self) -> bool {
+        [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight, Piece::Pawn]
+            .iter()
+            .all(|p| self.tables.contains_key(p))
+    }
+
     fn table(&mut self, piece: Piece) -> &Table {
         if !self.tables.contains_key(&piece) && matches!(piece, Piece::Bishop | Piece::Knight) {
             // A lone minor piece can never mate: every position is a draw.
@@ -267,6 +284,14 @@ impl Tablebases {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prepare_builds_every_table() {
+        let mut t = super::Tablebases::default();
+        assert!(!t.prepared());
+        t.prepare();
+        assert!(t.prepared());
+    }
+
     use super::*;
 
     fn probe(fen: &str) -> Probe {

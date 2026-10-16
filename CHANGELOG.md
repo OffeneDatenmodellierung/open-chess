@@ -20,6 +20,10 @@ renames that heading to the version and date.
   produced it. `scripts/engine/` is the test rig: SPRT runs, the
   gauntlet and the bench check through fastchess; `training/` has the
   bullet configuration and the loop (ADR-0002).
+- The engine no longer loses on time in the first endgame of a game: the
+  three-piece tablebases are built once at start-up instead of inside the
+  first search that needs them. `open-chess-uci` also has a `Move
+  Overhead` option and plays new moves on rather than replaying the game.
 - The iOS app's analysis of a finished game says "Checkmate · Black wins"
   (or stalemate) instead of an error, at the top and in the advice.
 - Tapping the iOS app's ratings says what they and their "?" mean.

@@ -430,6 +430,13 @@ impl Searcher {
         }
     }
 
+    /// Build the three-piece tablebases now rather than on first probe,
+    /// so no clocked search pays about a second for them. Results are the
+    /// same either way.
+    pub fn prepare_tablebases(&mut self) {
+        self.tablebases.prepare();
+    }
+
     /// The exact result of a three-piece position for the side to move.
     pub fn probe(&mut self, board: &Board) -> Option<Probe> {
         let no_castling = Color::ALL.iter().all(|&c| {
