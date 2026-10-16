@@ -113,6 +113,18 @@ final class AppModel: ObservableObject {
         }
     }
 
+    #if DEBUG
+    /// App Store screenshots (`ScreenshotMode`): settled ratings to show.
+    func showScreenshotRatings() {
+        let values: [(String, Double)] = [
+            ("bullet", 1612), ("blitz", 1748), ("rapid", 1835), ("classical", 1902), ("correspondence", 1786),
+        ]
+        ratings = values.map {
+            SpeedRating(speed: $0.0, value: RatingValue(rating: $0.1, deviation: 62, volatility: 0.06), local: false)
+        }
+    }
+    #endif
+
     func rating(for speed: String) -> RatingValue {
         if let r = ratings.first(where: { $0.speed == speed }) {
             return r.value

@@ -1,0 +1,60 @@
+name: App Store screenshots
+
+# The iOS app's App Store screenshots, from the simulator: the largest
+# iPhone and the 13-inch iPad, five scenes each (ios/OpenChess/App/
+# ScreenshotMode.swift, scripts/ios-screenshots.sh). Run by hand (Actions ›
+# App Store screenshots › Run workflow); the PNGs are the run's artifact,
+# ready to drop into App Store Connect.
+
+on:
+  workflow_dispatch:
+  # And when the screenshots themselves change.
+  pull_request:
+    paths:
+      - ios/OpenChess/App/ScreenshotMode.swift
+      - scripts/ios-screenshots.sh
+      - .github/workflows/app-store-screenshots.yml
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: "1.97.0"
+
+jobs:
+  screenshots:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ios
+          save-if: false
+      - name: The core
+        run: scripts/build-xcframework.sh dist/ios
+      - name: The app (Debug, for the simulator)
+        env:
+          SERVER: ${{ vars.CHESS_SERVER_URL || secrets.CHESS_SERVER_URL }}
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen
+          set -o pipefail
+          xcodebuild -project OpenChess.xcodeproj -scheme OpenChess -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO CHESS_SERVER_URL="$SERVER" build 2>&1 \
+            | tee ../xcodebuild.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" ../xcodebuild.log
+      - name: Screenshots
+        run: |
+          xcrun simctl list devices available | grep -E "iPhone .* Pro Max|iPad Pro 13" || true
+          scripts/ios-screenshots.sh "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/open-chess.app" screenshots
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: app-store-screenshots
+          path: screenshots
+          retention-days: 30

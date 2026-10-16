@@ -176,8 +176,13 @@ App Store page and submit it for review:
   ([privacy.md](privacy.md)); the App Privacy answers follow the app's
   privacy manifest (`ios/OpenChess/PrivacyInfo.xcprivacy`): user ID, email,
   gameplay content and photos, linked to the user, not used for tracking.
-- **Screenshots**: iPhone 6.9" and iPad 13" at least (the simulator's
-  ⌘S takes them).
+- **Screenshots**: iPhone 6.9" and iPad 13" at least. Actions › *App Store
+  screenshots* › Run workflow takes them on the largest iPhone and the
+  13-inch iPad simulators: Play, a training game, the analysis board, Train
+  and a real-board game's setup, with sample ratings and Apple's 9:41 status
+  bar (the run's artifact). The scenes are `ScreenshotMode` in Debug builds
+  (`-OCScreenshot <scene>`); on a Mac, `scripts/ios-screenshots.sh` takes
+  them from a Debug simulator build.
 - **Review notes**: a demo account on the server you point the app at, and
   that a Chessnut board is optional (everything else works without one).
 - **Export compliance**: the app uses only Apple's and standard encryption

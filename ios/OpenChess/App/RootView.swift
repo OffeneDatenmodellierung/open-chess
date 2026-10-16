@@ -11,6 +11,10 @@ struct RootView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var settings: AppSettings
     @State var tab: AppTab = .play
+    #if DEBUG
+    @State private var screenshotAnalysis: AnalysisBoardModel?
+    @State private var screenshotRealBoard = false
+    #endif
 
     var body: some View {
         TabView(selection: $tab) {
@@ -52,6 +56,28 @@ struct RootView: View {
                 .environmentObject(model.otb)
                 .preferredColorScheme(settings.colorScheme)
         }
+        #if DEBUG
+        .task {
+            if let scene = ScreenshotMode.scene {
+                ScreenshotMode.open(scene, model: model, tab: $tab,
+                                    analysis: $screenshotAnalysis, realBoard: $screenshotRealBoard)
+            }
+        }
+        .fullScreenCover(item: $screenshotAnalysis) { a in
+            AnalysisCover(board: a) { screenshotAnalysis = nil }
+                .environmentObject(model)
+                .environmentObject(settings)
+                .preferredColorScheme(settings.colorScheme)
+        }
+        .sheet(isPresented: $screenshotRealBoard) {
+            LiveBoardSetupView()
+                .environmentObject(model)
+                .environmentObject(settings)
+                .environmentObject(model.auth)
+                .environmentObject(model.chessnut)
+                .ocAppearance()
+        }
+        #endif
         .alert("Saved data", isPresented: Binding(
             get: { model.storeError != nil },
             set: { if !$0 { model.storeError = nil } }
