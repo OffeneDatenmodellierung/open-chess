@@ -1187,6 +1187,30 @@ async fn the_host_site_signs_players_in_and_gets_their_tokens() {
 /// A deployment that used the host site's players: they, their chess
 /// tokens and our references to them come across once.
 #[tokio::test]
+async fn the_site_works_without_its_sign_in_button() {
+    // ESPORTS_LOGIN off: no "Sign in with esports-lab" here, but the
+    // site's server still gets its players' tokens with the secret.
+    let Some(env) = setup(|c| c.esports_login = false).await else { return };
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let page = http.get(format!("{}/login", env.base[0])).send().await.unwrap().text().await.unwrap();
+    assert!(!page.contains("Sign in with esports-lab"), "{page}");
+    let r = http.get(format!("{}/auth/esports?return=/account", env.base[0])).send().await.unwrap();
+    assert_eq!(r.status(), 404);
+    let t: serde_json::Value = http
+        .post(format!("{}/api/esports/token", env.base[0]))
+        .bearer_auth(SECRET)
+        .form(&[("sub", "91"), ("name", "Ida Berg"), ("scopes", "board:play")])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(t["username"], "Ida-Berg");
+    env.teardown().await;
+}
+
+#[tokio::test]
 async fn the_site_links_an_existing_account() {
     let Some(env) = setup(|_| {}).await else { return };
     let (_, token) = env.player("Own-Account", &["board:play"]).await;

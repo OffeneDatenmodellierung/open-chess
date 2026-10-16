@@ -44,10 +44,11 @@ pub struct Config {
     #[arg(long, env = "ESPORTS_PUBLIC_URL", default_value = "http://localhost:8080")]
     pub site_url: String,
 
-    /// "Sign in with the host site" (esports-lab): its players sign in
-    /// here through it, and its server gets tokens for them. Needs
-    /// `ESPORTS_SECRET`. Off by default (the site is private); the
-    /// server's own accounts work either way.
+    /// "Sign in with the host site" (esports-lab) on this server's sign-in
+    /// page: its players sign in here through it. Needs `ESPORTS_SECRET`.
+    /// Off by default; the site's own use of this server (players, their
+    /// tokens, reading games) needs only `ESPORTS_SECRET`, and the server's
+    /// own accounts work either way.
     #[arg(
         long,
         env = "ESPORTS_LOGIN",
@@ -280,9 +281,15 @@ impl Config {
         self.admin_emails.iter().map(|e| e.trim().to_lowercase()).filter(|e| e.contains('@')).collect()
     }
 
-    /// The secret shared with the host site, when signing in with it is on.
+    /// The secret shared with the host site (32 characters or more): the
+    /// site's server uses it to act as the host site.
+    pub fn site_secret(&self) -> Option<&str> {
+        self.esports_secret.as_deref().filter(|s| s.len() >= 32)
+    }
+
+    /// The shared secret, when signing in here with the host site is on.
     pub fn esports(&self) -> Option<&str> {
-        self.esports_secret.as_deref().filter(|s| self.esports_login && s.len() >= 32)
+        self.site_secret().filter(|_| self.esports_login)
     }
 
     pub fn challenge_ttl(&self) -> Duration {
