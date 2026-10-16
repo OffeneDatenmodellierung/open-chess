@@ -6,8 +6,8 @@
 # For the largest iPhone and the 13-inch iPad the installed Xcode has, it
 # boots the simulator with Apple's 9:41 status bar, then launches the app
 # once per scene with -OCScreenshot <scene> (ios/OpenChess/App/
-# ScreenshotMode.swift) and saves <out>/<device>/<n>-<scene>.png, in
-# portrait, at the size App Store Connect asks for.
+# ScreenshotMode.swift) and saves <out>/<device>/<n>-<scene>.jpg, in
+# portrait, at the size App Store Connect asks for (iPhone 6.9", iPad 13").
 set -euo pipefail
 
 app=${1:?the .app}
@@ -74,6 +74,10 @@ for f in "$out"/*/*.png; do
     read -r w h < <(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} END{print w, h}')
   fi
   if [[ "$ok_sizes" == *" ${w}x${h} "* ]]; then
+    # The simulator's PNGs have an alpha channel, which App Store Connect
+    # can refuse: a JPEG has none.
+    sips -s format jpeg -s formatOptions 95 "$f" --out "${f%.png}.jpg" >/dev/null
+    rm "$f"
     echo "::notice::${f#"$out"/}: ${w}x${h}"
   else
     echo "::error::${f#"$out"/}: ${w}x${h} isn't a size App Store Connect takes"
