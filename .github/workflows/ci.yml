@@ -142,6 +142,7 @@ jobs:
           cargo check --locked -p open-chess-server
           cargo check --locked -p open-chess --no-default-features --features server
           cargo check --locked -p open-chess-train
+          cargo check --locked -p open-chess-uci
       - name: cargo test
         env:
           CHESS_TEST_DATABASE_URL: postgres://chess:chess@127.0.0.1:5432/chess?sslmode=disable

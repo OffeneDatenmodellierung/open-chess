@@ -66,7 +66,7 @@ pub use explain::{MoveExplanation, explain_move, explain_san, glossary};
 pub use openings::{Opening, opening};
 pub use params::{SearchParams, TUNABLES, Tunable};
 pub use patterns::{Motif, Pattern, detect};
-pub use search::{Limits, Score, SearchResult, Searcher, see};
+pub use search::{IterationCallback, Limits, Score, SearchResult, Searcher, see};
 pub use tablebase::{Probe, Tablebases};
 pub use util::{history_hashes, parse_uci, std_uci};
 pub use wdl::Wdl;

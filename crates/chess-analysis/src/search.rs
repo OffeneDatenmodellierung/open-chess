@@ -114,6 +114,9 @@ pub struct SearchLine {
     pub score: Score,
 }
 
+/// What [`Searcher::set_on_iteration`] is told each iteration.
+pub type IterationCallback = Box<dyn FnMut(&SearchResult) + Send>;
+
 /// The outcome of [`Searcher::search`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchResult {
@@ -306,6 +309,8 @@ pub struct Searcher {
     cont: Vec<i32>,
     /// [side][pawn key]: how far static evaluation tends to be off.
     corr: Vec<i32>,
+    /// Called after each completed iteration (see [`Searcher::set_on_iteration`]).
+    on_iteration: Option<IterationCallback>,
 }
 
 impl Default for Searcher {
@@ -351,7 +356,15 @@ impl Searcher {
             skip: [None; MAX_PLY],
             cont: vec![0; 6 * 64 * 6 * 64],
             corr: vec![0; 2 * CORR_SIZE],
+            on_iteration: None,
         }
+    }
+
+    /// Be told the result of each completed iteration of a search (a
+    /// deeper one each time), for live output such as UCI `info` lines.
+    /// The callback never affects the search.
+    pub fn set_on_iteration(&mut self, f: Option<IterationCallback>) {
+        self.on_iteration = f;
     }
 
     /// Search with these parameters (see [`crate::params`]).
@@ -415,6 +428,13 @@ impl Searcher {
             let (lo, hi) = self.accs.split_at_mut(ply + 1);
             net.update(parent, child, &lo[ply], &mut hi[0]);
         }
+    }
+
+    /// Build the three-piece tablebases now rather than on first probe,
+    /// so no clocked search pays about a second for them. Results are the
+    /// same either way.
+    pub fn prepare_tablebases(&mut self) {
+        self.tablebases.prepare();
     }
 
     /// The exact result of a three-piece position for the side to move.
@@ -497,7 +517,10 @@ impl Searcher {
             }
             if !lines.is_empty() {
                 lines.sort_by_key(|l| std::cmp::Reverse(l.score.as_cp()));
-                best = SearchResult { lines, depth, nodes: self.nodes, elapsed_ms: 0 };
+                best = SearchResult { lines, depth, nodes: self.nodes, elapsed_ms: self.elapsed() };
+                if let Some(f) = &mut self.on_iteration {
+                    f(&best);
+                }
             }
             if self.stopped {
                 break;

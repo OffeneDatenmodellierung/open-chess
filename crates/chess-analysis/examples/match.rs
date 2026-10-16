@@ -1,16 +1,19 @@
 //! Play two UCI engines against each other and estimate the Elo difference.
 //!
-//! Used to measure each engine change (new build vs old build) and to
-//! measure the engine against Stockfish. Openings come from the book,
-//! each played twice with colours swapped.
+//! A quick in-repo check with no other tools; the real tests (SPRT, the
+//! gauntlet) run through fastchess with `scripts/engine/`. Openings come
+//! from the book, each played twice with colours swapped.
 //!
 //! ```text
+//! cargo build --release -p open-chess-uci
 //! cargo run --release -p open-chess-analysis --example match -- \
-//!     --a ./target/release/examples/uci --b stockfish --b-opt "UCI_LimitStrength=true" \
+//!     --a ./target/release/open-chess-uci --b stockfish --b-opt "UCI_LimitStrength=true" \
 //!     --b-opt "UCI_Elo=2000" --games 40 --tc 10000+100
 //! ```
 //!
-//! `--tc` is `base+inc` in milliseconds, `--movetime MS` or `--nodes N`.
+//! `--tc` is `base+inc` in milliseconds (keep the base at 10 s or more:
+//! the clock here includes the pipe round trip), `--movetime MS` or
+//! `--nodes N`.
 
 #![allow(clippy::many_single_char_names)]
 

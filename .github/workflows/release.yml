@@ -4,7 +4,8 @@ name: Release
 #
 #   1. binaries: one program, `open-chess` (the server, the board runtime,
 #      the photo reader and its training: Cargo features of the
-#      `open-chess` crate), for Linux
+#      `open-chess` crate), and `open-chess-uci` (the engine alone, for
+#      chess GUIs, match runners and training workers), for Linux
 #      x86-64 and arm64 (64-bit Raspberry Pi OS too: the DGT Pi, a Centaur
 #      with a Zero 2 W), macOS (Apple silicon and Intel, signed and
 #      notarised when the Apple secrets are set) and Windows; the board
@@ -114,6 +115,9 @@ jobs:
           elif [ -n "$extra" ]; then build --features "$extra"
           else build; fi
           cp "target/$TARGET/dist/open-chess$ext" out/
+          # The engine alone, for chess GUIs, match runners and training workers.
+          $cargo build --profile dist --locked --target "$TARGET" -p open-chess-uci
+          cp "target/$TARGET/dist/open-chess-uci$ext" out/
 
       # Signed and notarised when the secrets are set (docs/releases.md).
       - name: Sign and notarise (macOS)
@@ -182,6 +186,7 @@ jobs:
             fi
           }
           pack open-chess "out/open-chess$ext" true
+          pack open-chess-uci "out/open-chess-uci$ext" false
           if [ "${{ matrix.image }}" = true ]; then pack open-chess-server out/server/open-chess false; fi
           ls -l "$dist"
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
