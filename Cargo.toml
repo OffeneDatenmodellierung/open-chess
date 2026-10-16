@@ -25,7 +25,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT OR Apache-2.0"
@@ -36,23 +36,23 @@ homepage = "https://github.com/OffeneDatenmodellierung/open-chess"
 [workspace.dependencies]
 # The workspace's own crates, for each other (published together, one version:
 # move `version` here and in [workspace.package] together).
-chess-analysis = { package = "open-chess-analysis", path = "crates/chess-analysis", version = "0.1.6" }
-chess-ble = { package = "open-chess-ble", path = "crates/chess-ble", version = "0.1.6" }
-chess-centaur = { package = "open-chess-centaur", path = "crates/chess-centaur", version = "0.1.6" }
-chess-chessnut = { package = "open-chess-chessnut", path = "crates/chess-chessnut", version = "0.1.6" }
-chess-client = { package = "open-chess-client", path = "crates/chess-client", version = "0.1.6" }
-chess-core = { package = "open-chess-core", path = "crates/chess-core", version = "0.1.6" }
-chess-device = { package = "open-chess-device", path = "crates/chess-device", version = "0.1.6" }
-chess-dgt = { package = "open-chess-dgt", path = "crates/chess-dgt", version = "0.1.6" }
-chess-dgtpi = { package = "open-chess-dgtpi", path = "crates/chess-dgtpi", version = "0.1.6" }
-chess-engine = { package = "open-chess-engine", path = "crates/chess-engine", version = "0.1.6" }
-chess-fairplay = { package = "open-chess-fairplay", path = "crates/chess-fairplay", version = "0.1.6" }
-chess-proto = { package = "open-chess-proto", path = "crates/chess-proto", version = "0.1.6" }
-chess-server = { package = "open-chess-server", path = "crates/chess-server", version = "0.1.6" }
-chess-train = { package = "open-chess-train", path = "crates/chess-train", version = "0.1.6" }
-chess-uci = { package = "open-chess-uci", path = "crates/chess-uci", version = "0.1.6" }
-chess-vision = { package = "open-chess-vision", path = "crates/chess-vision", version = "0.1.6" }
-chess-vision-train = { package = "open-chess-vision-train", path = "crates/chess-vision-train", version = "0.1.6" }
+chess-analysis = { package = "open-chess-analysis", path = "crates/chess-analysis", version = "0.1.7" }
+chess-ble = { package = "open-chess-ble", path = "crates/chess-ble", version = "0.1.7" }
+chess-centaur = { package = "open-chess-centaur", path = "crates/chess-centaur", version = "0.1.7" }
+chess-chessnut = { package = "open-chess-chessnut", path = "crates/chess-chessnut", version = "0.1.7" }
+chess-client = { package = "open-chess-client", path = "crates/chess-client", version = "0.1.7" }
+chess-core = { package = "open-chess-core", path = "crates/chess-core", version = "0.1.7" }
+chess-device = { package = "open-chess-device", path = "crates/chess-device", version = "0.1.7" }
+chess-dgt = { package = "open-chess-dgt", path = "crates/chess-dgt", version = "0.1.7" }
+chess-dgtpi = { package = "open-chess-dgtpi", path = "crates/chess-dgtpi", version = "0.1.7" }
+chess-engine = { package = "open-chess-engine", path = "crates/chess-engine", version = "0.1.7" }
+chess-fairplay = { package = "open-chess-fairplay", path = "crates/chess-fairplay", version = "0.1.7" }
+chess-proto = { package = "open-chess-proto", path = "crates/chess-proto", version = "0.1.7" }
+chess-server = { package = "open-chess-server", path = "crates/chess-server", version = "0.1.7" }
+chess-train = { package = "open-chess-train", path = "crates/chess-train", version = "0.1.7" }
+chess-uci = { package = "open-chess-uci", path = "crates/chess-uci", version = "0.1.7" }
+chess-vision = { package = "open-chess-vision", path = "crates/chess-vision", version = "0.1.7" }
+chess-vision-train = { package = "open-chess-vision-train", path = "crates/chess-vision-train", version = "0.1.7" }
 
 [profile.release]
 lto = "thin"

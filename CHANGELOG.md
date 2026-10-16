@@ -7,11 +7,9 @@ renames that heading to the version and date.
 
 ## Unreleased
 
-- Sign in with Apple on the website says why when Apple didn't sign you in
-  (cancelled, or Apple's error) instead of returning to the sign-in page
-  as if the button had done nothing.
+## 0.1.7 — 2026-10-16
 
-- The engine is a program of its own, `open-chess-uci` (in every
+- **The engine is a program of its own**, `open-chess-uci` (in every
   release): play it in any chess GUI or match runner, set every search
   tunable as a UCI option, see each depth's line as it searches, and
   run `bench` for the build's node signature. `open-chess-uci datagen`
@@ -24,23 +22,28 @@ renames that heading to the version and date.
   three-piece tablebases are built once at start-up instead of inside the
   first search that needs them. `open-chess-uci` also has a `Move
   Overhead` option and plays new moves on rather than replaying the game.
-- The iOS app's analysis of a finished game says "Checkmate · Black wins"
-  (or stalemate) instead of an error, at the top and in the advice.
-- Tapping the iOS app's ratings says what they and their "?" mean.
-
+- **The board reader ships with each release**: the Chess lab carries the
+  model, and the server reads photos with the same one.
+- **Sign in with Apple on the website** says why when Apple didn't sign you
+  in (cancelled, or Apple's error) instead of returning to the sign-in page
+  as if the button had done nothing.
+- The host site uses the server (its players, their tokens, linking) with
+  `ESPORTS_SECRET` alone; `ESPORTS_LOGIN` now only puts "Sign in with
+  <site>" on the sign-in page, so it can be off while the site still works.
 - The Chess lab has the esports-lab look unless `CHESS_APP_THEME` says
   otherwise (`none` for the app's own), so a deployment can't lose it by
   leaving the setting out.
-- The Cloudflare Worker hands the containers the Sign in with Apple and
-  push notification settings (and the other settings it had missed: admin
-  emails, the tablebase, photo review, analysis threads), so setting them
-  in Cloudflare takes effect.
-- The deploy to Cloudflare sets the server's settings from GitHub: a
-  repository variable or secret named like one of them (`DATABASE_URL`,
-  `CHESS_APPLE_KEY`, `CHESS_APP_THEME`, …) goes on the Worker as a var or
-  secret with each deploy.
-- Each deploy to Cloudflare starts fresh server containers, so changed
-  settings take effect at once instead of when the running ones sleep.
+- **Deploys to Cloudflare** set the server's settings from GitHub (a
+  repository variable or secret named like one of them, such as
+  `DATABASE_URL`, `CHESS_APPLE_KEY` or `CHESS_APP_THEME`), hand the
+  containers the Sign in with Apple and push settings (and others it had
+  missed: admin emails, the tablebase, photo review, analysis threads), and
+  start fresh containers, so changed settings take effect at once.
+- The iOS app's analysis of a finished game says "Checkmate · Black wins"
+  (or stalemate) instead of an error, and tapping its ratings says what
+  they and their "?" mean.
+- rustls 0.23.46 (RUSTSEC-2026-0346 to 0349). zip 8.6.0, yanked upstream,
+  is allowed until candle takes zip 9.
 
 ## 0.1.6 — 2026-10-15
 
