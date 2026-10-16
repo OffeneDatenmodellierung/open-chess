@@ -206,7 +206,10 @@ mod tests {
         // The app's weights.
         std::fs::create_dir_all(app.join("nets")).unwrap();
         std::fs::write(app.join("nets/board-reader.safetensors"), b"x").unwrap();
-        assert_eq!(reader_path(&cfg(&[])), Some(app.join("nets/board-reader.safetensors").to_string_lossy().into_owned()));
+        assert_eq!(
+            reader_path(&cfg(&[])),
+            Some(app.join("nets/board-reader.safetensors").to_string_lossy().into_owned())
+        );
         // A named file wins.
         assert_eq!(
             reader_path(&cfg(&["--vision-local-model", "/models/big.safetensors"])).as_deref(),
