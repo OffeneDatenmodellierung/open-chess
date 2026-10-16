@@ -152,7 +152,7 @@ impl FromRequestParts<Ctx> for Reader {
         if let Some(id) = ctx.auth.token(t).await? {
             return Ok(Reader::Player(id));
         }
-        match ctx.auth.partner(t, ctx.cfg.esports()).await? {
+        match ctx.auth.partner(t, ctx.cfg.site_secret()).await? {
             Some(p) if p.has(crate::auth::PARTNER_READ) => Ok(Reader::Partner(p)),
             Some(_) => Err(ApiError::forbidden("this partner token can't read games")),
             None => Err(ApiError::unauthorized()),
@@ -168,7 +168,7 @@ impl FromRequestParts<Ctx> for Site {
 
     async fn from_request_parts(parts: &mut Parts, ctx: &Ctx) -> Result<Site, ApiError> {
         let t = bearer(&parts.headers).ok_or_else(ApiError::unauthorized)?;
-        match ctx.auth.partner(t, ctx.cfg.esports()).await? {
+        match ctx.auth.partner(t, ctx.cfg.site_secret()).await? {
             Some(p) if p.has(crate::auth::PARTNER_SITE) => Ok(Site(p)),
             Some(_) => Err(ApiError::forbidden("this partner token can't act as the host site")),
             None => Err(ApiError::unauthorized()),

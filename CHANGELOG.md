@@ -7,6 +7,10 @@ renames that heading to the version and date.
 
 ## Unreleased
 
+- The host site uses the server (its players, their tokens, linking) with
+  `ESPORTS_SECRET` alone; `ESPORTS_LOGIN` now only puts "Sign in with
+  <site>" on the sign-in page, so it can be off while the site still works.
+
 - The iOS app's analysis of a finished game says "Checkmate · Black wins"
   (or stalemate) instead of an error, at the top and in the advice.
 - Tapping the iOS app's ratings says what they and their "?" mean.

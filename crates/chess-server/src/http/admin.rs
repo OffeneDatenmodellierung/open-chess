@@ -279,7 +279,7 @@ pub async fn partners(State(ctx): State<Ctx>, who: Who) -> ApiResult<Response> {
     Ok(Json(json!({
         "partners": list,
         "scopes": scopes,
-        "sharedSecret": ctx.cfg.esports().is_some(),
+        "sharedSecret": ctx.cfg.site_secret().is_some(),
     }))
     .into_response())
 }
