@@ -20,7 +20,7 @@ name: TestFlight
 # team with the key ("cloud-managed"), so no certificates are kept here.
 # Optional: the repository variable (or secret) CHESS_SERVER_URL, the
 # server the app starts with (https://…); without it the app asks for one.
-# Optional: BOARD_READER_URL, where to download weights to bundle (a
+# Optional: BOARD_READER_URL (variable or secret), where to download weights to bundle (a
 # model card that isn't internal-only; the app refuses those anyway).
 
 on:
@@ -86,7 +86,7 @@ jobs:
         run: METAL=1 scripts/build-xcframework.sh dist/ios
       - name: Board reader weights
         env:
-          URL: ${{ secrets.BOARD_READER_URL }}
+          URL: ${{ vars.BOARD_READER_URL || secrets.BOARD_READER_URL }}
         run: |
           if [ -n "$URL" ]; then
             mkdir -p ios/Resources && curl -fsSL "$URL" -o ios/Resources/board-reader.safetensors
