@@ -61,6 +61,23 @@ shoot() {
 
 shoot iphone '^iPhone [0-9]+ Pro Max$'
 shoot ipad '^iPad Pro 13-inch'
+
+# App Store Connect takes only these sizes (portrait): iPhone 6.9" and
+# iPad 13". A screenshot taken in landscape is turned upright; any other
+# size is reported (as a GitHub annotation in CI) and fails the run.
+ok_sizes=" 1320x2868 1290x2796 1260x2736 2064x2752 2048x2732 "
+bad=0
 for f in "$out"/*/*.png; do
-  echo "$f: $(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixel/{printf "%s ", $2}')"
+  read -r w h < <(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} END{print w, h}')
+  if [ "$w" -gt "$h" ]; then
+    sips -r 270 "$f" >/dev/null
+    read -r w h < <(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} END{print w, h}')
+  fi
+  if [[ "$ok_sizes" == *" ${w}x${h} "* ]]; then
+    echo "::notice::${f#"$out"/}: ${w}x${h}"
+  else
+    echo "::error::${f#"$out"/}: ${w}x${h} isn't a size App Store Connect takes"
+    bad=1
+  fi
 done
+exit "$bad"
