@@ -208,6 +208,26 @@ jobs:
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
           tool: wasm-bindgen@${{ env.WASM_BINDGEN_VERSION }}
+      # The board reader the app (and the server's image, which serves the
+      # app) ships: the repository variable BOARD_READER_URL, checked
+      # against BOARD_READER_SHA256 when that's set. Without it the app
+      # ships without one and photos open the board editor.
+      # build-chess-app.sh refuses an internal-only model.
+      - name: Board reader weights
+        env:
+          URL: ${{ vars.BOARD_READER_URL || secrets.BOARD_READER_URL }}
+          SHA256: ${{ vars.BOARD_READER_SHA256 }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "::notice::no BOARD_READER_URL: the app ships without the board reader"
+            exit 0
+          fi
+          mkdir -p web/chess/nets
+          curl -fsSL "$URL" -o web/chess/nets/board-reader.safetensors
+          if [ -n "$SHA256" ]; then
+            echo "$SHA256  web/chess/nets/board-reader.safetensors" | sha256sum -c -
+          fi
+          ls -l web/chess/nets/board-reader.safetensors
       - run: |
           scripts/build-chess-app.sh build/app
           mkdir -p dist

@@ -71,17 +71,29 @@ pub fn enabled(cfg: &Config) -> bool {
     !cfg.vision_endpoint.trim().is_empty()
 }
 
-/// Load the board reader named by CHESS_VISION_LOCAL_MODEL (`None` when
-/// it's empty).
+/// Load the board reader named by CHESS_VISION_LOCAL_MODEL. When that's
+/// empty, the one the Chess lab app ships (`nets/board-reader.safetensors`
+/// in CHESS_APP_DIR), so the server and the phones read photos with the
+/// same model. `None` when there's neither.
 pub fn load_reader(cfg: &Config) -> Result<Option<chess_vision::Reader>> {
-    let path = cfg.vision_local_model.trim();
-    if path.is_empty() {
+    let Some(path) = reader_path(cfg) else {
         return Ok(None);
-    }
+    };
+    let path = path.as_str();
     let bytes = std::fs::read(path).with_context(|| format!("reading CHESS_VISION_LOCAL_MODEL ({path})"))?;
     let r = chess_vision::Reader::from_safetensors(&bytes)
         .with_context(|| format!("loading the board reader {path}"))?;
     Ok(Some(r))
+}
+
+/// Which weights file [`load_reader`] reads, if any.
+fn reader_path(cfg: &Config) -> Option<String> {
+    let named = cfg.vision_local_model.trim();
+    if !named.is_empty() {
+        return Some(named.to_string());
+    }
+    let shipped = std::path::Path::new(cfg.app_dir.as_deref()?.trim()).join("nets/board-reader.safetensors");
+    shipped.is_file().then(|| shipped.to_string_lossy().into_owned())
 }
 
 /// The bytes and media type of a `data:image/...;base64,` URL or bare
@@ -170,6 +182,41 @@ pub async fn read_board(cfg: &Config, image: &str) -> Result<Reading> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_apps_reader_unless_one_is_named() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            cfg: Config,
+        }
+        if std::env::var_os("CHESS_VISION_LOCAL_MODEL").is_some() {
+            return; // set where the tests run: the fallback can't show
+        }
+        let app = std::env::temp_dir().join(format!("open-chess-app-{}", std::process::id()));
+        let dir = app.to_str().unwrap();
+        let cfg = |extra: &[&str]| {
+            let mut args = vec!["chess-server", "--database-url", "postgres://x", "--app-dir", dir];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args).unwrap().cfg
+        };
+        // No weights in the app: no reader.
+        assert_eq!(reader_path(&cfg(&[])), None);
+        // The app's weights.
+        std::fs::create_dir_all(app.join("nets")).unwrap();
+        std::fs::write(app.join("nets/board-reader.safetensors"), b"x").unwrap();
+        assert_eq!(
+            reader_path(&cfg(&[])),
+            Some(app.join("nets/board-reader.safetensors").to_string_lossy().into_owned())
+        );
+        // A named file wins.
+        assert_eq!(
+            reader_path(&cfg(&["--vision-local-model", "/models/big.safetensors"])).as_deref(),
+            Some("/models/big.safetensors")
+        );
+        std::fs::remove_dir_all(&app).unwrap();
+    }
 
     #[test]
     fn replies_are_parsed_and_checked() {
