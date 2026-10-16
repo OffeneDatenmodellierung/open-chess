@@ -275,8 +275,8 @@ sends it as a bearer token. Its scopes:
 
 Revoking a partner stops its token at once. A host site's shared secret
 (`ESPORTS_SECRET`) still works as a partner with both scopes, so it can move
-to a partner token at its own pace; the secret also signs its players'
-sign-ins.
+to a partner token at its own pace, whether or not `ESPORTS_LOGIN` is on;
+with it on, the secret also signs its players' sign-ins.
 
 **OAuth** works as on Lichess: no client registration, PKCE S256, one-year
 tokens. The consent page (`GET /oauth`) acts for whoever is signed in to

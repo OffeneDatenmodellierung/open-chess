@@ -17,7 +17,8 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
 1. In `wrangler.jsonc`, set the `routes` host (the chess server's own
    host, e.g. `chess.example.com`; its zone must be in this Cloudflare
    account), `CHESS_PUBLIC_URL` to match, `ESPORTS_PUBLIC_URL`,
-   `ESPORTS_LOGIN` (`"true"` to let that site's players sign in with it),
+   `ESPORTS_LOGIN` (`"true"` to offer "Sign in with" that site on the
+   sign-in page; the site uses this server with or without it),
    `CHESS_SITE_NAME` and `CHESS_INSTANCES`. The Chess lab has the
    esports-lab look unless you give it yours:
    `npx wrangler secret put CHESS_APP_THEME < theme.css`
@@ -27,7 +28,7 @@ player / bot ──▶ chess.example.com ──▶ chess Worker ──▶ Chess 
    ```sh
    npm install
    npx wrangler secret put DATABASE_URL     # the server's Postgres URL (pooled is fine)
-   npx wrangler secret put ESPORTS_SECRET   # with ESPORTS_LOGIN: shared with the site (32+ characters)
+   npx wrangler secret put ESPORTS_SECRET   # shared with the site (32+ characters)
    # optional: CHESS_LISTEN_DATABASE_URL if the direct host can't be derived,
    #           CHESS_* settings from crates/chess-server/README.md
    ```

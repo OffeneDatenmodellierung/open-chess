@@ -131,8 +131,8 @@ Everything is environment (each variable is also a command-line flag:
 | `CHESS_SIGNUP` | `true` | Anyone may make an account (`/signup`); off, only existing accounts and the host site's players sign in |
 | `CHESS_PUBLIC_URL` | `http://localhost:8090` | Where clients reach the API; a path in it (e.g. `/chess`) is where the API is mounted |
 | `ESPORTS_PUBLIC_URL` | `http://localhost:8080` | The host site, for "Sign in with the site" |
-| `ESPORTS_LOGIN` | `false` | "Sign in with the site": its players sign in here through it, and its server asks for their tokens (`POST /api/esports/token`). Needs `ESPORTS_SECRET` |
-| `ESPORTS_SECRET` | — | Shared with the host site (32+ characters): it signs sign-ins and token requests with it |
+| `ESPORTS_LOGIN` | `false` | "Sign in with the site" on this server's sign-in page: its players sign in here through it. Needs `ESPORTS_SECRET` |
+| `ESPORTS_SECRET` | — | Shared with the host site (32+ characters): its server uses it to act as the host site (players, their tokens: `POST /api/esports/token`, linking), with or without `ESPORTS_LOGIN`; it also signs sign-ins with the site |
 | `CHESS_SITE_NAME` | `open-chess` | What players know this server as: the consent page, PGN event names, `GET /` (the Chess lab shows it) |
 | `CHESS_HOST_NAME` | the site name | What players know the host site as: "Sign in with …" and "linked to your … account" |
 | `CHESS_ADMIN_EMAILS` | — | Comma-separated: accounts signing in with one of these, confirmed (by a host site's sign-in) and with a passkey, become admins. Otherwise `open-chess admin grant <username>` |
@@ -197,8 +197,10 @@ site's, which links the two. The site needs:
   makes in the Chess lab's admin page or with `open-chess partner create
   --name <site> --scopes read,site`, for its API calls below (until it has
   one, the shared secret works in its place);
-* the **shared secret** (`ESPORTS_SECRET`, and `ESPORTS_LOGIN=true`) to sign
-  its players' sign-ins.
+* the **shared secret** (`ESPORTS_SECRET`) in the partner token's place, and,
+  with `ESPORTS_LOGIN=true`, to sign its players' sign-ins on this server's
+  sign-in page (leave it off when the site uses this server but its players
+  don't sign in here with it).
 
 In detail:
 
