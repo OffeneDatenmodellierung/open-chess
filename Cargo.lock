@@ -3706,6 +3706,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-chess-uci"
+version = "0.1.6"
+dependencies = [
+ "cozy-chess",
+ "open-chess-analysis",
+ "open-chess-core",
+ "open-chess-train",
+]
+
+[[package]]
 name = "open-chess-vision"
 version = "0.1.6"
 dependencies = [

@@ -100,7 +100,8 @@ Packages are named `open-chess-*` (`cargo test -p open-chess-core`).
 | `chess-mobile` | The iOS app's core as a Swift package through UniFFI ([docs/ios.md](docs/ios.md); not published) |
 | `chess-fairplay` | Post-game fair-play screening |
 | `chess-server` | The server, `open-chess` ([README](crates/chess-server/README.md)) |
-| `chess-train` | Distributed engine training |
+| `chess-train` | Distributed engine training and self-play data |
+| `chess-uci` | The engine as a UCI program: `open-chess-uci`, with `bench` and `datagen` |
 | `chess-vision` | The board reader ([README](crates/chess-vision/README.md)) |
 | `chess-vision-train` | Training the board reader on licence-checked datasets ([README](crates/chess-vision-train/README.md)): `open-chess train board-reader` |
 | `chess-conformance` | Checks a server against Lichess's API schemas (not published) |

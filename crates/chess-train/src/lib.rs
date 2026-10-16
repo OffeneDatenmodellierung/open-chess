@@ -10,10 +10,12 @@
 //! - [`sprt`]: pentanomial sequential tests (pass / fail / keep going);
 //! - [`spsa`]: simultaneous-perturbation tuning of many parameters;
 //! - [`play`]: the engine playing itself in-process, by node count or clock;
-//! - [`datagen`]: self-play positions for training the evaluation network;
+//! - [`datagen`]: self-play positions for training the evaluation network,
+//!   as text or in [`bulletformat`] (the trainer's binary records);
 //! - [`run`]: runs, jobs, results and merging;
 //! - [`worker`]: running a job on this machine.
 
+pub mod bulletformat;
 pub mod datagen;
 pub mod play;
 pub mod run;

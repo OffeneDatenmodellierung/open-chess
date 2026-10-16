@@ -1,0 +1,35 @@
+[package]
+name = "open-chess-uci"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The open-chess engine as a UCI program: play it in any chess GUI or match runner, benchmark it, and generate self-play training data"
+license = "MIT OR Apache-2.0"
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "open-chess-uci"
+path = "src/main.rs"
+
+[dependencies]
+chess-core = { workspace = true }
+chess-analysis = { workspace = true }
+chess-train = { workspace = true }
+cozy-chess = "0.3.4"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+doc_markdown = "allow"

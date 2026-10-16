@@ -39,22 +39,32 @@ sharpen as the game simplifies. They are exact once a forced mate is found,
 in three-piece endings (built in) and up to seven pieces (Lichess's
 tablebase server, when online).
 
-Measure changes with the match harness, which plays two UCI engines from
-book openings with colours swapped:
+`crates/chess-uci` is the engine as a UCI program, `open-chess-uci`
+(in every release): any chess GUI, lichess-bot and the match runners
+the engine-testing world uses run it. Its options are `Hash`, `Threads`,
+`MultiPV`, `EvalFile` (a network), `UseTablebases`, and every search
+tunable by name, so a test can change one number without a rebuild.
+It also carries `bench` and `datagen` (below).
+
+Strength is measured, never guessed, with `scripts/engine/` (see its
+README for the rules):
 
 ```sh
-cargo build --release -p open-chess-analysis --example uci --example match
-# the new build against the old one
-target/release/examples/match --a target/release/examples/uci --b ./uci-old --games 200 --tc 10000+100
-# against Stockfish at a fixed rating
-target/release/examples/match --a target/release/examples/uci --b stockfish \
-    --b-opt UCI_LimitStrength=true --b-opt UCI_Elo=2400 --games 100 --tc 60000+600
+scripts/engine/setup.sh                    # fastchess, the UHO book, reference engines
+scripts/engine/bench.sh main               # same node signature as main = no functional change
+scripts/engine/sprt.sh --set se_depth=6    # is one change better? stops when it knows
+scripts/engine/gauntlet.sh                 # Elo estimate against engines with known ratings
 ```
+
+`open-chess-uci bench` searches a fixed set of positions to a fixed
+depth on one thread and prints the node count and speed. The count is
+the build's signature: a refactor that keeps it has not changed the
+search; one that changes it is a search change and needs an SPRT.
 
 Results so far are in the pull request that introduced the engine. A
 hand-written engine of this kind lands around 2200–2500 on the CCRL scale
 depending on time; full-strength Stockfish is around 3600. Closing that gap
-is mostly the evaluation network.
+is mostly the evaluation network and the speed of the search.
 
 ## Distributed training
 
@@ -141,38 +151,43 @@ which uses cores more efficiently. The browser app stays single-threaded.
 
 ## Training an evaluation network
 
+`training/README.md` has the full loop; in short:
+
 1. **Data.** Self-play at a fixed node count, a few random opening moves
-   per game, quiet positions only:
+   per game (lopsided ones rejected), quiet positions only, written
+   straight in the bullet trainer's binary format with a `.json`
+   sidecar recording what produced it:
 
    ```sh
-   cargo run --release -p open-chess-analysis --example datagen -- \
-       --games 200000 --nodes 5000 --threads 32 --out data.txt
+   open-chess-uci datagen --games 200000 --nodes 5000 --threads 12 --out data/gen1.bin
+   open-chess-uci datagen --games 1000 --format text --out sample.txt   # the old text form
    ```
 
-   Each line is `FEN | score | result`, White's point of view. Hundreds of
-   millions of positions make a strong network; a million is enough to
-   test the pipeline. Our own finished games can be added in the same
-   format.
+   Hundreds of millions of positions make a strong network; a million is
+   enough to test the pipeline. Our own finished games can be added in the
+   text format. The training server's datagen jobs (below) produce the
+   same records from many machines.
 
 2. **Train.** Small networks train on CPU with the built-in trainer:
 
    ```sh
    cargo run --release -p open-chess-analysis --example train -- \
-       --data data.txt --hidden 128 --epochs 10 --out net.nnue
+       --data sample.txt --hidden 128 --epochs 10 --out net.nnue
    ```
 
-   For real strength use [bullet](https://github.com/jw1912/bullet) (MIT,
-   GPU) with its simple `(768 → H)x2 → 1` SCReLU example, `QA = 255`,
-   `QB = 64`, `SCALE = 400`. Its quantised export is the layout
-   `nnue::Network` reads.
+   For real strength use [bullet](https://github.com/jw1912/bullet) (MIT;
+   CUDA, ROCm or Metal) with `training/bullet/open_chess.rs`, which
+   writes the layout `nnue::Network` reads (`QA = 255`, `QB = 64`,
+   `SCALE = 400`).
 
-3. **Check it's better** with the match harness (`setoption name EvalFile
-   value net.nnue` in the UCI engine; `--a-opt EvalFile=net.nnue`).
+3. **Check it's better** with `scripts/engine/sprt.sh --net net.nnue`.
 
 4. **Ship it** as `web/chess/nets/default.nnue` (the app loads it when
    present) and point the fair-play worker at the same file with
    `CHESS_FAIRPLAY_APP_NET`, so the training-app fingerprint compares
-   against what players actually see.
+   against what players actually see. A private net (the server's hidden
+   top bot level) stays out of the repository and loads from a secret at
+   start-up, as the fair-play model does.
 
 The same data feeds the bot and the fraud model: the self-play games are
 labelled engine play, and games from the training app carry declared
