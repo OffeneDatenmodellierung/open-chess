@@ -3002,6 +3002,18 @@ async fn sign_in_with_apple_on_the_website() {
     let r =
         callback(vec![("state", state2), ("code", code2), ("id_token", tok2)], "other".into()).await.unwrap();
     assert_eq!(r.status(), 403);
+    // Apple came back without a sign-in: said so, not a silent return.
+    let (state3, _) = start("return=/account", None).await;
+    let r = callback(vec![("state", state3.clone()), ("error", "user_cancelled_authorize".into())], state3)
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400);
+    assert!(r.text().await.unwrap().contains("Sign in with Apple was cancelled"));
+    let (state4, _) = start("return=/account", None).await;
+    let r =
+        callback(vec![("state", state4.clone()), ("error", "invalid_client".into())], state4).await.unwrap();
+    let page = r.text().await.unwrap();
+    assert!(page.contains("(invalid_client)"), "{page}");
     let r = callback(form.clone(), state.clone()).await.unwrap();
     assert_eq!(r.status(), 200);
     let page = r.text().await.unwrap();

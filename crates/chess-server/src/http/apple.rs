@@ -523,13 +523,20 @@ pub async fn callback(State(ctx): State<Ctx>, h: HeaderMap, body: Bytes) -> ApiR
             &ret,
         ));
     }
-    if !get("error").is_empty() {
-        return Ok(Redirect::to(&format!(
-            "{}/login?return={}",
-            ctx.cfg.base_path().unwrap_or_default(),
-            urlencoding::encode(&ret)
-        ))
-        .into_response());
+    // Apple's answer when it didn't sign anyone in: said on the page (a
+    // silent return to the sign-in page looked like a button that does
+    // nothing), and logged, as most of these are set-up problems.
+    let error = get("error");
+    if !error.is_empty() {
+        tracing::warn!(error, "Sign in with Apple came back without a sign-in");
+        let message = if error == "user_cancelled_authorize" {
+            "Sign in with Apple was cancelled.".to_owned()
+        } else {
+            format!(
+                "Apple didn't sign you in ({error}). If it happens again, the server's Sign in with Apple settings may need checking (the Services ID and its return URL)."
+            )
+        };
+        return Ok(sign_in_page(&ctx, StatusCode::BAD_REQUEST, &message, &ret));
     }
     let id = match apple.verify(get("id_token"), &nonce).await {
         Ok(id) if Some(id.client_id.as_str()) == apple.services_id() => id,

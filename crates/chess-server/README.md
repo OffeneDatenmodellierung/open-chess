@@ -159,7 +159,7 @@ Everything is environment (each variable is also a command-line flag:
 | `CHESS_FAIRPLAY_APP_DEPTH` / `_APP_NODES` | 6 / 400000 | Worker: the training app's "Normal" search, for the fingerprint. Keep in step with `web/chess/app.js` |
 | `CHESS_FAIRPLAY_APP_NET` | — | Worker: the NNUE file the app ships (`web/chess/nets/default.nnue`), if any |
 | `CHESS_VISION_ENDPOINT` / `_MODEL` / `_API_KEY` | — / `qwen3-vl:8b` / — | Photo reading: an OpenAI-style `/chat/completions` vision model (Claude at `https://api.anthropic.com/v1`, or Ollama) |
-| `CHESS_VISION_LOCAL_MODEL` | — | Our board reader (`crates/chess-vision`): a `.safetensors` file from `chess-vision-train`, run on this server's CPU before any vision model is asked |
+| `CHESS_VISION_LOCAL_MODEL` | — | Our board reader (`crates/chess-vision`): a `.safetensors` file from `chess-vision-train`, run on this server's CPU before any vision model is asked. Unset: the one the app ships (`nets/board-reader.safetensors` in `CHESS_APP_DIR`), if the release bundled one |
 | `CHESS_VISION_MIN_CONFIDENCE` | `0.5` | The reader's answer is used without review when no square is unsure and the chance all 64 are right is at least this |
 | `CHESS_VISION_REVIEW` / `_REVIEW_MAX` | `true` / `5000` | Keep photos that weren't read for sure for the Review page (at most this many waiting); `open-chess photos export --out DIR` writes the confirmed ones as a training set |
 | `RUST_LOG` | `info` | Log filter (`debug`, `open_chess_server=debug` …) |

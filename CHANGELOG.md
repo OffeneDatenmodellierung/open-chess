@@ -7,9 +7,9 @@ renames that heading to the version and date.
 
 ## Unreleased
 
-- The host site uses the server (its players, their tokens, linking) with
-  `ESPORTS_SECRET` alone; `ESPORTS_LOGIN` now only puts "Sign in with
-  <site>" on the sign-in page, so it can be off while the site still works.
+- Sign in with Apple on the website says why when Apple didn't sign you in
+  (cancelled, or Apple's error) instead of returning to the sign-in page
+  as if the button had done nothing.
 
 - The iOS app's analysis of a finished game says "Checkmate · Black wins"
   (or stalemate) instead of an error, at the top and in the advice.

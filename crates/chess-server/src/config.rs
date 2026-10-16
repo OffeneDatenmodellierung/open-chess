@@ -167,7 +167,8 @@ pub struct Config {
     /// Our own board reader (chess-vision): a `.safetensors` weights file
     /// from `chess-vision-train`. It reads photos first, on this
     /// server's CPU; the vision model at CHESS_VISION_ENDPOINT (if set) is
-    /// only asked about photos it isn't sure of. Empty: not used.
+    /// only asked about photos it isn't sure of. Empty: the one the app
+    /// ships (`nets/board-reader.safetensors` in CHESS_APP_DIR), if any.
     #[arg(long, env = "CHESS_VISION_LOCAL_MODEL", default_value = "")]
     pub vision_local_model: String,
 
