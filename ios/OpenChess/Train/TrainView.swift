@@ -54,6 +54,8 @@ struct TrainView: View {
         }
         .ocScreen()
         .navigationTitle("Train")
+        // Inline: the large title left an empty band above the page.
+        .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showComputer) {
             NewComputerGameView(training: true)
                 .ocAppearance()

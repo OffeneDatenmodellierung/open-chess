@@ -86,6 +86,8 @@ struct PlayHomeView: View {
         }
         .ocScreen()
         .navigationTitle("open-chess")
+        // Inline: the large title left an empty band above the page.
+        .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showComputer) {
             NewComputerGameView()
                 .ocAppearance()

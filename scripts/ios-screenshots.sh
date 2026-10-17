@@ -3,7 +3,8 @@
 #
 #   scripts/ios-screenshots.sh <path to open-chess.app (a Debug simulator build)> <out dir>
 #
-# For the largest iPhone and the 13-inch iPad the installed Xcode has, it
+# For the largest iPhone (6.9"), the iPhone Pro (6.3") and the 13-inch iPad
+# the installed Xcode has, it
 # boots the simulator with Apple's 9:41 status bar, then launches the app
 # once per scene with -OCScreenshot <scene> (ios/OpenChess/App/
 # ScreenshotMode.swift) and saves <out>/<device>/<n>-<scene>.jpg, in
@@ -47,6 +48,10 @@ shoot() {
   xcrun simctl status_bar "$id" override --time "9:41" --dataNetwork wifi --wifiMode active \
     --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
   xcrun simctl install "$id" "$app"
+  # A fresh simulator shows banners after its first boot ("Ready for Apple
+  # Intelligence"): open the app once and let them pass before shooting.
+  xcrun simctl launch "$id" "$bundle" -OCScreenshot home >/dev/null
+  sleep "${BOOT_SETTLE_SECONDS:-60}"
   mkdir -p "$out/$label"
   local n=1
   for scene in "${scenes[@]}"; do
@@ -59,13 +64,14 @@ shoot() {
   xcrun simctl shutdown "$id" || true
 }
 
-shoot iphone '^iPhone [0-9]+ Pro Max$'
-shoot ipad '^iPad Pro 13-inch'
+shoot iphone-6.9 '^iPhone [0-9]+ Pro Max$'
+shoot iphone-6.3 '^iPhone [0-9]+ Pro$'
+shoot ipad-13 '^iPad Pro 13-inch'
 
 # App Store Connect takes only these sizes (portrait): iPhone 6.9" and
-# iPad 13". A screenshot taken in landscape is turned upright; any other
+# 6.1"/6.3", iPad 13". A screenshot taken in landscape is turned upright; any other
 # size is reported (as a GitHub annotation in CI) and fails the run.
-ok_sizes=" 1320x2868 1290x2796 1260x2736 2064x2752 2048x2732 "
+ok_sizes=" 1320x2868 1290x2796 1260x2736 1206x2622 1179x2556 2064x2752 2048x2732 "
 bad=0
 for f in "$out"/*/*.png; do
   read -r w h < <(sips -g pixelWidth -g pixelHeight "$f" | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} END{print w, h}')

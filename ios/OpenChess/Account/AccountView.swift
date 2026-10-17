@@ -145,6 +145,8 @@ struct AccountView: View {
         }
         .ocScreen()
         .navigationTitle("Account")
+        // Inline: the large title left an empty band above the page.
+        .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             serverDraft = settings.serverURL
             Task { await auth.refreshAccount() }

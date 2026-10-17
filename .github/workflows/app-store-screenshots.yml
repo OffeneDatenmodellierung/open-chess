@@ -16,7 +16,8 @@ on:
       - .github/workflows/app-store-screenshots.yml
 
 permissions:
-  contents: read
+  # To keep the screenshots on the app-store-screenshots-images branch too.
+  contents: write
 
 env:
   RUST_TOOLCHAIN: "1.97.0"
@@ -53,6 +54,20 @@ jobs:
         run: |
           xcrun simctl list devices available | grep -E "iPhone .* Pro Max|iPad Pro 13" || true
           scripts/ios-screenshots.sh "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/open-chess.app" screenshots
+      # Also on a branch of their own (replaced each run), to look at them
+      # without unzipping: git fetch origin app-store-screenshots-images.
+      - name: Keep them on a branch
+        run: |
+          set -eu
+          dir=$(mktemp -d)
+          cp -R screenshots/. "$dir/"
+          cd "$dir"
+          git init -q -b app-store-screenshots-images
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "App Store screenshots from ${GITHUB_SHA::7} (run $GITHUB_RUN_ID)"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/$GITHUB_REPOSITORY.git" HEAD:app-store-screenshots-images
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: app-store-screenshots
