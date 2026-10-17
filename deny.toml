@@ -14,6 +14,14 @@ ignore = [
     # safetensors; only the trainer reads a .pth, one we choose. Drop this
     # once candle takes zip 9.
     { crate = "zip@8.6.0", reason = "yanked upstream; candle-core 0.11 needs ^8.6; only .npz/.pth reading, not on untrusted input" },
+    # The advisories behind that yank: all three are in extracting an
+    # archive to disk (ZipArchive::extract, the stream extractor): SUID/SGID
+    # bits kept, symlinks pointing out of the destination, permissions
+    # applied through symlinks. Candle only reads entries into memory
+    # (by_index, by_name) and never extracts; nothing here uses zip itself.
+    { id = "RUSTSEC-2026-0367", reason = "zip extract() only; candle reads entries in memory, never extracts" },
+    { id = "RUSTSEC-2026-0368", reason = "zip extract() only; candle reads entries in memory, never extracts" },
+    { id = "RUSTSEC-2026-0369", reason = "zip extract() only; candle reads entries in memory, never extracts" },
 ]
 
 [licenses]
