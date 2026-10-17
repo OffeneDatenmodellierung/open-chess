@@ -59,6 +59,8 @@ struct GamesListView: View {
         }
         .ocScreen()
         .navigationTitle("Games")
+        // Inline: the large title left an empty band above the page.
+        .navigationBarTitleDisplayMode(.inline)
         .alert("Couldn't open the game", isPresented: Binding(
             get: { error != nil },
             set: { if !$0 { error = nil } }
