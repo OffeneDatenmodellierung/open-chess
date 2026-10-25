@@ -1169,6 +1169,20 @@ async fn the_host_site_signs_players_in_and_gets_their_tokens() {
         .await
         .unwrap();
     assert_eq!(linked["players"], serde_json::json!([{"sub": "77", "username": "Hal-Jones"}]));
+    // Which database it's on, for the site: never the password.
+    let info =
+        http.get(format!("{}/api/esports/info", env.base[1])).bearer_auth(SECRET).send().await.unwrap();
+    assert_eq!(info.status(), 200);
+    let info = info.text().await.unwrap();
+    let url = std::env::var("CHESS_TEST_DATABASE_URL").unwrap();
+    if let Some(pw) = url.parse::<tokio_postgres::Config>().unwrap().get_password() {
+        assert!(!info.contains(std::str::from_utf8(pw).unwrap()), "no password in {info}");
+    }
+    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
+    assert_eq!(info["counts"]["players"].as_i64().map(|n| n > 0), Some(true));
+    assert_eq!(info["database"]["urlSha256"].as_str().map(str::len), Some(16));
+    let anon = http.get(format!("{}/api/esports/info", env.base[1])).send().await.unwrap();
+    assert_eq!(anon.status(), 401);
     // A new site player gets a chess account on first use.
     let t: serde_json::Value = http
         .post(format!("{}/api/esports/token", env.base[0]))
