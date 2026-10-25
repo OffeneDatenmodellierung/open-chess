@@ -7,6 +7,19 @@ renames that heading to the version and date.
 
 ## Unreleased
 
+## 0.1.8 — 2026-10-26
+
+- **Which database the server is on**: `GET /api/esports/info` (with the
+  host site's secret or a partner token with `site`) answers the database
+  host, port, name, user and schemas, never the password, with a SHA-256
+  prefix of `DATABASE_URL` to check a URL against and counts of what it
+  holds, for deployments whose secrets can't be read back.
+- Dependencies: ctutils 0.4.5, rustls-webpki 0.103.16, tokio 1.54.1 and
+  webpki-root-certs 1.0.11 (RUSTSEC-2026-0382, 0383, 0385 and 0386).
+  crypto-bigint, yanked upstream before 0.7.9 (RUSTSEC-2026-0387), is
+  allowed until 0.7.9 clears the cooldown; basic-toml (unmaintained, only
+  in uniffi's bindings generator at build time) is allowed.
+
 ## 0.1.7 — 2026-10-16
 
 - **The engine is a program of its own**, `open-chess-uci` (in every
