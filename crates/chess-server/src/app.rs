@@ -234,6 +234,7 @@ pub fn router(ctx: &Ctx) -> anyhow::Result<Router> {
         .route("/api/esports/token", post(web::esports_token))
         .route("/api/esports/revoke", post(web::esports_revoke))
         .route("/api/esports/players", get(web::esports_players))
+        .route("/api/esports/info", get(web::esports_info))
         .route("/api/esports/link", post(web::esports_link))
         .route("/api/feed", get(feed::feed))
         .route("/api/token", post(oauth::token).delete(oauth::revoke))

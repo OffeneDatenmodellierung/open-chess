@@ -1381,6 +1381,73 @@ pub async fn esports_players(State(ctx): State<Ctx>, _site: Site) -> ApiResult<R
     Ok(Json(json!({ "players": players })).into_response())
 }
 
+/// `GET /api/esports/info` (bearer the secret): which database this server
+/// is on, for a site that can't read its settings back (Cloudflare and
+/// GitHub secrets are write-only). The host, port, database, user and
+/// schemas, never the password; `urlSha256`, the first 16 hex digits of
+/// the URL's SHA-256, to check a URL you have against it (`printf %s
+/// "$URL" | shasum -a 256`); and what's in it, to tell branches apart.
+pub async fn esports_info(State(ctx): State<Ctx>, _site: Site) -> ApiResult<Response> {
+    use std::str::FromStr as _;
+    let url = &ctx.cfg.database_url;
+    let pg = tokio_postgres::Config::from_str(url)
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let hosts: Vec<String> = pg
+        .get_hosts()
+        .iter()
+        .map(|h| match h {
+            tokio_postgres::config::Host::Tcp(s) => s.clone(),
+            #[cfg(unix)]
+            tokio_postgres::config::Host::Unix(p) => p.display().to_string(),
+        })
+        .collect();
+    let sha = Sha256::digest(url.as_bytes()).iter().take(8).fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    });
+    let c = ctx.db.conn().await?;
+    let r = c
+        .query_one(
+            &ctx.db.sql(
+                "SELECT current_database()::text, current_user::text, current_setting('server_version'),
+                        (SELECT count(*) FROM chess.players), (SELECT count(*) FROM chess.games),
+                        (SELECT max(created_at) FROM chess.games)::text,
+                        (SELECT count(*) FROM chess.passkeys), (SELECT count(*) FROM chess.apple_ids),
+                        (SELECT count(*) FROM chess.partners WHERE revoked_at IS NULL),
+                        (SELECT count(*) FROM chess.players WHERE role = 'admin')",
+            ),
+            &[],
+        )
+        .await?;
+    Ok(Json(json!({
+        "database": {
+            "hosts": hosts,
+            "ports": pg.get_ports(),
+            "dbname": pg.get_dbname(),
+            "user": pg.get_user(),
+            "urlSha256": sha,
+            "listenUrlSet": ctx.cfg.listen_database_url.is_some(),
+        },
+        "schema": ctx.cfg.schema,
+        "siteSchema": ctx.cfg.site_schema,
+        "server": {
+            "database": r.get::<_, String>(0),
+            "user": r.get::<_, String>(1),
+            "version": r.get::<_, String>(2),
+        },
+        "counts": {
+            "players": r.get::<_, i64>(3),
+            "games": r.get::<_, i64>(4),
+            "lastGame": r.get::<_, Option<String>>(5),
+            "passkeys": r.get::<_, i64>(6),
+            "appleIds": r.get::<_, i64>(7),
+            "partners": r.get::<_, i64>(8),
+            "admins": r.get::<_, i64>(9),
+        },
+    }))
+    .into_response())
+}
+
 /// `POST /api/esports/revoke` (bearer the secret; form `label`, and
 /// optionally `sub`): revoke the tokens of that name the site asked for
 /// (all its players', or one's). Answers how many.

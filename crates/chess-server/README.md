@@ -220,7 +220,12 @@ In detail:
   (`{"players": [{"sub", "username"}]}`);
   `POST /api/esports/link` (`sub`, `username`) links its player to an
   account made here before (a manager says it's theirs; 409 when it's
-  another site player's; an empty `username` unlinks).
+  another site player's; an empty `username` unlinks);
+  `GET /api/esports/info` says which database this server is on (host,
+  port, database, user and schemas, never the password; `urlSha256`, the
+  first 16 hex digits of `DATABASE_URL`'s SHA-256, to check a URL against;
+  and how many players, games, passkeys and partners it holds), for when
+  the deployment's secrets can't be read back.
 * Either way the site's player is linked to a player here (made on first
   use, with a chess account named after them). The site's roles stay the
   site's: admins and managers here are made here
