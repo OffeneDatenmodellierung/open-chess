@@ -22,6 +22,15 @@ ignore = [
     { id = "RUSTSEC-2026-0367", reason = "zip extract() only; candle reads entries in memory, never extracts" },
     { id = "RUSTSEC-2026-0368", reason = "zip extract() only; candle reads entries in memory, never extracts" },
     { id = "RUSTSEC-2026-0369", reason = "zip extract() only; candle reads entries in memory, never extracts" },
+    # basic-toml: unmaintained, no known vulnerability. Only uniffi's
+    # bindings generator (askama templates, at build time) reads TOML with
+    # it; the latest uniffi and askama still do.
+    { id = "RUSTSEC-2026-0374", reason = "unmaintained; build-time only, via uniffi_bindgen's askama; no fix upstream" },
+    # crypto-bigint (p256, for passkeys): every 0.7 release before 0.7.9 is
+    # yanked (RUSTSEC-2026-0387), and 0.7.9 (25 October 2026, 19:09 UTC)
+    # clears the 48h cooldown on 27 October 19:09 UTC. Then cargo update -p
+    # crypto-bigint and drop this.
+    { crate = "crypto-bigint@0.7.5", reason = "yanked upstream; its only unyanked fix, 0.7.9, is inside the cooldown until 2026-10-27 19:09 UTC" },
 ]
 
 [licenses]
