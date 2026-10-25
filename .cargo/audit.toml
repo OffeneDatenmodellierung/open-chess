@@ -6,9 +6,11 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0374", # basic-toml: unmaintained, build-time only (uniffi_bindgen); see deny.toml
 ]
 
 # Yanked crates are cargo deny's to judge (deny.toml: yanked = "deny",
-# with its one exception, zip 8.6.0); cargo audit can't except one crate.
+# with its exceptions, zip 8.6.0 and crypto-bigint 0.7.5); cargo audit
+# can't except one crate.
 [yanked]
 enabled = false
