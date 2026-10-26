@@ -1175,8 +1175,14 @@ async fn the_host_site_signs_players_in_and_gets_their_tokens() {
     assert_eq!(info.status(), 200);
     let info = info.text().await.unwrap();
     let url = std::env::var("CHESS_TEST_DATABASE_URL").unwrap();
-    if let Some(pw) = url.parse::<tokio_postgres::Config>().unwrap().get_password() {
-        assert!(!info.contains(std::str::from_utf8(pw).unwrap()), "no password in {info}");
+    // (A password that's also the user or database name, as in CI's
+    // `chess:chess@…/chess`, is in the answer as those.)
+    let pg = url.parse::<tokio_postgres::Config>().unwrap();
+    if let Some(pw) = pg.get_password().map(|p| std::str::from_utf8(p).unwrap())
+        && Some(pw) != pg.get_user()
+        && Some(pw) != pg.get_dbname()
+    {
+        assert!(!info.contains(pw), "no password in {info}");
     }
     let info: serde_json::Value = serde_json::from_str(&info).unwrap();
     assert_eq!(info["counts"]["players"].as_i64().map(|n| n > 0), Some(true));
